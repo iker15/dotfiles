@@ -16,7 +16,7 @@ StyledRect {
             return base + Tokens.spacing.largeIncreased + forecast.implicitHeight + forecast.anchors.margins;
         return base + brief.anchors.topMargin;
     }
-    radius: Tokens.rounding.extraExtraLarge
+    radius: Tokens.rounding.extraLarge  // igual que el de recursos
     color: Colours.tPalette.m3surfaceContainer
 
     Timer {
@@ -31,8 +31,10 @@ StyledRect {
         id: brief
 
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.top
+        anchors.top: root.showForecast ? parent.top : undefined
         anchors.topMargin: Tokens.padding.extraLarge
+        // Sin previsión: centrado en vertical (el cuadro puede ser más alto que el contenido)
+        anchors.verticalCenter: root.showForecast ? undefined : parent.verticalCenter
 
         rootHeight: root.rootHeight
     }

@@ -144,12 +144,12 @@ WlSessionLockSurface {
                 Anim {
                     target: lockContent
                     property: "implicitWidth"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * lockContent.Tokens.sizes.lock.ratio
+                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * 0.88 * lockContent.Tokens.sizes.lock.ratio
                 }
                 Anim {
                     target: lockContent
                     property: "implicitHeight"
-                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult
+                    to: (root.screen?.height ?? 0) * lockContent.Tokens.sizes.lock.heightMult * 0.88
                 }
             }
         }
@@ -235,8 +235,8 @@ WlSessionLockSurface {
             id: content
 
             anchors.centerIn: parent
-            width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * Tokens.sizes.lock.ratio - Tokens.padding.extraLargeIncreased
-            height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult - Tokens.padding.extraLargeIncreased
+            width: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * 0.88 * Tokens.sizes.lock.ratio - Tokens.padding.extraLargeIncreased
+            height: (root.screen?.height ?? 0) * Tokens.sizes.lock.heightMult * 0.88 - Tokens.padding.extraLargeIncreased
 
             lock: root
             opacity: 0

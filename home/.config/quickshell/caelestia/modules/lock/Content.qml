@@ -4,6 +4,8 @@ import Caelestia.Config
 import qs.components
 import qs.services
 
+// Minimalista: tiempo a la izquierda, recursos + batería a la derecha, los dos
+// cuadros con la misma altura y centrados en vertical junto al bloque central
 RowLayout {
     id: root
 
@@ -11,50 +13,25 @@ RowLayout {
 
     spacing: Tokens.spacing.largeIncreased * 2
 
-    ColumnLayout {
+    WeatherInfo {
         Layout.fillWidth: true
-        spacing: Tokens.spacing.medium
-
-        WeatherInfo {
-            Layout.fillWidth: true
-            rootHeight: root.height
-        }
-
-        Fetch {
-            Layout.fillWidth: true
-            rootHeight: root.height
-        }
-
-        Media {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            lock: root.lock
-        }
+        Layout.preferredWidth: 1
+        Layout.preferredHeight: resources.implicitHeight
+        Layout.alignment: Qt.AlignVCenter
+        Layout.leftMargin: Tokens.padding.extraLarge
+        rootHeight: root.height
     }
 
     Center {
         lock: root.lock
     }
 
-    ColumnLayout {
+    Resources {
+        id: resources
+
         Layout.fillWidth: true
-        spacing: Tokens.spacing.medium
-
-        Resources {
-            Layout.fillWidth: true
-        }
-
-        StyledRect {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-
-            bottomRightRadius: Tokens.rounding.extraLarge
-            radius: Tokens.rounding.medium
-            color: Colours.tPalette.m3surfaceContainer
-
-            NotifDock {
-                lock: root.lock
-            }
-        }
+        Layout.preferredWidth: 1
+        Layout.alignment: Qt.AlignVCenter
+        Layout.rightMargin: Tokens.padding.extraLarge
     }
 }
