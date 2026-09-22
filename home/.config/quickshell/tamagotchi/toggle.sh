@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Llamado en cada pulsación de +: si hay dos seguidas (< 300 ms) hace aparecer a Mochi (o lo esconde).
+# Llamado en cada pulsación de +: si hay dos seguidas (< 300 ms) esconde a Mochi si está visible, o lo hace aparecer.
 stamp="${XDG_RUNTIME_DIR:-/tmp}/tamagotchi-plus"
 now=$(date +%s%3N)
 last=$(cat "$stamp" 2>/dev/null || echo 0)

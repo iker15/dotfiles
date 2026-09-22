@@ -38,7 +38,25 @@ PROMPT = "Mochi, "
 WAKE_RE = re.compile(r"\b(mochi|mochis|mochy|mochie|motchi|moshi|moch|mo chi|muchi|mochii)\b")
 
 
+LOG = os.path.expanduser("~/.local/state/tamagotchi/ears.log")
+
+
+def debug(msg: str) -> None:
+    """Registro de lo que oye (para ajustar). Se queda con las últimas ~500 líneas."""
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+        if os.path.getsize(LOG) > 60_000:
+            with open(LOG) as f:
+                lines = f.readlines()[-500:]
+            with open(LOG, "w") as f:
+                f.writelines(lines)
+    except OSError:
+        pass
+
+
 def emit(msg: str) -> None:
+    debug(f"→ {msg}")
     print(msg, flush=True)
 
 
@@ -117,6 +135,7 @@ def main() -> None:
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
     emit("ready")
+    debug("escuchando")
 
     listen = Segmenter(silence_ms=600)
     waiting_until = 0.0  # tras un "Mochi" a secas, hasta cuándo esperar la orden
@@ -137,20 +156,26 @@ def main() -> None:
         if pcm is None:
             continue
 
+        secs = len(pcm) / (RATE * 2)
         if waiting_until:
             # Es la orden que va después de "Mochi"
             waiting_until = 0.0
             text = transcribe(cmd_model, pcm)
+            debug(f"orden {secs:.1f}s small={text!r}")
             rest = strip_wake(text)
             text = rest if rest is not None else text
             emit(f"text:{text}" if text.strip(" .") else "idle")
             continue
 
         # ¿Ha dicho "Mochi"? Primero con el modelo rápido
-        if strip_wake(transcribe(wake_model, pcm[: RATE * 2 * 3], max_tokens=12, prompt=None)) is None:
+        quick = transcribe(wake_model, pcm[: RATE * 2 * 3], max_tokens=12, prompt=None)
+        debug(f"frase {secs:.1f}s tiny={quick!r}")
+        if strip_wake(quick) is None:
             continue
         # Sí: transcribir bien toda la frase con el modelo bueno
-        rest = strip_wake(transcribe(cmd_model, pcm))
+        full = transcribe(cmd_model, pcm)
+        rest = strip_wake(full)
+        debug(f"  small={full!r} resto={rest!r}")
         if rest and len(rest) > 2:
             emit(f"text:{rest}")
         else:

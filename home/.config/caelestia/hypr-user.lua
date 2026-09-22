@@ -15,7 +15,7 @@ hl.window_rule({ match = { class = "code-oss", fullscreen = false }, opacity = "
 hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
 
 -- Mochi (burbujita con Claude de cerebro): vive en el escritorio desde el inicio.
--- Doble + para hablarle (o esconderlo); non_consuming: el + se sigue escribiendo en las apps
+-- Doble + lo esconde / lo hace aparecer (clic para hablarle); non_consuming: el + se sigue escribiendo en las apps
 hl.on("hyprland.start", function()
     hl.exec_cmd("qs -c tamagotchi -n -d --log-rules 'quickshell.io.socket.warning=false'")
 end)

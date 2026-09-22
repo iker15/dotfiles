@@ -117,6 +117,14 @@ ShellRoot {
         onTriggered: if (!Brain.busy) shell.bubbleShown = false
     }
 
+    // Si el oído se cae, volver a lanzarlo
+    Timer {
+        id: earsRestart
+
+        interval: 2000
+        onTriggered: if (shell.earsOn) ears.running = true
+    }
+
     Process {
         id: ears
 
@@ -150,15 +158,17 @@ ShellRoot {
         onExited: {
             shell.earsReady = false;
             shell.voiceWaiting = false;
+            if (shell.earsOn)
+                earsRestart.restart();
         }
     }
 
     IpcHandler {
         target: "pet"
 
-        // Doble +: aparece y escucha; si ya escuchaba, se esconde
+        // Doble +: si está a la vista se esconde; si no, aparece y escucha
         function toggle(): void {
-            if (shell.shown && shell.asking) {
+            if (shell.shown) {
                 shell.asking = false;
                 shell.shown = false;
             } else {
