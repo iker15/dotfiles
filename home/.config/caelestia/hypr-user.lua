@@ -13,3 +13,8 @@ hl.window_rule({ match = { class = "code-oss", fullscreen = false }, opacity = "
 
 -- SUPER + L: bloquear con los colores de la foto de perfil (~/.face)
 hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
+
+-- Mochi (mascota con Claude): doble + para mostrar/ocultar.
+-- non_consuming: el + se sigue escribiendo normal en las apps
+hl.bind("plus", hl.dsp.exec_cmd("~/.config/quickshell/tamagotchi/toggle.sh"), { non_consuming = true })
+hl.layer_rule({ match = { namespace = "tamagotchi" }, animation = "fade", blur = true, ignore_alpha = 0.5 })
