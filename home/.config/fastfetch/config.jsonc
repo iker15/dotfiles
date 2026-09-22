@@ -1,81 +1,67 @@
 {
     "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    // Estilo "linuxmobile": fondo actual enmarcado a la izquierda, valores sin etiquetas a la derecha
     "logo": {
         // Recorte cuadrado del fondo actual (lo genera wall-logo.sh desde fish_greeting)
         "type": "kitty-direct",
         "source": "~/.cache/fastfetch/wall.png",
         "width": 22,
         "height": 10,
-        "padding": { "top": 1, "left": 2, "right": 3 }
+        "padding": { "top": 1, "left": 2, "right": 4 }
     },
     "display": {
-        "separator": "  ",
-        "color": "38;5;16",
-        "constants": [
-            "\u001b[37m",
-            "\u001b[38;5;16m",
-            "\u001b[38;5;17m",
-            "\u001b[38;5;18m"
-        ]
+        "separator": "",
+        "key": { "width": 0 }
     },
     "modules": [
         "break",
         {
+            // Cabecera con letras separadas
+            "type": "command",
+            "key": " ",
+            "text": "echo \"$USER|$(. /etc/os-release; echo $ID)\" | tr a-z A-Z | sed 's/./& /g; s/ $//'",
+            "format": "{#1;31}{}"
+        },
+        {
             "type": "custom",
-            "key": "╭───────────────────────────────────╮"
-        },
-        {
-            "type": "kernel",
-            "key": "│ {$2}{$1}  kernel",
-            "format": "{$2}{release>22}{$1} │"
-        },
-        {
-            "type": "command",
-            "key": "│   uptime",
-            "text": "uptime -p | cut -d ' ' -f 2-",
-            "format": "{>22} │"
-        },
-        {
-            "type": "shell",
-            "key": "│ {$2}{$1}  shell ",
-            "format": "{$2}{pretty-name>22}{$1} │"
-        },
-        {
-            "type": "command",
-            "key": "│ {$3}{$1}  mem   ",
-            "text": "free -m | awk 'NR==2{printf \"%.2f GiB / %.2f GiB\",$3/1024,$2/1024}'",
-            "format": "{$3}{>22}{$1} │"
-        },
-        {
-            "type": "packages",
-            "key": "│   pkgs  ",
-            "format": "{all>22} │"
-        },
-        {
-            "type": "command",
-            "key": "│ {$2}{$1}  user  ",
-            "text": "echo $USER",
-            "format": "{$2}{>22}{$1} │"
-        },
-        {
-            "type": "command",
-            "key": "│   hname ",
-            "text": "hostnamectl hostname",
-            "format": "{>22} │"
+            "key": " ",
+            "format": "{#90}─────────────────────────"
         },
         {
             "type": "os",
-            "key": "│ {$4}󰻀{$1}  distro",
-            "format": "{$4}{pretty-name>22}{$1} │"
+            "key": " ",
+            "format": "{name} {arch}"
+        },
+        {
+            "type": "memory",
+            "key": " ",
+            "format": "{used} / {total}"
+        },
+        {
+            "type": "packages",
+            "key": " ",
+            "format": "{pacman} (pacman)"
+        },
+        {
+            "type": "shell",
+            "key": " ",
+            "format": "{pretty-name}"
+        },
+        {
+            "type": "wm",
+            "key": " ",
+            "format": "{pretty-name}"
         },
         {
             "type": "custom",
-            "key": "╰───────────────────────────────────╯"
+            "key": " ",
+            "format": "github.com/iker15"
         },
         {
-            "type": "colors",
-            "symbol": "circle",
-            "paddingLeft": 2
+            // Rayas de colores en vez de círculos
+            "type": "custom",
+            "key": " ",
+            "format": "{#31}▬▬ {#32}▬▬ {#33}▬▬ {#34}▬▬ {#35}▬▬ {#36}▬▬ {#37}▬▬ {#90}▬▬"
         }
     ]
 }
