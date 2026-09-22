@@ -1,0 +1,41 @@
+{
+    "appearance": {
+        "transparency": {
+            "enabled": true
+        }
+    },
+    "background": {
+        "wallpaperEnabled": true
+    },
+    "bar": {
+        "clock": {
+            "background": false,
+            "showDate": false,
+            "showSeconds": false
+        },
+        "dragThreshold": 20,
+        "persistent": true,
+        "showOnHover": true
+    },
+    "general": {
+        "apps": {
+            "terminal": [
+                "kitty"
+            ]
+        },
+        "language": ""
+    },
+    "launcher": {
+        "maxWallpapers": 17
+    },
+    "paths": {
+        "wallpaperDir": "~/Pictures/Wallpapers"
+    },
+    "services": {
+        "clockFormat": "Auto"
+    },
+    "sidebar": {
+        "dragThreshold": 70,
+        "enabled": true
+    }
+}

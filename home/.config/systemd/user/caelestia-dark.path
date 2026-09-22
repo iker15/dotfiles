@@ -1,0 +1,8 @@
+[Unit]
+Description=Vigila el esquema de Caelestia para regenerar la versión oscura
+
+[Path]
+PathChanged=%h/.local/state/caelestia/scheme.json
+
+[Install]
+WantedBy=default.target

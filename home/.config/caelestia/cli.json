@@ -1,0 +1,8 @@
+{
+    "wallpaper": {
+        "postHook": "$HOME/.config/matugen/apply.sh"
+    },
+    "theme": {
+        "enableTerm": false
+    }
+}

@@ -1,0 +1,5 @@
+# Estado generado / cachés
+home/.config/fish/fish_variables
+home/.config/hypr/scheme/current.*
+*.bak
+__pycache__/

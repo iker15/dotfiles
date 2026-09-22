@@ -1,0 +1,6 @@
+[Unit]
+Description=Versión oscura del esquema de Caelestia (kitty, VS Code)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.config/caelestia/dark-scheme.py
