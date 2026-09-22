@@ -8,7 +8,7 @@ Mi setup de **CachyOS + Hyprland + Caelestia (quickshell)**.
 2. Después:
 
 ```bash
-git clone https://github.com/<usuario>/dotfiles ~/dotfiles
+git clone https://github.com/iker15/dotfiles ~/dotfiles
 cd ~/dotfiles && ./install.sh
 ```
 
