@@ -8,7 +8,7 @@ if (( now - last < 300 )); then
     rm -f "$stamp"
     if ! qs -c tamagotchi ipc call pet toggle 2>/dev/null; then
         # No estaba arrancada: arrancarla y mostrarla
-        qs -c tamagotchi -n -d
+        qs -c tamagotchi -n -d --log-rules "quickshell.io.socket.warning=false"
         for _ in $(seq 20); do
             sleep 0.1
             qs -c tamagotchi ipc call pet talk 2>/dev/null && break

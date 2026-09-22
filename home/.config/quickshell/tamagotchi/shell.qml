@@ -1,5 +1,3 @@
-//@ pragma Env QT_LOGGING_RULES=quickshell.io.socket.warning=false
-
 import QtQuick
 import QtQuick.Controls
 import Quickshell
@@ -27,7 +25,13 @@ ShellRoot {
     property real lookX: 0
     property real lookY: 0
 
-    readonly property string mood: asking && !Brain.busy ? "listening" : Brain.mood
+    // Voz: ears.py escucha el micro y avisa al oír "Mochi"
+    property bool earsOn: true
+    property bool earsReady: false
+    property bool voiceWaiting: false  // ha oído "Mochi" y espera la orden
+    property string heard: ""          // última orden dictada (se enseña mientras piensa)
+
+    readonly property string mood: (asking || voiceWaiting) && !Brain.busy ? "listening" : Brain.mood
 
     function screenAt(x: real, y: real): var {
         for (const s of Quickshell.screens)
@@ -113,6 +117,42 @@ ShellRoot {
         onTriggered: if (!Brain.busy) shell.bubbleShown = false
     }
 
+    Process {
+        id: ears
+
+        command: [Quickshell.shellDir + "/ears.sh"]
+        running: shell.earsOn
+
+        stdout: SplitParser {
+            onRead: line => {
+                if (line === "ready") {
+                    shell.earsReady = true;
+                } else if (line === "wake" || line === "hearing") {
+                    shell.shown = true;
+                    shell.asking = false;
+                    shell.voiceWaiting = true;
+                    shell.bubbleShown = false;
+                } else if (line.startsWith("text:")) {
+                    shell.voiceWaiting = false;
+                    shell.shown = true;
+                    shell.asking = false;
+                    shell.heard = line.slice(5).trim();
+                    Brain.send(shell.heard, true);
+                } else if (line === "idle") {
+                    shell.voiceWaiting = false;
+                } else if (line.startsWith("error:")) {
+                    console.warn("ears:", line);
+                    shell.earsOn = false;
+                }
+            }
+        }
+
+        onExited: {
+            shell.earsReady = false;
+            shell.voiceWaiting = false;
+        }
+    }
+
     IpcHandler {
         target: "pet"
 
@@ -134,6 +174,12 @@ ShellRoot {
         }
         function talk(): void {
             shell.openInput();
+        }
+        function ears(): void {
+            shell.earsOn = !shell.earsOn;
+        }
+        function history(): void {
+            Qt.openUrlExternally("file://" + Brain.historyDir);
         }
         function ask(text: string): void {
             shell.shown = true;
@@ -224,15 +270,26 @@ ShellRoot {
                     property bool moved
 
                     anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
                     cursorShape: shell.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
 
+                    // Clic derecho: historial · clic central: activar/silenciar el micro
+                    onClicked: mouse => {
+                        if (mouse.button === Qt.RightButton)
+                            Qt.openUrlExternally("file://" + Brain.historyDir);
+                        else if (mouse.button === Qt.MiddleButton)
+                            shell.earsOn = !shell.earsOn;
+                    }
+
                     onPressed: mouse => {
+                        if (mouse.button !== Qt.LeftButton)
+                            return;
                         px = mouse.x;
                         py = mouse.y;
                         moved = false;
                     }
                     onPositionChanged: mouse => {
-                        if (!pressed)
+                        if (!(pressedButtons & Qt.LeftButton))
                             return;
                         if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
                             return;
@@ -242,7 +299,9 @@ ShellRoot {
                         shell.gx += mouse.x - px;
                         shell.gy += mouse.y - py;
                     }
-                    onReleased: {
+                    onReleased: mouse => {
+                        if (mouse.button !== Qt.LeftButton)
+                            return;
                         if (moved) {
                             shell.dragging = false;
                             shell.settle();
@@ -256,13 +315,26 @@ ShellRoot {
                 }
             }
 
+            // Micro silenciado
+            Text {
+                visible: !shell.earsOn
+                x: mochi.x + mochi.width - 18
+                y: mochi.y + mochi.height - 20
+                text: "mic_off"
+                font.family: Theme.icons
+                font.pixelSize: 16
+                color: "white"
+                style: Text.Outline
+                styleColor: "black"
+            }
+
             // Bocadillo: respuesta y/o campo para escribir
             Rectangle {
                 id: bubble
 
                 readonly property bool above: mochi.y - height - 22 > 8
 
-                visible: win.here && (shell.asking || (shell.bubbleShown && (Brain.reply !== "" || Brain.busy)))
+                visible: win.here && (shell.asking || shell.voiceWaiting || (shell.bubbleShown && (Brain.reply !== "" || Brain.busy)))
                 width: Math.max(input.visible ? 280 : 0, Math.min(320, reply.implicitWidth + 28))
                 height: content.height + 20
                 x: Math.max(8, Math.min(win.width - width - 8, mochi.x + mochi.width / 2 - width / 2))
@@ -303,7 +375,18 @@ ShellRoot {
                             id: reply
 
                             width: Math.min(implicitWidth, 292)
-                            text: shell.asking ? "" : Brain.busy && !Brain.reply ? (Brain.mood === "working" && Brain.toolName ? `(${Brain.toolName.toLowerCase()}…)` : "…") : Brain.reply
+                            text: {
+                                if (shell.asking)
+                                    return "";
+                                if (shell.voiceWaiting && !Brain.busy)
+                                    return "Te escucho… 👂";
+                                if (Brain.busy && !Brain.reply) {
+                                    const doing = Brain.mood === "working" && Brain.toolName ? `(${Brain.toolName.toLowerCase()}…)` : "…";
+                                    // Si fue por voz, enseñar lo que ha entendido
+                                    return shell.heard && Brain.lastPrompt === shell.heard ? `_«${shell.heard}»_\n\n${doing}` : doing;
+                                }
+                                return Brain.reply;
+                            }
                             wrapMode: Text.Wrap
                             textFormat: Text.MarkdownText
                             font.family: Theme.font

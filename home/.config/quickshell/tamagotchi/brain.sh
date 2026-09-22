@@ -15,7 +15,8 @@ args=(-p
     --name "Mochi (tamagotchi)"
     --append-system-prompt "$(cat "$dir/persona.md")")
 
-sid="$(cat "$state/session" 2>/dev/null)"
+# La sesión a reanudar la pasa la mascota (MOCHI_SESSION); si no, la del archivo
+sid="${MOCHI_SESSION-$(cat "$state/session" 2>/dev/null)}"
 [ -n "$sid" ] && args+=(--resume "$sid")
 
 # Desde $HOME para compartir memoria con las sesiones de la terminal

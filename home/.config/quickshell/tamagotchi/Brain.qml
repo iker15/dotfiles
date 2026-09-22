@@ -22,6 +22,10 @@ Singleton {
     property bool gotInit: false
     property bool retried: false
     property string lastPrompt: ""
+    property string pendingPrompt: ""
+
+    // Historial en Markdown, un archivo por día
+    readonly property string historyDir: Quickshell.env("HOME") + "/Documentos/Mochi"
 
     readonly property string status: {
         switch (mood) {
@@ -40,23 +44,37 @@ Singleton {
         }
     }
 
-    function send(text: string): void {
+    // Primero prueba los comandos rápidos (quick.sh); si no lo entiende, a Claude
+    function send(text: string, byVoice = false): void {
         text = text.trim();
-        if (!text)
+        if (!text || busy)
             return;
         if (text === "/nuevo" || text === "/new") {
             reset();
             return;
         }
         messages.append({ role: "user", text: text });
+        log(byVoice ? "Tú 🎙" : "Tú", text);
         lastPrompt = text;
         reply = "";
         busy = true;
         mood = "thinking";
         streamIdx = -1;
+        quick.command = [Quickshell.shellDir + "/quick.sh", text];
+        quick.running = true;
+    }
+
+    function askClaude(text: string): void {
         if (!proc.running)
             proc.running = true;
         write({ type: "user", message: { role: "user", content: text } });
+    }
+
+    function log(who: string, text: string): void {
+        const now = new Date();
+        const day = Qt.formatDate(now, "yyyy-MM-dd");
+        const entry = `**${who}** · ${Qt.formatTime(now, "HH:mm")}\n\n${text.trim()}\n\n`;
+        Quickshell.execDetached(["sh", "-c", 'mkdir -p "$1" && f="$1/$2.md" && { [ -s "$f" ] || printf "# Mochi · %s\\n\\n" "$2"; printf "%s\\n" "$3"; } >> "$f"', "sh", historyDir, day, entry]);
     }
 
     function stop(): void {
@@ -66,6 +84,7 @@ Singleton {
 
     function reset(): void {
         proc.running = false;
+        warmAgain.restart();
         saveSession("");
         messages.clear();
         reply = "Empezamos de cero ✨";
@@ -155,8 +174,17 @@ Singleton {
                 messages.append({ role: "info", text: String(d.result) });
                 reply = String(d.result);
             }
+            if (reply)
+                log("Mochi", reply);
             moodTimer.restart();
         }
+    }
+
+    Timer {
+        id: warmAgain
+
+        interval: 800
+        onTriggered: if (!proc.running) proc.running = true
     }
 
     Timer {
@@ -167,9 +195,31 @@ Singleton {
     }
 
     Process {
+        id: quick
+
+        stdout: StdioCollector {
+            id: quickOut
+        }
+
+        onExited: code => {
+            if (code === 0 && quickOut.text.trim()) {
+                root.reply = quickOut.text.trim();
+                root.messages.append({ role: "assistant", text: root.reply });
+                root.log("Mochi ⚡", root.reply);
+                root.busy = false;
+                root.mood = "happy";
+                moodTimer.restart();
+            } else {
+                root.askClaude(root.lastPrompt);
+            }
+        }
+    }
+
+    Process {
         id: proc
 
         command: [Quickshell.shellDir + "/brain.sh"]
+        environment: ({ MOCHI_SESSION: root.sessionId })
         stdinEnabled: true
 
         onStarted: root.gotInit = false
@@ -184,12 +234,14 @@ Singleton {
 
         onExited: (code, status) => {
             // La sesión guardada no se pudo reanudar: empezar una nueva y reenviar
-            if (!root.gotInit && root.sessionId && !root.retried && root.busy) {
+            // (con la precarga puede pasar antes de que haya ningún mensaje pendiente)
+            if (!root.gotInit && root.sessionId && !root.retried && code !== 0) {
                 root.retried = true;
                 root.saveSession("");
                 Qt.callLater(() => {
                     proc.running = true;
-                    root.write({ type: "user", message: { role: "user", content: root.lastPrompt } });
+                    if (root.busy)
+                        root.askClaude(root.lastPrompt);
                 });
                 return;
             }
@@ -206,5 +258,12 @@ Singleton {
     FileView {
         path: root.stateDir + "/session"
         onLoaded: root.sessionId = text().trim()
+    }
+
+    // Arrancar Claude ya, para que la primera respuesta no espere al arranque
+    Timer {
+        running: true
+        interval: 1500
+        onTriggered: if (!proc.running) proc.running = true
     }
 }

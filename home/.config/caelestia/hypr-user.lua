@@ -17,7 +17,7 @@ hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
 -- Mochi (burbujita con Claude de cerebro): vive en el escritorio desde el inicio.
 -- Doble + para hablarle (o esconderlo); non_consuming: el + se sigue escribiendo en las apps
 hl.on("hyprland.start", function()
-    hl.exec_cmd("qs -c tamagotchi -n -d")
+    hl.exec_cmd("qs -c tamagotchi -n -d --log-rules 'quickshell.io.socket.warning=false'")
 end)
 hl.bind("plus", hl.dsp.exec_cmd("~/.config/quickshell/tamagotchi/toggle.sh"), { non_consuming = true })
 hl.layer_rule({ match = { namespace = "mochi" }, no_anim = true })

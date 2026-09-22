@@ -59,7 +59,11 @@ sudo systemctl enable --now NetworkManager bluetooth ufw fstrim.timer 2>/dev/nul
 systemctl --user daemon-reload
 systemctl --user enable --now caelestia-dark.path pipewire.socket pipewire-pulse.socket wireplumber 2>/dev/null || true
 
-# --- 4. Shell ----------------------------------------------------------------
+# --- 4. Mochi: oído (voz local con Whisper, ~1 GB) ----------------------------
+log "Preparando el oído de Mochi"
+"$HOME/.config/quickshell/tamagotchi/setup-voice.sh" || echo "  (sin voz: ejecuta setup-voice.sh más tarde)"
+
+# --- 5. Shell ----------------------------------------------------------------
 if [ "$(getent passwd "$USER" | cut -d: -f7)" != "/bin/fish" ]; then
     log "Poniendo fish como shell"
     chsh -s /bin/fish
