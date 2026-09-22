@@ -49,8 +49,11 @@ done
 link .config/VSCodium/User/settings.json
 link .config/VSCodium/User/keybindings.json
 for f in .[!.]*; do
-    [ "$f" = ".config" ] && continue
+    [ "$f" = ".config" ] || [ "$f" = ".local" ] && continue
     link "$f"
+done
+for f in .local/bin/*; do
+    [ -e "$f" ] && link "$f"
 done
 
 # --- 3. Servicios ------------------------------------------------------------
