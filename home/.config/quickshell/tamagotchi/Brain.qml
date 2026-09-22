@@ -16,6 +16,7 @@ Singleton {
     property string mood: "idle"
     property string toolName: ""
     property string sessionId: ""
+    property string reply: ""       // respuesta actual (para el bocadillo)
 
     property int streamIdx: -1      // burbuja que se está escribiendo
     property bool gotInit: false
@@ -49,6 +50,7 @@ Singleton {
         }
         messages.append({ role: "user", text: text });
         lastPrompt = text;
+        reply = "";
         busy = true;
         mood = "thinking";
         streamIdx = -1;
@@ -66,6 +68,7 @@ Singleton {
         proc.running = false;
         saveSession("");
         messages.clear();
+        reply = "Empezamos de cero ✨";
         busy = false;
         mood = "happy";
         moodTimer.restart();
@@ -123,6 +126,8 @@ Singleton {
                 if (b.type === "text") {
                     messages.append({ role: "assistant", text: "" });
                     streamIdx = messages.count - 1;
+                    if (reply)
+                        reply += "\n\n";
                     mood = "talking";
                 } else if (b.type === "thinking") {
                     mood = "thinking";
@@ -132,6 +137,7 @@ Singleton {
                 }
             } else if (e.type === "content_block_delta" && e.delta?.type === "text_delta" && streamIdx >= 0) {
                 messages.setProperty(streamIdx, "text", messages.get(streamIdx).text + e.delta.text);
+                reply += e.delta.text;
             }
         } else if (d.type === "assistant") {
             // Los textos llegan por stream_event; aquí solo las herramientas (con su input completo)
@@ -145,8 +151,10 @@ Singleton {
             if (d.session_id && d.session_id !== sessionId)
                 saveSession(d.session_id);
             mood = d.is_error ? "sad" : "happy";
-            if (d.is_error && d.result)
+            if (d.is_error && d.result) {
                 messages.append({ role: "info", text: String(d.result) });
+                reply = String(d.result);
+            }
             moodTimer.restart();
         }
     }
@@ -189,6 +197,7 @@ Singleton {
                 root.busy = false;
                 root.mood = "sad";
                 root.messages.append({ role: "info", text: `Me he quedado sin cerebro (código ${code}). Prueba otra vez.` });
+                root.reply = `Me he quedado sin cerebro (código ${code}). Prueba otra vez.`;
                 moodTimer.restart();
             }
         }

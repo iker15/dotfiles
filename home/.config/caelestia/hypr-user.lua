@@ -14,7 +14,10 @@ hl.window_rule({ match = { class = "code-oss", fullscreen = false }, opacity = "
 -- SUPER + L: bloquear con los colores de la foto de perfil (~/.face)
 hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
 
--- Mochi (mascota con Claude): doble + para mostrar/ocultar.
--- non_consuming: el + se sigue escribiendo normal en las apps
+-- Mochi (burbujita con Claude de cerebro): vive en el escritorio desde el inicio.
+-- Doble + para hablarle (o esconderlo); non_consuming: el + se sigue escribiendo en las apps
+hl.on("hyprland.start", function()
+    hl.exec_cmd("qs -c tamagotchi -n -d")
+end)
 hl.bind("plus", hl.dsp.exec_cmd("~/.config/quickshell/tamagotchi/toggle.sh"), { non_consuming = true })
-hl.layer_rule({ match = { namespace = "tamagotchi" }, animation = "fade", blur = true, ignore_alpha = 0.5 })
+hl.layer_rule({ match = { namespace = "mochi" }, no_anim = true })

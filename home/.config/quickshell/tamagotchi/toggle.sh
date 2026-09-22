@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Llamado en cada pulsación de +: si hay dos seguidas (< 300 ms) muestra/oculta a Mochi.
+# Llamado en cada pulsación de +: si hay dos seguidas (< 300 ms) hace aparecer a Mochi (o lo esconde).
 stamp="${XDG_RUNTIME_DIR:-/tmp}/tamagotchi-plus"
 now=$(date +%s%3N)
 last=$(cat "$stamp" 2>/dev/null || echo 0)
@@ -11,7 +11,7 @@ if (( now - last < 300 )); then
         qs -c tamagotchi -n -d
         for _ in $(seq 20); do
             sleep 0.1
-            qs -c tamagotchi ipc call pet show 2>/dev/null && break
+            qs -c tamagotchi ipc call pet talk 2>/dev/null && break
         done
     fi
 else

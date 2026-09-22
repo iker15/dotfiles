@@ -1,375 +1,363 @@
-//@ pragma UseQApplication
+//@ pragma Env QT_LOGGING_RULES=quickshell.io.socket.warning=false
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
-// Mochi: mascota flotante con Claude Code como cerebro.
-// Se muestra/oculta con `qs -c tamagotchi ipc call pet toggle` (doble + en Hyprland).
+// Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
+// - Arrástralo a cualquier sitio (también a otra pantalla).
+// - Clic (o doble +) para hablarle; la respuesta sale en un bocadillo.
+// IPC: qs -c tamagotchi ipc call pet toggle|appear|hide|talk|ask "<texto>"
 ShellRoot {
     id: shell
 
-    property bool shown: false
+    readonly property string stateDir: Brain.stateDir
+
+    property bool shown: true
+    property bool asking: false        // campo de texto abierto
+    property bool bubbleShown: false   // bocadillo con la respuesta
+    property bool dragging: false
+
+    // Centro de Mochi en coordenadas globales (todas las pantallas)
+    property real gx: -1
+    property real gy: -1
+
+    property real lookX: 0
+    property real lookY: 0
+
+    readonly property string mood: asking && !Brain.busy ? "listening" : Brain.mood
+
+    function screenAt(x: real, y: real): var {
+        for (const s of Quickshell.screens)
+            if (x >= s.x && x < s.x + s.width && y >= s.y && y < s.y + s.height)
+                return s;
+        return null;
+    }
+
+    // Que no se quede fuera de ninguna pantalla
+    function settle(): void {
+        let s = screenAt(gx, gy);
+        if (!s) {
+            // La pantalla más cercana
+            let best = Infinity;
+            for (const c of Quickshell.screens) {
+                const dx = Math.max(c.x - gx, 0, gx - (c.x + c.width));
+                const dy = Math.max(c.y - gy, 0, gy - (c.y + c.height));
+                if (dx + dy < best) {
+                    best = dx + dy;
+                    s = c;
+                }
+            }
+        }
+        if (!s)
+            return;
+        gx = Math.max(s.x + 40, Math.min(s.x + s.width - 40, gx));
+        gy = Math.max(s.y + 40, Math.min(s.y + s.height - 40, gy));
+    }
+
+    function savePos(): void {
+        Quickshell.execDetached(["sh", "-c", 'mkdir -p "$1" && printf "%s %s" "$2" "$3" > "$1/pos"', "sh", stateDir, Math.round(gx), Math.round(gy)]);
+    }
+
+    function openInput(): void {
+        shown = true;
+        asking = true;
+        bubbleShown = false;
+    }
+
+    function showReply(): void {
+        bubbleShown = true;
+        hideTimer.restart();
+    }
+
+    Component.onCompleted: {
+        const s = Quickshell.screens[0];
+        if (gx < 0 && s) {
+            gx = s.x + s.width - 120;
+            gy = s.y + s.height - 140;
+        }
+    }
+
+    FileView {
+        path: shell.stateDir + "/pos"
+        onLoaded: {
+            const [x, y] = text().trim().split(" ").map(Number);
+            if (!isNaN(x) && !isNaN(y)) {
+                shell.gx = x;
+                shell.gy = y;
+                shell.settle();
+            }
+        }
+    }
+
+    Connections {
+        target: Brain
+
+        function onBusyChanged(): void {
+            if (Brain.busy) {
+                shell.bubbleShown = true;
+                hideTimer.stop();
+            } else {
+                shell.showReply();
+            }
+        }
+    }
+
+    // El bocadillo se va solo al rato (más tiempo cuanto más largo)
+    Timer {
+        id: hideTimer
+
+        interval: Math.min(30000, 6000 + Brain.reply.length * 45)
+        onTriggered: if (!Brain.busy) shell.bubbleShown = false
+    }
 
     IpcHandler {
         target: "pet"
 
+        // Doble +: aparece y escucha; si ya escuchaba, se esconde
         function toggle(): void {
-            shell.shown = !shell.shown;
+            if (shell.shown && shell.asking) {
+                shell.asking = false;
+                shell.shown = false;
+            } else {
+                shell.openInput();
+            }
         }
-        function show(): void {
+        function appear(): void {
             shell.shown = true;
         }
         function hide(): void {
+            shell.asking = false;
             shell.shown = false;
+        }
+        function talk(): void {
+            shell.openInput();
         }
         function ask(text: string): void {
             shell.shown = true;
+            shell.asking = false;
             Brain.send(text);
         }
     }
 
-    PanelWindow {
-        id: win
+    // Posición del cursor (para que Mochi te mire), preguntando a Hyprland por su socket
+    Socket {
+        id: hypr
 
-        visible: shell.shown
-        anchors.bottom: true
-        anchors.right: true
-        margins.bottom: 20
-        margins.right: 20
-        implicitWidth: 420
-        implicitHeight: 620
-        exclusiveZone: 0
-        color: "transparent"
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/hypr/${Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")}/.socket.sock`
 
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.namespace: "tamagotchi"
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-
-        onVisibleChanged: {
-            if (visible) {
-                card.scale = 0.85;
-                card.opacity = 0;
-                appear.restart();
-                input.forceActiveFocus();
+        onConnectedChanged: {
+            if (connected) {
+                write("j/cursorpos");
+                flush();
             }
         }
 
-        ParallelAnimation {
-            id: appear
-
-            NumberAnimation {
-                target: card
-                property: "scale"
-                to: 1
-                duration: 260
-                easing.type: Easing.OutBack
-            }
-            NumberAnimation {
-                target: card
-                property: "opacity"
-                to: 1
-                duration: 180
+        parser: SplitParser {
+            splitMarker: "}"
+            onRead: data => {
+                try {
+                    const p = JSON.parse(data + "}");
+                    const dx = p.x - shell.gx, dy = p.y - shell.gy;
+                    const d = Math.hypot(dx, dy);
+                    shell.lookX = d < 20 ? 0 : dx / (d + 60);
+                    shell.lookY = d < 20 ? 0 : dy / (d + 60);
+                } catch (e) {}
             }
         }
+    }
 
-        Rectangle {
-            id: card
+    Timer {
+        running: shell.shown && !shell.dragging
+        repeat: true
+        interval: 90
+        onTriggered: if (!hypr.connected) hypr.connected = true
+    }
 
-            anchors.fill: parent
-            transformOrigin: Item.BottomRight
-            radius: 28
-            color: Qt.alpha(Theme.surface, 0.92)
-            border.width: 1
-            border.color: Qt.alpha(Theme.outlineVariant, 0.6)
+    Variants {
+        model: Quickshell.screens
 
-            Keys.onEscapePressed: shell.shown = false
+        PanelWindow {
+            id: win
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 16
-                spacing: 12
+            required property ShellScreen modelData
 
-                // Cabecera: Mochi, estado y botones
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 12
+            readonly property bool here: shell.screenAt(shell.gx, shell.gy) === modelData
 
-                    Blob {
-                        mood: Brain.mood
-                    }
+            screen: modelData
+            visible: shell.shown
+            anchors.top: true
+            anchors.bottom: true
+            anchors.left: true
+            anchors.right: true
+            exclusionMode: ExclusionMode.Ignore
+            color: "transparent"
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
+            WlrLayershell.layer: WlrLayer.Top
+            WlrLayershell.namespace: "mochi"
+            WlrLayershell.keyboardFocus: shell.asking && here ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
-                        Text {
-                            text: "Mochi"
-                            font.family: Theme.font
-                            font.pixelSize: 20
-                            font.bold: true
-                            color: Theme.primary
-                        }
+            // Solo Mochi y su bocadillo reciben clics; el resto del escritorio pasa de largo
+            mask: Region {
+                item: mochi
 
-                        Text {
-                            Layout.fillWidth: true
-                            text: Brain.status
-                            elide: Text.ElideRight
-                            font.family: Theme.font
-                            font.pixelSize: 13
-                            color: Theme.onSurfaceVariant
-                        }
-                    }
-
-                    IconButton {
-                        icon: "add_comment"
-                        tip: "Conversación nueva"
-                        onClicked: Brain.reset()
-                    }
-
-                    IconButton {
-                        icon: "close"
-                        tip: "Ocultar (Esc)"
-                        onClicked: shell.shown = false
-                    }
+                Region {
+                    item: bubble.visible ? bubble : null
                 }
+            }
 
-                // Chat
-                ListView {
-                    id: chat
+            Blob {
+                id: mochi
 
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    spacing: 8
-                    model: Brain.messages
-                    boundsBehavior: Flickable.StopAtBounds
+                x: shell.gx - win.modelData.x - width / 2
+                y: shell.gy - win.modelData.y - height / 2
+                mood: shell.mood
+                dragging: shell.dragging
+                lookX: shell.dragging ? 0 : shell.lookX
+                lookY: shell.dragging ? 0 : shell.lookY
 
-                    onCountChanged: Qt.callLater(positionViewAtEnd)
-                    onContentHeightChanged: if (Brain.busy) Qt.callLater(positionViewAtEnd)
+                MouseArea {
+                    property real px
+                    property real py
+                    property bool moved
 
-                    ScrollBar.vertical: ScrollBar {
-                        policy: ScrollBar.AsNeeded
+                    anchors.fill: parent
+                    cursorShape: shell.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+
+                    onPressed: mouse => {
+                        px = mouse.x;
+                        py = mouse.y;
+                        moved = false;
                     }
-
-                    Text {
-                        visible: chat.count === 0
-                        anchors.centerIn: parent
-                        width: parent.width * 0.8
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.Wrap
-                        text: "Pídeme lo que quieras: cambiar tu config, mirar algo del sistema, instalar cosas…\n\nEnter envía · Esc oculta · /nuevo empieza de cero"
-                        font.family: Theme.font
-                        font.pixelSize: 13
-                        color: Theme.onSurfaceVariant
+                    onPositionChanged: mouse => {
+                        if (!pressed)
+                            return;
+                        if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
+                            return;
+                        moved = true;
+                        shell.dragging = true;
+                        // Al moverse Mochi, el ratón vuelve a quedar en (px, py) relativo a él
+                        shell.gx += mouse.x - px;
+                        shell.gy += mouse.y - py;
                     }
-
-                    delegate: Item {
-                        id: msg
-
-                        required property string role
-                        required property string text
-
-                        readonly property bool mine: role === "user"
-                        readonly property bool small: role === "tool" || role === "info"
-
-                        width: chat.width - 8
-                        height: small ? note.implicitHeight : bubble.height
-
-                        Rectangle {
-                            id: bubble
-
-                            visible: !msg.small
-                            anchors.right: msg.mine ? parent.right : undefined
-                            width: msg.mine ? Math.min(label.contentWidth, label.width) + 24 : parent.width
-                            height: (msg.mine ? label.contentHeight : parts.height) + 18
-                            radius: 16
-                            color: msg.mine ? Theme.primaryContainer : Theme.surfaceContainerHigh
-
-                            // Mensajes míos: texto plano
-                            TextEdit {
-                                id: label
-
-                                visible: msg.mine
-                                x: 12
-                                y: 9
-                                width: chat.width * 0.82 - 24
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: TextEdit.Wrap
-                                text: msg.text
-                                font.family: Theme.font
-                                font.pixelSize: 14
-                                color: Theme.onPrimaryContainer
-                                selectionColor: Theme.primary
-                                selectedTextColor: Theme.onPrimary
-                            }
-
-                            // Mensajes de Mochi: markdown, con los bloques de código aparte
-                            // para que se partan en líneas en vez de salirse de la burbuja
-                            Column {
-                                id: parts
-
-                                visible: !msg.mine
-                                x: 12
-                                y: 9
-                                width: bubble.width - 24
-                                spacing: 6
-
-                                Repeater {
-                                    model: msg.mine ? [] : shell.splitCode(msg.text || "…")
-
-                                    Rectangle {
-                                        id: part
-
-                                        required property var modelData
-
-                                        width: parts.width
-                                        height: partText.contentHeight + (modelData.code ? 14 : 0)
-                                        radius: 10
-                                        color: modelData.code ? Theme.surfaceContainerHighest : "transparent"
-
-                                        TextEdit {
-                                            id: partText
-
-                                            x: part.modelData.code ? 8 : 0
-                                            y: part.modelData.code ? 7 : 0
-                                            width: parent.width - x * 2
-                                            readOnly: true
-                                            selectByMouse: true
-                                            wrapMode: part.modelData.code ? TextEdit.WrapAnywhere : TextEdit.Wrap
-                                            textFormat: part.modelData.code ? TextEdit.PlainText : TextEdit.MarkdownText
-                                            text: part.modelData.text
-                                            font.family: part.modelData.code ? Theme.mono : Theme.font
-                                            font.pixelSize: part.modelData.code ? 12 : 14
-                                            color: Theme.onSurface
-                                            selectionColor: Theme.primary
-                                            selectedTextColor: Theme.onPrimary
-                                            onLinkActivated: link => Qt.openUrlExternally(link)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Herramientas y avisos: una línea pequeña
-                        Text {
-                            id: note
-
-                            visible: msg.small
-                            width: parent.width
-                            leftPadding: 4
-                            text: msg.role === "tool" ? "⚙ " + msg.text.replace(/\s+/g, " ") : msg.text
-                            elide: Text.ElideRight
-                            maximumLineCount: msg.role === "tool" ? 1 : 4
-                            wrapMode: Text.Wrap
-                            font.family: msg.role === "tool" ? Theme.mono : Theme.font
-                            font.pixelSize: 11
-                            font.italic: msg.role === "info"
-                            color: Theme.onSurfaceVariant
+                    onReleased: {
+                        if (moved) {
+                            shell.dragging = false;
+                            shell.settle();
+                            shell.savePos();
+                        } else if (shell.asking) {
+                            shell.asking = false;
+                        } else {
+                            shell.openInput();
                         }
                     }
                 }
+            }
 
-                // Entrada
+            // Bocadillo: respuesta y/o campo para escribir
+            Rectangle {
+                id: bubble
+
+                readonly property bool above: mochi.y - height - 22 > 8
+
+                visible: win.here && (shell.asking || (shell.bubbleShown && (Brain.reply !== "" || Brain.busy)))
+                width: Math.max(input.visible ? 280 : 0, Math.min(320, reply.implicitWidth + 28))
+                height: content.height + 20
+                x: Math.max(8, Math.min(win.width - width - 8, mochi.x + mochi.width / 2 - width / 2))
+                y: above ? mochi.y - height - 22 : mochi.y + mochi.height + 14
+                radius: 18
+                color: "#f4f4f2"
+
+                // Piquito hacia Mochi
                 Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: 48
-                    radius: 24
-                    color: Theme.surfaceContainerHigh
+                    width: 14
+                    height: 14
+                    rotation: 45
+                    color: parent.color
+                    x: Math.max(14, Math.min(bubble.width - 28, mochi.x + mochi.width / 2 - bubble.x - 7))
+                    y: bubble.above ? bubble.height - 8 : -6
+                    z: -1
+                }
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 18
-                        anchors.rightMargin: 6
-                        spacing: 6
+                Column {
+                    id: content
 
-                        TextField {
-                            id: input
+                    x: 14
+                    y: 10
+                    width: bubble.width - 28
+                    spacing: 8
 
-                            Layout.fillWidth: true
-                            background: null
-                            placeholderText: Brain.busy ? "Mochi está en ello…" : "Háblame…"
-                            placeholderTextColor: Theme.onSurfaceVariant
-                            color: Theme.onSurface
+                    Flickable {
+                        visible: reply.text !== ""
+                        width: parent.width
+                        height: Math.min(reply.implicitHeight, 240)
+                        contentHeight: reply.implicitHeight
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+
+                        onContentHeightChanged: if (Brain.busy) contentY = Math.max(0, contentHeight - height)
+
+                        Text {
+                            id: reply
+
+                            width: Math.min(implicitWidth, 292)
+                            text: shell.asking ? "" : Brain.busy && !Brain.reply ? (Brain.mood === "working" && Brain.toolName ? `(${Brain.toolName.toLowerCase()}…)` : "…") : Brain.reply
+                            wrapMode: Text.Wrap
+                            textFormat: Text.MarkdownText
                             font.family: Theme.font
                             font.pixelSize: 14
-                            selectionColor: Theme.primary
+                            color: "#111111"
+                            onLinkActivated: link => Qt.openUrlExternally(link)
+                        }
+                    }
 
-                            Keys.onEscapePressed: shell.shown = false
-                            onAccepted: {
-                                if (Brain.busy || !text.trim())
-                                    return;
-                                Brain.send(text);
+                    TextField {
+                        id: input
+
+                        visible: shell.asking
+                        width: parent.width
+                        background: null
+                        padding: 0
+                        placeholderText: "Dime algo…"
+                        placeholderTextColor: "#8a8a86"
+                        color: "#111111"
+                        font.family: Theme.font
+                        font.pixelSize: 14
+                        selectionColor: "#111111"
+                        selectedTextColor: "white"
+
+                        onVisibleChanged: {
+                            if (visible) {
                                 text = "";
+                                forceActiveFocus();
                             }
                         }
+                        Keys.onEscapePressed: shell.asking = false
+                        onAccepted: {
+                            if (!text.trim())
+                                return;
+                            Brain.send(text);
+                            shell.asking = false;
+                        }
+                    }
+                }
 
-                        IconButton {
-                            icon: Brain.busy ? "stop" : "arrow_upward"
-                            filled: true
-                            tip: Brain.busy ? "Parar" : "Enviar"
-                            onClicked: {
-                                if (Brain.busy) {
-                                    Brain.stop();
-                                } else {
-                                    input.accepted();
-                                }
-                            }
-                        }
+                // Clic en la respuesta: cerrarla
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: !shell.asking
+                    hoverEnabled: true
+                    onClicked: shell.bubbleShown = false
+                    onContainsMouseChanged: {
+                        if (containsMouse)
+                            hideTimer.stop();
+                        else if (!Brain.busy && shell.bubbleShown)
+                            hideTimer.restart();
                     }
                 }
             }
         }
-    }
-
-    // Parte un mensaje en trozos de texto y bloques ```código``` (también si el bloque está a medio escribir)
-    function splitCode(text: string): var {
-        const out = [];
-        const chunks = text.split(/^```[^\n]*\n?/m);
-        for (let i = 0; i < chunks.length; i++) {
-            const t = i % 2 ? chunks[i].replace(/\n$/, "") : chunks[i].trim();
-            if (t)
-                out.push({ code: i % 2 === 1, text: t });
-        }
-        return out.length ? out : [{ code: false, text: "…" }];
-    }
-
-    component IconButton: Rectangle {
-        id: btn
-
-        property string icon
-        property string tip
-        property bool filled: false
-        signal clicked
-
-        implicitWidth: 36
-        implicitHeight: 36
-        radius: 18
-        color: filled ? Theme.primary : area.containsMouse ? Theme.surfaceContainerHighest : "transparent"
-
-        Text {
-            anchors.centerIn: parent
-            text: btn.icon
-            font.family: Theme.icons
-            font.pixelSize: 20
-            color: btn.filled ? Theme.onPrimary : Theme.onSurfaceVariant
-        }
-
-        MouseArea {
-            id: area
-
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: btn.clicked()
-        }
-
-        ToolTip.visible: area.containsMouse && tip
-        ToolTip.text: tip
-        ToolTip.delay: 600
     }
 }
