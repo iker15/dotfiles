@@ -20,7 +20,14 @@ def running() -> bool:
 def ask_name(default: str) -> str:
     try:
         p = subprocess.run(
-            ["fuzzel", "--dmenu", "--prompt-only=Nombre de la grabación: ", f"--placeholder={default}"],
+            [
+                "fuzzel", "--dmenu", "--prompt-only=Nombre  ", f"--placeholder={default}",
+                # Pequeño, abajo a la derecha; los colores salen del fuzzel.ini que genera caelestia
+                "--anchor=bottom-right", "--x-margin=34", "--y-margin=34",
+                "--font=JetBrains Mono NF:size=11", "--width=34",
+                "--horizontal-pad=16", "--vertical-pad=10", "--inner-pad=0",
+                "--border-radius=17", "--border-width=2",
+            ],
             input="", capture_output=True, text=True,
         )
         name = p.stdout.strip() if p.returncode == 0 else ""
