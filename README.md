@@ -5,9 +5,12 @@ Mi setup de **CachyOS + Hyprland + Caelestia (quickshell)**.
 ## Instalar en un PC nuevo
 
 1. Instala CachyOS desde la ISO (drivers NVIDIA los pone el instalador).
-2. Después:
+2. Como el repo es privado, primero inicia sesión en GitHub:
 
 ```bash
+sudo pacman -S github-cli
+gh auth login -h github.com -p https -w
+gh auth setup-git
 git clone https://github.com/iker15/dotfiles ~/dotfiles
 cd ~/dotfiles && ./install.sh
 ```
