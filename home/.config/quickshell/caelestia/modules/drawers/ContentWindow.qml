@@ -346,4 +346,11 @@ StyledWindow {
         radius: Tokens.rounding.extraLarge
         deformScale: (deformAmount * Config.appearance.deformScale) / 10000
     }
+
+    // Dónde están los paneles abiertos, para que Mochi (tamagotchi) se aparte
+    MochiBridge {
+        panels: panels
+        bar: bar
+        win: root
+    }
 }

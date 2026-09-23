@@ -92,6 +92,16 @@ ShellRoot {
     // mientras los ojos quedan a la vista); fuera del nido vuelve a 0
     property real bodyOffX: 0
     property real bodyOffY: 0
+
+    // Paneles abiertos de Caelestia (los publica caelestia/modules/drawers/MochiBridge.qml):
+    // pantalla → [[x, y, w, h], …] en coordenadas globales. No se queda debajo de ellos.
+    property var panels: ({})
+
+    // Humor según la hora: por la mañana con ganas, bajón después de comer, tranquilo por la
+    // tarde-noche y dormilón de madrugada. Multiplica sus ganas de moverse; `drowsy` le
+    // entorna los ojos.
+    property real dayEnergy: 1
+    readonly property real drowsy: Math.max(0, Math.min(1, (0.95 - dayEnergy) / 0.4))
     property real hideX: 0
     property real hideY: 0
     property bool cursorNear: false
@@ -361,7 +371,7 @@ ShellRoot {
         let best = 0, bestScore = -Infinity;
         for (let i = 0; i < 24; i++) {
             const d = tr.len * i / 24, p = pointAt(tr, d);
-            if (accept && !accept(d))
+            if ((accept && !accept(d)) || inPanel(p.x, p.y, bodyRx + 60))
                 continue;
             let score = (onScreen ? Math.min(900, Math.hypot(p.x - cursorX, p.y - cursorY)) : 500) + Math.random() * 250;
             if (p.nx !== 0 && Math.abs(p.ny) < 0.5)
@@ -400,7 +410,7 @@ ShellRoot {
         const p = pointAt(tr, d0), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
         gx = p.x + p.nx * deep;
         gy = p.y + p.ny * deep;
-        dive(dir * ahead(spot), "peek", true);
+        dive(dir * ahead(spot), "peek", true, 1);
     }
 
     // Radio del cuerpo en la dirección de la normal (hacia el marco)
@@ -432,12 +442,12 @@ ShellRoot {
     }
 
     // Se zambulle en el marco, bucea `dist` px a lo largo de él y sale
-    function dive(dist: real, mode: string, fromDeep: bool): void {
+    function dive(dist: real, mode: string, fromDeep: bool, speed: real): void {
         diveMode = mode;
         diveFrom = swimD;
         diveDist = dist;
         diveT = 0;
-        diveDur = 1 + Math.abs(dist) / (mode === "peek" ? 380 : 620);
+        diveDur = (1 + Math.abs(dist) / (mode === "peek" ? 380 : 620)) / (speed > 0 ? speed : 1);
         diveFromDeep = fromDeep;
         diveStage = fromDeep ? 1 : 0;
         swimTarget = NaN;
@@ -502,7 +512,68 @@ ShellRoot {
             energy = 1;
             savePos();
             checkBg();
+            avoidPanels();
         }
+    }
+
+    // Energía según la hora (interpolando entre puntos del día)
+    function energyAt(h: real): real {
+        const pts = [[0, 0.55], [6, 0.5], [8, 1.2], [12, 1.25], [14, 1.05], [15.5, 0.85], [17, 1], [20, 1], [23, 0.7], [24, 0.55]];
+        for (let i = 1; i < pts.length; i++)
+            if (h <= pts[i][0]) {
+                const [h0, e0] = pts[i - 1], [h1, e1] = pts[i];
+                return e0 + (e1 - e0) * (h - h0) / (h1 - h0);
+            }
+        return 1;
+    }
+
+    function setPanels(name: string, text: string): void {
+        const s = Quickshell.screens.find(q => q.name === name);
+        let rects = [];
+        try {
+            rects = (JSON.parse(text).rects ?? []).map(r => [r[0] + (s?.x ?? 0), r[1] + (s?.y ?? 0), r[2], r[3]]);
+        } catch (e) {}
+        const all = Object.assign({}, panels);
+        all[name] = rects;
+        panels = all;
+        avoidPanels();
+    }
+
+    // ¿El punto (x, y) cae sobre algún panel abierto (con margen m)?
+    function inPanel(x: real, y: real, m: real): bool {
+        for (const name in panels)
+            for (const r of panels[name])
+                if (x > r[0] - m && x < r[0] + r[2] + m && y > r[1] - m && y < r[1] + r[3] + m)
+                    return true;
+        return false;
+    }
+
+    // Si un panel le ha caído encima, se va buceando (rápido y sin que se le vea) al sitio libre
+    // más cercano; si no hay ninguno, a su nido de la barra
+    function avoidPanels(): void {
+        if (!present || (phys !== "swim" && phys !== "hidden"))
+            return;
+        if (!inPanel(gx, gy, Math.max(bodyRx, bodyRy) + 10))
+            return;
+        const s = nearestScreen(gx, gy), tr = track(s);
+        let best = NaN, bestScore = -Infinity;
+        for (let i = 0; i < 64; i++) {
+            const d = tr.len * i / 64, p = pointAt(tr, d);
+            if (p.ny < -0.9 || inPanel(p.x, p.y, bodyRx + 70))
+                continue;
+            const score = -Math.abs(trackDiff(tr, swimD, d)) + Math.min(400, Math.hypot(p.x - cursorX, p.y - cursorY)) * 0.5;
+            if (score > bestScore) {
+                bestScore = score;
+                best = d;
+            }
+        }
+        reacted("surprised", 500);
+        if (isNaN(best)) {
+            goNest();
+            return;
+        }
+        phys = "swim";
+        dive(trackDiff(tr, swimD, best), "hidden", false, 2.2);
     }
 
     // Punto del nido y del recorrido junto a él
@@ -527,7 +598,7 @@ ShellRoot {
             return;
         }
         diveToNest = true;
-        dive(trackDiff(tr, swimD, target), "hidden", false);
+        dive(trackDiff(tr, swimD, target), "hidden", false, Math.max(0.7, dayEnergy));
     }
 
     function enterNest(s: var): void {
@@ -685,8 +756,9 @@ ShellRoot {
         else if (Math.hypot(cursorX - gx, cursorY - gy) < 400)
             hopDir = cursorX > gx ? -1 : 1;   // no ir hacia el ratón
         const big = Math.random() < 0.15;
-        vx = hopDir * (big ? 260 : 120 + Math.random() * 120);
-        vy = big ? -950 : -(430 + Math.random() * 180);
+        const e = 0.75 + 0.25 * dayEnergy;
+        vx = hopDir * (big ? 260 : 120 + Math.random() * 120) * e;
+        vy = (big && dayEnergy > 0.9 ? -950 : -(430 + Math.random() * 180)) * e;
         hopsLeft--;
         phys = "air";
     }
@@ -746,6 +818,7 @@ ShellRoot {
             return;
         savePos();
         checkBg();
+        avoidPanels();
         // Se queda en el workspace de la pantalla donde ha caído
         const id = Hyprland.monitorFor(nearestScreen(gx, gy))?.activeWorkspace?.id;
         if (id !== undefined && id > 0)
@@ -1115,7 +1188,7 @@ ShellRoot {
         // Probar el buceo: px a lo largo del marco, mode hidden|peek
         function dive(px: real, mode: string): void {
             if (shell.phys === "swim")
-                shell.dive(px, mode === "peek" ? "peek" : "hidden", false);
+                shell.dive(px, mode === "peek" ? "peek" : "hidden", false, 1);
         }
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
@@ -1235,15 +1308,15 @@ ShellRoot {
         repeat: true
         interval: 9000
         onTriggered: {
-            interval = 7000 + Math.random() * 11000;
+            interval = (7000 + Math.random() * 11000) / shell.dayEnergy;
             const s = shell.nearestScreen(shell.gx, shell.gy), tr = shell.track(s), p = shell.pointAt(tr, shell.swimD);
             const r = Math.random();
             if (r >= 0.38 && r < 0.62) {
                 // Se zambulle y sale más allá (a veces sin que se le vea nada, a veces asomando)
                 for (let i = 0; i < 6; i++) {
                     const dist = (Math.random() < 0.5 ? -1 : 1) * (350 + Math.random() * 700), q = shell.pointAt(tr, shell.swimD + dist);
-                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9) {
-                        shell.dive(dist, Math.random() < 0.5 ? "hidden" : "peek", false);
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
+                        shell.dive(dist, Math.random() < 0.5 ? "hidden" : "peek", false, shell.dayEnergy);
                         return;
                     }
                 }
@@ -1252,8 +1325,8 @@ ShellRoot {
                 // A otro sitio (no muy lejos, y que no sea junto al ratón)
                 for (let i = 0; i < 6; i++) {
                     const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
-                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9) {
-                        shell.energy = 0.75 + Math.random() * 0.6;
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
+                        shell.energy = (0.75 + Math.random() * 0.6) * shell.dayEnergy;
                         shell.swimTarget = ((d % tr.len) + tr.len) % tr.len;
                         break;
                     }
@@ -1265,6 +1338,17 @@ ShellRoot {
             } else if (r < 0.9 && Math.abs(p.nx) > 0.9) {
                 shell.pushOff();
             }
+        }
+    }
+
+    Timer {
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        interval: 60000
+        onTriggered: {
+            const d = new Date();
+            shell.dayEnergy = shell.energyAt(d.getHours() + d.getMinutes() / 60);
         }
     }
 
@@ -1288,7 +1372,7 @@ ShellRoot {
         id: idleHide
 
         running: shell.shown && shell.present && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
-        interval: shell.hideAfter
+        interval: shell.hideAfter * Math.max(0.5, Math.min(1.3, shell.dayEnergy))
         onTriggered: {
             if (shell.phys !== "swim") {
                 restart();
@@ -1331,6 +1415,15 @@ ShellRoot {
                 Region {
                     item: bubble.visible ? bubble : null
                 }
+            }
+
+            // Paneles abiertos de Caelestia en esta pantalla
+            FileView {
+                path: `${Quickshell.env("XDG_RUNTIME_DIR")}/caelestia-panels-${win.modelData.name}.json`
+                watchChanges: true
+                printErrors: false
+                onFileChanged: reload()
+                onLoaded: shell.setPanels(win.modelData.name, text())
             }
 
             Image {
@@ -1434,6 +1527,9 @@ ShellRoot {
                 readonly property real lx: shell.lookX
                 readonly property real ly: shell.lookY
                 readonly property string face: mochi.face
+                // de madrugada, si no andas cerca, duerme (ojos cerrados y respira más despacio)
+                readonly property bool asleep: shell.drowsy > 0.8 && !shell.cursorNear
+                onAsleepChanged: requestPaint()
                 readonly property color ink: Theme.secondary
                 property real breath: 0
 
@@ -1457,12 +1553,12 @@ ShellRoot {
 
                     NumberAnimation {
                         to: 1
-                        duration: 1800
+                        duration: nestIcon.asleep ? 2800 : 1800
                         easing.type: Easing.InOutSine
                     }
                     NumberAnimation {
                         to: 0
-                        duration: 1800
+                        duration: nestIcon.asleep ? 2800 : 1800
                         easing.type: Easing.InOutSine
                     }
                 }
@@ -1493,7 +1589,13 @@ ShellRoot {
                     const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
                     for (const cx of [11, 19]) {
                         const x = cx + ex, y = 14 + ey;
-                        if (happy) {
+                        if (asleep) {
+                            // dormido: rayitas
+                            ctx.fillStyle = "black";
+                            ctx.beginPath();
+                            ctx.roundedRect(x - 2.1, y + 0.6, 4.2, 1.3, 0.65, 0.65);
+                            ctx.fill();
+                        } else if (happy) {
                             // ^ ^
                             ctx.lineWidth = 1.7;
                             ctx.lineCap = "round";
@@ -1529,6 +1631,7 @@ ShellRoot {
                 hidden: shell.phys === "hidden"
                 // (en el nido, en reposo, lo que se ve es su icono en la barra; los ojos de
                 // verdad salen al asomarse)
+                drowsy: shell.drowsy
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)

@@ -37,6 +37,7 @@ Item {
     // Posición global de Mochi: si cambia, el fluido lo nota por inercia
     property real worldX: 0
     property real worldY: 0
+    property real drowsy: 0          // 0-1: sueño según la hora (entorna los ojos)
     property bool eyesOff: false   // buceando: los ojos se quedan bajo el marco
     // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
     property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
@@ -369,6 +370,11 @@ Item {
                 lx = 0.85 * Math.cos(t * 5);
                 ly = -0.85 * Math.abs(Math.sin(t * 5));
                 break;
+            }
+            // Con sueño (según la hora), párpados a media asta y mirada algo caída
+            if (root.drowsy > 0 && ["", "smile", "peek", "calm", "curious", "lookaround"].includes(root.face)) {
+                e.lt = Math.max(e.lt, 0.34 * root.drowsy);
+                ly += 0.12 * root.drowsy;
             }
             // Mientras escribe la respuesta, los ojos botan un poco
             if (root.talking) {
