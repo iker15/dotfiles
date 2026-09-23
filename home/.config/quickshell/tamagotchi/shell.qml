@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
@@ -8,7 +9,7 @@ import Quickshell.Wayland
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
 // - Si no le haces caso en un rato se esconde por debajo del borde (asoma los ojos).
-// - Clic (o doble +) para hablarle; la respuesta sale en un bocadillo.
+// - Clic (o doble +) para hablarle; lo que escribes y su respuesta salen como subtítulos encima.
 // - Vive en un workspace: si cambias de workspace, al rato viene detrás de ti (sin ponerse
 //   bajo el ratón). Lanzándolo contra un lado atraviesa el borde y sigue su trayectoria por los
 //   workspaces de ese lado hasta que se le acaba el impulso.
@@ -861,108 +862,283 @@ ShellRoot {
                 styleColor: "black"
             }
 
-            // Bocadillo: respuesta y/o campo para escribir
-            Rectangle {
+            // Subtítulos: lo que escribes y lo que contesta flotan sobre Mochi, sin caja.
+            // Texto con halo suave; claro u oscuro según el fondo (igual que el cuerpo).
+            Item {
                 id: bubble
 
-                readonly property bool above: mochi.y - height - 22 > 8
+                readonly property bool above: mochi.y - height - 14 > 8
+                readonly property color ink: shell.lightBody ? "#fbfaf6" : "#141414"
+                readonly property color halo: shell.lightBody ? "#000000" : "#ffffff"
+                readonly property bool showing: win.here && mochi.visible && (shell.asking || shell.voiceWaiting || (shell.bubbleShown && (shell.remark !== "" || Brain.reply !== "" || Brain.busy)))
+                readonly property string fullText: {
+                    if (shell.asking)
+                        return "";
+                    if (shell.remark && !Brain.busy)
+                        return shell.remark;
+                    return Brain.reply;
+                }
+                // Estado mientras no hay respuesta todavía
+                readonly property string status: {
+                    if (shell.voiceWaiting && !Brain.busy)
+                        return "te escucho…";
+                    if (!Brain.busy || Brain.reply)
+                        return "";
+                    switch (Brain.mood) {
+                    case "reading":
+                        return "leyendo…";
+                    case "searching":
+                        return "buscando…";
+                    case "focused":
+                        return "editando…";
+                    case "working":
+                        return "trabajando…";
+                    default:
+                        return "pensando…";
+                    }
+                }
+                // Lo que has dicho (por escrito o por voz), en pequeño encima de la respuesta
+                readonly property string said: !shell.asking && !shell.remark && (Brain.busy || Brain.reply) ? Brain.lastPrompt : ""
+                property int revealed: 0     // la respuesta aparece palabra a palabra
 
-                visible: win.here && mochi.visible && (shell.asking || shell.voiceWaiting || (shell.bubbleShown && (shell.remark !== "" || Brain.reply !== "" || Brain.busy)))
-                width: Math.max(input.visible ? 280 : 0, Math.min(320, reply.implicitWidth + 28))
-                height: content.height + 20
-                x: Math.max(8, Math.min(win.width - width - 8, mochi.x + mochi.width / 2 - width / 2))
-                y: above ? mochi.y - height - 22 : mochi.y + mochi.height + 14
-                radius: 18
-                color: "#f4f4f2"
+                visible: opacity > 0.01
+                opacity: showing ? 1 : 0
+                width: Math.max(shell.asking ? 320 : 0, Math.min(460, Math.max(reply.implicitWidth, saidText.implicitWidth, statusText.implicitWidth) + 8))
+                height: content.implicitHeight
+                x: Math.max(12, Math.min(win.width - width - 12, mochi.x + mochi.width / 2 - width / 2))
+                y: above ? mochi.y - height - 14 : mochi.y + mochi.height + 12
 
-                // Piquito hacia Mochi
+                onFullTextChanged: {
+                    // Respuesta nueva (no la continuación de la anterior): empezar desde el principio
+                    if (!fullText || revealed > fullText.length)
+                        revealed = 0;
+                }
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 260
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Timer {
+                    running: bubble.revealed < bubble.fullText.length
+                    repeat: true
+                    interval: 38
+                    onTriggered: {
+                        const i = bubble.fullText.indexOf(" ", bubble.revealed + 1);
+                        bubble.revealed = i < 0 ? bubble.fullText.length : i;
+                    }
+                }
+
+                // Penumbra difuminada detrás del texto (sin bordes) para que se lea sobre cualquier fondo
                 Rectangle {
-                    width: 14
-                    height: 14
-                    rotation: 45
-                    color: parent.color
-                    x: Math.max(14, Math.min(bubble.width - 28, mochi.x + mochi.width / 2 - bubble.x - 7))
-                    y: bubble.above ? bubble.height - 8 : -6
-                    z: -1
+                    id: scrim
+
+                    anchors.fill: content
+                    anchors.margins: -16
+                    radius: 28
+                    color: bubble.halo
+                    visible: false
+                    layer.enabled: true
+                }
+
+                MultiEffect {
+                    anchors.fill: scrim
+                    source: scrim
+                    blurEnabled: true
+                    blur: 1
+                    blurMax: 48
+                    opacity: 0.5
                 }
 
                 Column {
                     id: content
 
-                    x: 14
-                    y: 10
-                    width: bubble.width - 28
-                    spacing: 8
+                    width: parent.width
+                    spacing: 6
+
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: bubble.halo
+                        shadowOpacity: 1
+                        shadowBlur: 0.8
+                        shadowVerticalOffset: 0
+                        blurMax: 16
+                    }
+
+                    Text {
+                        id: saidText
+
+                        visible: text !== ""
+                        width: parent.width
+                        text: bubble.said ? `«${bubble.said}»` : ""
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        font.family: Theme.font
+                        font.pixelSize: 13
+                        font.italic: true
+                        color: bubble.ink
+                        opacity: 0.6
+                    }
+
+                    Text {
+                        id: statusText
+
+                        visible: text !== ""
+                        width: parent.width
+                        text: bubble.status
+                        horizontalAlignment: Text.AlignHCenter
+                        font.family: Theme.font
+                        font.pixelSize: 13
+                        font.letterSpacing: 0.5
+                        color: bubble.ink
+
+                        SequentialAnimation on opacity {
+                            loops: Animation.Infinite
+                            running: statusText.visible
+
+                            NumberAnimation {
+                                to: 0.35
+                                duration: 700
+                                easing.type: Easing.InOutSine
+                            }
+                            NumberAnimation {
+                                to: 0.85
+                                duration: 700
+                                easing.type: Easing.InOutSine
+                            }
+                        }
+                    }
 
                     Flickable {
                         visible: reply.text !== ""
                         width: parent.width
-                        height: Math.min(reply.implicitHeight, 240)
+                        height: Math.min(reply.implicitHeight, 280)
                         contentHeight: reply.implicitHeight
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
 
-                        onContentHeightChanged: if (Brain.busy) contentY = Math.max(0, contentHeight - height)
+                        onContentHeightChanged: if (Brain.busy || bubble.revealed < bubble.fullText.length) contentY = Math.max(0, contentHeight - height)
 
                         Text {
                             id: reply
 
-                            width: Math.min(implicitWidth, 292)
-                            text: {
-                                if (shell.asking)
-                                    return "";
-                                if (shell.remark && !Brain.busy)
-                                    return shell.remark;
-                                if (shell.voiceWaiting && !Brain.busy)
-                                    return "Te escucho… 👂";
-                                if (Brain.busy && !Brain.reply) {
-                                    const doing = Brain.mood === "working" && Brain.toolName ? `(${Brain.toolName.toLowerCase()}…)` : "…";
-                                    // Si fue por voz, enseñar lo que ha entendido
-                                    return shell.heard && Brain.lastPrompt === shell.heard ? `_«${shell.heard}»_\n\n${doing}` : doing;
-                                }
-                                return Brain.reply;
-                            }
+                            width: parent.width
+                            text: bubble.fullText.slice(0, bubble.revealed)
+                            horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             textFormat: Text.MarkdownText
+                            lineHeight: 1.08
                             font.family: Theme.font
-                            font.pixelSize: 14
-                            color: "#111111"
+                            font.pixelSize: 16
+                            font.weight: Font.Medium
+                            color: bubble.ink
+                            linkColor: bubble.ink
                             onLinkActivated: link => Qt.openUrlExternally(link)
                         }
                     }
 
-                    TextField {
-                        id: input
-
+                    // Lo que escribes, suelto y centrado
+                    Item {
                         visible: shell.asking
                         width: parent.width
-                        background: null
-                        padding: 0
-                        placeholderText: "Dime algo…"
-                        placeholderTextColor: "#8a8a86"
-                        color: "#111111"
-                        font.family: Theme.font
-                        font.pixelSize: 14
-                        selectionColor: "#111111"
-                        selectedTextColor: "white"
+                        height: input.implicitHeight
 
-                        onVisibleChanged: {
-                            if (visible) {
-                                text = "";
-                                forceActiveFocus();
+                        TextInput {
+                            id: input
+
+                            anchors.fill: parent
+                            horizontalAlignment: TextInput.AlignHCenter
+                            color: bubble.ink
+                            font.family: Theme.font
+                            font.pixelSize: 18
+                            font.weight: Font.Medium
+                            selectionColor: bubble.ink
+                            selectedTextColor: bubble.halo
+                            selectByMouse: true
+                            clip: true
+
+                            cursorDelegate: Rectangle {
+                                width: 2
+                                color: bubble.ink
+                                visible: input.text !== ""   // vacío: el cursor va delante del texto de ayuda
+
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: input.activeFocus
+
+                                    NumberAnimation {
+                                        to: 0
+                                        duration: 450
+                                        easing.type: Easing.InOutSine
+                                    }
+                                    NumberAnimation {
+                                        to: 1
+                                        duration: 450
+                                        easing.type: Easing.InOutSine
+                                    }
+                                }
+                            }
+
+                            onVisibleChanged: {
+                                if (visible) {
+                                    text = "";
+                                    forceActiveFocus();
+                                }
+                            }
+                            Keys.onEscapePressed: shell.asking = false
+                            onAccepted: {
+                                if (!text.trim())
+                                    return;
+                                Brain.send(text);
+                                shell.asking = false;
                             }
                         }
-                        Keys.onEscapePressed: shell.asking = false
-                        onAccepted: {
-                            if (!text.trim())
-                                return;
-                            Brain.send(text);
-                            shell.asking = false;
+
+                        Row {
+                            anchors.centerIn: parent
+                            visible: !input.text
+                            spacing: 3
+
+                            Rectangle {
+                                width: 2
+                                height: hint.implicitHeight
+                                color: bubble.ink
+
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: shell.asking
+
+                                    NumberAnimation {
+                                        to: 0
+                                        duration: 450
+                                        easing.type: Easing.InOutSine
+                                    }
+                                    NumberAnimation {
+                                        to: 1
+                                        duration: 450
+                                        easing.type: Easing.InOutSine
+                                    }
+                                }
+                            }
+
+                            Text {
+                                id: hint
+
+                                text: "Escríbele a Mochi…"
+                                font: input.font
+                                color: bubble.ink
+                                opacity: 0.55
+                            }
                         }
                     }
                 }
 
-                // Clic en la respuesta: cerrarla
+                // Clic en la respuesta: cerrarla · encima: no se va mientras la lees
                 MouseArea {
                     anchors.fill: parent
                     enabled: !shell.asking
