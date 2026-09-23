@@ -31,7 +31,22 @@ if s["mode"] != "dark":
         if path.exists():
             colours = read_colours_from_file(path)
 
-scheme = json.dumps({**s, "mode": "dark", "colours": colours})
+# Fondos casi neutros: con fondos de pantalla muy coloridos el editor de VS Code
+# quedaba teñido y costaba leer. Se limita la saturación (croma HCT) de los fondos,
+# los acentos y el texto no se tocan.
+from materialyoucolor.hct import Hct
+
+MAX_CHROMA = 4
+FONDOS = {"background", "base", "mantle", "crust", "surface0", "surface1", "surface2",
+          "surfaceVariant", "outlineVariant", "term0"}
+colours = dict(colours)
+for k, v in colours.items():
+    if k in FONDOS or (k.startswith("surface") and k != "surfaceTint"):
+        c = Hct.from_int(int("ff" + v, 16))
+        if c.chroma > MAX_CHROMA:
+            colours[k] = f"{Hct.from_hct(c.hue, MAX_CHROMA, c.tone).to_int() & 0xffffff:06x}"
+
+scheme =json.dumps({**s, "mode": "dark", "colours": colours})
 sequences = gen_sequences(colours)
 
 out_dir.mkdir(parents=True, exist_ok=True)
