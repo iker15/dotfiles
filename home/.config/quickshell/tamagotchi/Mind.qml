@@ -18,6 +18,7 @@ Singleton {
     signal say(string text, string face)
     signal glance(real x, real y)           // mirar hacia un punto de la pantalla
     signal dance(int ms)
+    signal shape(string name, int ms)       // imitar una forma con el cuerpo (engranaje…)
 
     // Música
     readonly property var player: Mpris.players.values.find(p => p.isPlaying) ?? null
@@ -56,6 +57,18 @@ Singleton {
             re: /steam_app|^steam$|lutris|heroic|minecraft|prismlauncher|retroarch|gamescope/,
             kind: "game",
             face: "excited"
+        },
+        {
+            re: /systemsettings|control-center|nwg-look|pavucontrol|blueman|nm-connection|qt[56]ct|kvantum|settings/,
+            kind: "settings",
+            face: "focused",
+            shape: "gear"
+        },
+        {
+            re: /^claude|anthropic/,
+            kind: "claude",
+            face: "love",
+            shape: "claude"
         },
         {
             re: /codium|^code|zed|jetbrains|neovide/,
@@ -113,6 +126,8 @@ Singleton {
     function onWindowOpened(cls: string): void {
         const k = kindOf(cls);
         react(k ? k.face : "curious", 1600);
+        if (k?.shape)
+            shape(k.shape, 3200);   // p. ej. abres unos ajustes: se hace un engranaje
     }
 
     Connections {

@@ -95,6 +95,41 @@ ShellRoot {
     property real bodyOffX: 0
     property real bodyOffY: 0
 
+    // Formas que imita con el cuerpo (ver mochi.frag): un rato (tempShape) o mientras Claude
+    // trabaja (su destello, girando). Al tomar forma se separa del marco lo justo para verse entera.
+    property string tempShape: ""
+    readonly property string shapeName: (phys === "swim" || phys === "air" || phys === "held") && present ? (tempShape || (Brain.busy ? "claude" : "")) : ""
+    readonly property int shapeId: ({
+            "gear": 1,
+            "claude": 2,
+            "heart": 3,
+            "star": 4,
+            "arrow": 5
+        })[shapeName] ?? 0
+    property int lastShape: 0
+    property real morph: shapeId ? 1 : 0
+    property real shapeRot: 0
+    onShapeIdChanged: {
+        if (shapeId) {
+            lastShape = shapeId;
+            kicked(-1.6, 2.6);   // se estira al transformarse
+        } else {
+            kicked(1.4, -1.8);
+        }
+    }
+    Behavior on morph {
+        NumberAnimation {
+            duration: 420
+            easing.type: Easing.OutBack
+        }
+    }
+
+    function shapeShift(name: string, ms: int): void {
+        tempShape = name;
+        tempShapeTimer.interval = ms > 0 ? ms : 2500;
+        tempShapeTimer.restart();
+    }
+
     // Paneles abiertos de Caelestia (los publica caelestia/modules/drawers/MochiBridge.qml):
     // pantalla → [[x, y, w, h], …] en coordenadas globales. No se queda debajo de ellos.
     property var panels: ({})
@@ -781,8 +816,10 @@ ShellRoot {
     function pet(): void {
         if (phys === "nest")
             idleHide.restart();
-        else
+        else {
             touch();
+            shapeShift("heart", 2000);
+        }
         reacted("love", 2400);
         splatted(420, false);
     }
@@ -910,6 +947,11 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
+        // el engranaje gira; el destello de Claude, despacio
+        if (morph > 0.01)
+            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 0.45 : 0);
+        else
+            shapeRot = 0;
         if (phys !== "nest" && (bodyOffX || bodyOffY)) {
             // (al sacarlo del nido, el cuerpo sale de la barra detrás de los ojos)
             const f = Math.exp(-9 * dt);
@@ -1006,10 +1048,12 @@ ShellRoot {
                 swimV *= Math.exp(-4 * dt);
                 swimD = ((swimD + swimV * dt) % tr.len + tr.len) % tr.len;
             }
-            // Sigue el recorrido con suavidad (al salir del marco, al pegarse…)
+            // Sigue el recorrido con suavidad (al salir del marco, al pegarse…); con forma, se
+            // separa del marco lo justo para que se vea entera
             const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
-            gx += (p.x - gx) * k;
-            gy += (p.y - gy) * k;
+            const lift = Math.max(0, morph) * Math.max(0, 50 - normalRadius(p) + embed);
+            gx += (p.x - p.nx * lift - gx) * k;
+            gy += (p.y - p.ny * lift - gy) * k;
             return;
         }
 
@@ -1146,6 +1190,10 @@ ShellRoot {
             if (shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
                 shell.reacted("dance", ms);
         }
+        function onShape(name: string, ms: int): void {
+            if (shell.present && !shell.asking && !shell.dragging && shell.phys === "swim")
+                shell.shapeShift(name, ms);
+        }
         function onGlance(x: real, y: real): void {
             shell.glanceX = x;
             shell.glanceY = y;
@@ -1280,6 +1328,10 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
+        }
+        // Imitar una forma: gear | claude | heart | star | arrow (ms, 0 = 2,5 s)
+        function shape(name: string, ms: int): void {
+            shell.shapeShift(name, ms);
         }
         // Probar el sueño: nod | yawn | doze | wake
         function sleep(what: string): void {
@@ -1489,6 +1541,12 @@ ShellRoot {
         }
     }
 
+    Timer {
+        id: tempShapeTimer
+
+        onTriggered: shell.tempShape = ""
+    }
+
     // Te vas de encima del nido: se vuelve a meter al rato
     Timer {
         id: nestLeave
@@ -1623,6 +1681,11 @@ ShellRoot {
                         property real blobK: 26
                         property real frameK: shell.frameSmoothing
                         property real bandOnly: 0
+                        property vector4d shape: Qt.vector4d(shell.lastShape, Math.max(0, shell.morph), shell.shapeRot, 44)
+                        property vector4d card: Qt.vector4d(0, 0, 0, 0)
+                        property real cardR: 0
+                        property real cardOn: 0
+                        property real baseAlpha: 1
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
@@ -1651,6 +1714,11 @@ ShellRoot {
                 property real blobK: bodyFx.blobK
                 property real frameK: bodyFx.frameK
                 property real bandOnly: 1
+                property vector4d shape: bodyFx.shape
+                property vector4d card: bodyFx.card
+                property real cardR: 0
+                property real cardOn: 0
+                property real baseAlpha: 1
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
