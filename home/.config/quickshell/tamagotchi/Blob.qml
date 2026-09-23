@@ -2,7 +2,7 @@ import QtQuick
 
 // Mochi: gota blanda con forma de daifuku (cúpula arriba, base plana) y solo dos ojos.
 // Toda la expresión va en los ojos: tamaño, párpados (arriba, inclinados, o por abajo en
-// media luna), brillo y hacia dónde miran. Los ojos cambian de forma con muelles, así que
+// media luna) y hacia dónde miran. Los ojos cambian de forma con muelles, así que
 // "rebotan" al pasar de una expresión a otra.
 // El cuerpo es un fluido: al moverlo se queda atrás, se estira y tiembla al soltarlo.
 Item {
@@ -385,16 +385,8 @@ Item {
             ctx.roundedRect(x - w / 2, y - h / 2, w, h, r, r);
             ctx.fill();
 
-            // Brillo: le da vida a los ojos
+            // Los párpados se pintan del color del cuerpo
             ctx.fillStyle = root.bodyColor;
-            if (h > d * 0.6 && e.lb < 0.3) {
-                const hr = Math.min(w, h) * 0.15;
-                ctx.globalAlpha = 0.85;
-                ctx.beginPath();
-                ctx.ellipse(x - w * 0.2 - hr, y - h * 0.22 - hr, 2 * hr, 2 * hr);
-                ctx.fill();
-                ctx.globalAlpha = 1;
-            }
 
             // Párpado de arriba (recto, inclinado hacia dentro o hacia fuera)
             if (e.lt > 0.01) {
