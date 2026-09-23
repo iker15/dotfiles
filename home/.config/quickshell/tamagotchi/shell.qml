@@ -1350,11 +1350,10 @@ ShellRoot {
                 id: interior
 
                 visible: mochi.visible
-                // (3 px de más: el shader tapa el borde suavizado del marco junto a Mochi)
-                x: shell.barW - 3
-                y: shell.frame - 3
-                width: win.width - shell.barW - shell.frame + 6
-                height: win.height - 2 * shell.frame + 6
+                x: shell.barW
+                y: shell.frame
+                width: win.width - shell.barW - shell.frame
+                height: win.height - 2 * shell.frame
                 clip: true
 
                 Item {
@@ -1372,7 +1371,7 @@ ShellRoot {
                     // El cuerpo: metaballs en un shader (mochi.frag). Solo se calcula en una caja
                     // alrededor de Mochi.
                     ShaderEffect {
-                        id: body
+                        id: bodyFx
 
                         readonly property real half: 140
 
@@ -1393,10 +1392,37 @@ ShellRoot {
                         property var edge: edgeImg
                         property real blobK: 26
                         property real frameK: shell.frameSmoothing
+                        property real bandOnly: 0
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
                 }
+            }
+
+            // Segunda pasada, sin sombra: solo la franja de 6 px que tapa el borde suavizado del
+            // marco junto a Mochi (con la sombra, esa franja oscurecía el marco)
+            ShaderEffect {
+                visible: mochi.visible
+                x: bodyFx.x
+                y: bodyFx.y
+                width: bodyFx.width
+                height: bodyFx.height
+
+                property vector2d size: bodyFx.size
+                property vector4d body: bodyFx.body
+                property vector4d mass: bodyFx.mass
+                property vector4d tail: bodyFx.tail
+                property vector4d wobA: bodyFx.wobA
+                property vector4d wobB: bodyFx.wobB
+                property vector4d frame: bodyFx.frame
+                property color color: bodyFx.color
+                property vector4d view: bodyFx.view
+                property var edge: edgeImg
+                property real blobK: bodyFx.blobK
+                property real frameK: bodyFx.frameK
+                property real bandOnly: 1
+
+                fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
 
             Blob {

@@ -23,6 +23,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 view;       // posición de este item en su pantalla (x, y), ancho de `edge`, ¿hay edge?
     float blobK;     // suavizado entre las partes de Mochi
     float frameK;    // suavizado con el marco (el de Caelestia)
+    float bandOnly;  // 1 = pintar solo la franja sobre el borde del marco (pasada sin sombra)
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
@@ -40,10 +41,10 @@ void main() {
     vec2 p = qt_TexCoord0 * size;
 
     // Fuera del interior del marco no se pinta (el marco ya lo dibuja Caelestia), salvo una
-    // franja de 3 px junto a Mochi: el borde del marco está suavizado (semitransparente) y
-    // encima de su cuerpo se veía como una rayita
+    // franja de 6 px junto a Mochi: el borde del marco está suavizado (semitransparente) y
+    // tiene un filo de otro tono; junto a su cuerpo se veía como una rayita
     float inside = min(min(p.x - frame.x, frame.z - p.x), min(p.y - frame.y, frame.w - p.y));
-    if (inside < -3.0) {
+    if (inside < -6.0 || (bandOnly > 0.5 && inside >= 0.0)) {
         fragColor = vec4(0.0);
         return;
     }
@@ -64,7 +65,8 @@ void main() {
 
     float alpha = clamp(0.5 - d, 0.0, 1.0);
     if (inside < 0.0)   // en la franja del borde: solo donde Mochi está pegado, fundiéndose
-        alpha = clamp((frameK * 0.6 - dm) / (frameK * 0.3), 0.0, 1.0);
+        // (y difuminada hacia dentro del marco, para que su tono pase al de Mochi sin escalón)
+        alpha = clamp((frameK * 0.6 - dm) / (frameK * 0.3), 0.0, 1.0) * smoothstep(-6.0, -1.5, inside);
     if (alpha <= 0.0) {
         fragColor = vec4(0.0);
         return;

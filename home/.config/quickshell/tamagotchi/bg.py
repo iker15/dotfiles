@@ -49,7 +49,7 @@ if g:
 #    Mochi está en una capa por encima de la de Caelestia, así que aquí no sale reflejado.
 L, R, T, B = sx + barw, sx + sw - frame, sy + frame, sy + sh - frame
 W = int(max(sw, sh))
-depth = (3, 7)   # px dentro del marco (sin el antialiasing del borde)
+depth = (3, 5)   # px dentro del marco: su filo, justo pasado el antialiasing (donde se toca con Mochi)
 strips = {
     0: ("h", sx, B + depth[0], sx + sw, B + depth[1]),   # abajo
     1: ("v", R + depth[0], sy, R + depth[1], sy + sh),   # derecha
@@ -58,6 +58,12 @@ strips = {
 }
 lo = {0: L + rounding, 1: T + rounding, 2: L + rounding, 3: T + rounding}
 hi = {0: R - rounding, 1: B - rounding, 2: R - rounding, 3: B - rounding}
+# Lado en el que está Mochi y el tramo que tapa (ahí pinta él: se rellena interpolando)
+dist = {0: B - cy, 1: R - cx, 2: cy - T, 3: cx - L}
+side = min(dist, key=dist.get)
+along_m = (cx - sx) if side in (0, 2) else (cy - sy)
+half_m = 1.8 * (rx if side in (0, 2) else ry)
+
 rows = []
 for k in range(4):
     kind, *box = strips[k]
@@ -88,6 +94,14 @@ for k in range(4):
             pos = min(max(first + i, lo[k]), hi[k])
             idx = int(min(max((pos - first) / inv - base / inv if inv else 0, 0), n - 1))
             row[i] = tuple(int(round(c)) for c in med[idx])
+        if k == side:
+            lo_i = int(max(0, along_m - half_m))
+            hi_i = int(min(W - 1, along_m + half_m))
+            a = row[lo_i - 1] if lo_i > 0 else row[min(W - 1, hi_i + 1)]
+            z = row[hi_i + 1] if hi_i < W - 1 else a
+            for i in range(lo_i, hi_i + 1):
+                t = (i - lo_i + 1) / (hi_i - lo_i + 2)
+                row[i] = tuple(int(round(a[c] + (z[c] - a[c]) * t)) for c in range(3))
     rows.append(row)
 
 if out:
@@ -100,10 +114,7 @@ if out:
     os.replace(tmp, out)
 
 # Color del marco junto a Mochi (para elegir ojos claros u oscuros)
-dist = {0: B - cy, 1: R - cx, 2: cy - T, 3: cx - L}
-side = min(dist, key=dist.get)
-along = (cx - sx) if side in (0, 2) else (cy - sy)
-seg = rows[side][int(max(0, along - rx)):int(min(W, along + rx)) + 1] or [(0, 0, 0)]
+seg = rows[side][int(max(0, along_m - rx)):int(min(W, along_m + rx)) + 1] or [(0, 0, 0)]
 col = "#" + "".join(f"{sorted(c[ch] for c in seg)[len(seg) // 2]:02x}" for ch in range(3))
 
 print(lum, col)
