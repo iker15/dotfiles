@@ -57,13 +57,32 @@ ShellRoot {
     property real swimD: 0
     property real swimV: 0
     property real swimTarget: NaN
-    property real swimPhase: 0
     property real ceilingTime: 0
+    // Marcha: no va a velocidad constante, sino a zancadas (se encoge, se lanza estirándose,
+    // se pasa un poco y se recoloca) con pausas irregulares. `energy` > 1 = con ganas.
+    property real energy: 1
+    property real gT: -1          // tiempo dentro de la zancada (-1 = parado entre zancadas)
+    property real gDur: 0
+    property real gLen: 0         // largo de la zancada (con signo, a lo largo del recorrido)
+    property real gProg: 0
+    property real gRest: 0        // pausa que le queda antes de la siguiente
+    property bool gLunged: false
+    property bool gHoriz: true    // la zancada va en horizontal (suelo/techo) o en vertical
+    property bool slipping: false // resbalón por una pared (no cuenta como viaje)
+    property real slipIn: 2
+    // Llegada buceando por dentro del borde de abajo (solo se ve un bulto que avanza)
+    property real burrowX: 0
+    property real burrowThen: NaN // a dónde nadar al salir (si su sitio está en una pared)
     property real hideX: 0
     property real hideY: 0
     property bool cursorNear: false
     property bool lightBody: false      // fondo oscuro → subtítulos claros
     property color frameColor: Theme.surface   // color real del marco a su lado (lo mide bg.py)
+    // El marco visto justo en la unión, a lo largo de sus lados (imagen que escribe bg.py y
+    // usa el shader para pintar el cuerpo): se alternan dos ficheros para que la imagen recargue
+    property string edgeFile: ""
+    property string edgeScreen: ""
+    property int edgeGen: 0
 
     Behavior on frameColor {
         ColorAnimation {
@@ -99,6 +118,8 @@ ShellRoot {
     property string remark: ""            // comentario espontáneo en el bocadillo
 
     signal splatted(real strength, bool horizontal)
+    signal kicked(real ax, real ay)
+    signal leaned(real v)
     signal reacted(string name, int ms)
 
     readonly property string mood: (asking || voiceWaiting) && !Brain.busy ? "listening" : Brain.mood
@@ -241,6 +262,79 @@ ShellRoot {
         return d > tr.len / 2 ? d - tr.len : d;
     }
 
+    // Curva de una zancada: coge impulso hacia atrás, se lanza, se pasa un pelín y vuelve
+    function strideEase(u: real): real {
+        const c = 1.05 * 1.525;
+        return u < 0.5 ? Math.pow(2 * u, 2) * ((c + 1) * 2 * u - c) / 2 : (Math.pow(2 * u - 2, 2) * ((c + 1) * (2 * u - 2) + c) + 2) / 2;
+    }
+
+    // Empujón a la forma en el sentido de la marcha (along) y perpendicular (perp)
+    function kickAlong(along: real, perp: real): void {
+        if (gHoriz)
+            kicked(along, perp);
+        else
+            kicked(perp, along);
+    }
+
+    // Avanza la marcha: devuelve cuánto moverse este frame hacia `diff`, o NaN si ya ha llegado
+    function gait(diff: real, dt: real, horiz: bool, ahead: var): real {
+        if (gT < 0) {
+            if (gRest > 0) {
+                gRest -= dt;
+                return 0;
+            }
+            if (Math.abs(diff) < 3)
+                return NaN;
+            let len = Math.min(Math.abs(diff), (60 + Math.random() * 110) * energy);
+            if (Math.abs(diff) - len < 45)
+                len = Math.abs(diff);   // el último tramo, de una
+            gLen = Math.sign(diff) * len;
+            gProg = 0;
+            gT = 0;
+            gDur = (0.34 + len * 0.0022 + Math.random() * 0.1) / Math.sqrt(energy);
+            gLunged = false;
+            gHoriz = horiz;
+            // Se encoge para coger impulso y mira hacia donde va
+            kickAlong(-1.1 - 0.4 * energy, 0.8);
+            if (ahead) {
+                glanceX = ahead.x;
+                glanceY = ahead.y;
+                glanceUntil = Date.now() + (gDur + 0.3) * 1000;
+            }
+        }
+        gT += dt;
+        const u = Math.min(1, gT / gDur), e = strideEase(u);
+        const step = gLen * e - gProg;
+        gProg = gLen * e;
+        if (!gLunged && u > 0.3) {
+            // Se lanza: se estira hacia delante y los ojos se echan hacia allí
+            gLunged = true;
+            kickAlong(1.5 + 0.8 * energy, -1.2);
+            leaned(Math.sign(gLen) * (gHoriz ? 1 : 0.5) * 90);
+        }
+        if (u >= 1) {
+            gT = -1;
+            // Frena: se aplasta un poco contra el sentido de la marcha
+            kickAlong(-0.8, 0.5);
+            const r = Math.random();
+            gRest = (r < 0.14 ? 0.7 + Math.random() * 0.6 : 0.06 + Math.random() * 0.22) / energy;
+            // En las pausas largas se para a mirar (atrás, o a ti)
+            if (r < 0.14) {
+                const back = Math.random() < 0.5;
+                glanceX = back ? gx - Math.sign(gLen) * (gHoriz ? 400 : 0) : cursorX;
+                glanceY = back ? gy - Math.sign(gLen) * (gHoriz ? 0 : 400) : cursorY;
+                glanceUntil = Date.now() + gRest * 1000;
+            }
+        }
+        return step;
+    }
+
+    // Empieza un viaje nuevo: un momentito para decidirse antes de la primera zancada
+    function startTrip(): void {
+        gT = -1;
+        gRest = (0.12 + Math.random() * 0.25) / energy;
+    }
+
     // Un sitio del marco lejos del ratón, mejor en las paredes o en las esquinas de abajo (el
     // centro de abajo suele tener cosas: reproductores, barras…) y no en el techo
     function spotD(s: var, tr: var): real {
@@ -263,8 +357,9 @@ ShellRoot {
         return best;
     }
 
-    // Llega al workspace en el que estás: sale nadando de la barra (o del borde derecho) por el
-    // lado del que viene y va a un sitio tranquilo
+    // Llega al workspace en el que estás buceando por dentro del borde de abajo: entra por la
+    // esquina del lado del que viene (solo se ve un bulto que avanza a zancadas) y sale a la
+    // superficie en un sitio tranquilo (si ese sitio es una pared, sale en su esquina y sube)
     function arrive(): void {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
@@ -274,13 +369,33 @@ ShellRoot {
         mochiWs = ws.id;
         hopsLeft = 0;
         entering = false;
-        const y = tr.T + (tr.B - tr.T) * 0.7;
-        swimD = nearestD(tr, fromLeft ? tr.L : tr.R, y);
+        swimTarget = NaN;
         swimV = 0;
-        swimTarget = spotD(s, tr);
-        gx = fromLeft ? tr.L - 80 : tr.R + 80;   // empieza dentro del marco
-        gy = y;
+        const spot = spotD(s, tr), p = pointAt(tr, spot);
+        const onFloor = p.ny > 0.9;
+        burrowX = onFloor ? p.x : p.x < (tr.L + tr.R) / 2 ? tr.L + tr.c : tr.R - tr.c;
+        burrowThen = onFloor ? NaN : spot;
+        gx = fromLeft ? tr.L - 10 : tr.R + 10;
+        gy = tr.B + 2 * bodyRy;   // del todo por debajo del borde
+        energy = 1.8;
+        startTrip();
+        phys = "burrow";
+    }
+
+    // Sale a la superficie al final del buceo
+    function emerge(s: var): void {
+        const tr = track(s);
+        swimD = nearestD(tr, gx, tr.B);
+        swimV = 0;
         phys = "swim";
+        energy = 1.3;
+        swimTarget = burrowThen;
+        if (!isNaN(burrowThen))
+            startTrip();
+        else
+            energy = 1;
+        burrowThen = NaN;
+        kicked(-1.5, 3.2);   // sale estirándose hacia arriba
         reacted("excited", 1300);
     }
 
@@ -408,7 +523,11 @@ ShellRoot {
         const s = nearestScreen(gx, gy);
         if (!s || bgProc.running)
             return;
-        bgProc.command = [Quickshell.shellDir + "/bg.py", gx, gy, bodyRx, bodyRy, s.x, s.y, s.width, s.height, barW, frame].map(String);
+        // (escondido o buceando asoman los ojos por el marco: no se mide entonces)
+        const edge = phys === "swim" || phys === "air" ? `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-edge-${s.name}-${edgeGen % 2}.ppm` : "";
+        bgProc.edgeOut = edge;
+        bgProc.edgeFor = s.name;
+        bgProc.command = [Quickshell.shellDir + "/bg.py", gx, gy, bodyRx, bodyRy, s.x, s.y, s.width, s.height, barW, frame, frameRounding, edge].map(String);
         bgProc.running = true;
     }
 
@@ -473,6 +592,19 @@ ShellRoot {
             return;
         const tr = track(s);
 
+        if (phys === "burrow") {
+            // Un bulto bajo el borde de abajo: sube hasta asomar un poco y avanza a zancadas
+            const step = gait(burrowX - gx, dt, true, null);
+            if (isNaN(step)) {
+                emerge(s);
+                return;
+            }
+            gx += step;
+            const bumpY = tr.B + 2 * bodyRy - embed - 18;   // asoma ~18 px del cuerpo
+            gy += (bumpY - gy) * Math.min(1, dt * 4);
+            return;
+        }
+
         if (phys === "hidden") {
             const k = Math.min(1, dt * 2.5);
             gx += (hideX - gx) * k;
@@ -482,21 +614,38 @@ ShellRoot {
 
         if (phys === "swim") {
             const here = pointAt(tr, swimD);
-            let want = 0;
+            let moved = false;
             if (!isNaN(swimTarget)) {
-                // Nada hacia el sitio elegido, a brazadas
+                // Va hacia el sitio elegido a zancadas
                 const diff = trackDiff(tr, swimD, swimTarget);
-                if (Math.abs(diff) < 6) {
+                const ahead = pointAt(tr, swimD + Math.sign(diff) * 300);
+                const step = gait(diff, dt, Math.abs(here.ny) > 0.5, slipping ? null : ahead);
+                if (isNaN(step)) {
+                    const wasSlip = slipping;
                     swimTarget = NaN;
-                    savePos();
-                    checkBg();
+                    swimV = 0;
+                    energy = 1;
+                    if (!wasSlip) {
+                        savePos();
+                        checkBg();
+                    }
                 } else {
-                    swimPhase += dt * 7;
-                    want = Math.sign(diff) * Math.min(280, Math.abs(diff) * 2 + 40) * (0.55 + 0.45 * Math.max(0, Math.sin(swimPhase)));
+                    swimD = ((swimD + step) % tr.len + tr.len) % tr.len;
+                    swimV = step / dt;
+                    moved = true;
                 }
             } else if (Math.abs(here.nx) > 0.9) {
-                // En una pared: la gravedad lo va bajando despacio
-                want = here.nx > 0 ? -22 : 22;
+                // En una pared la gravedad puede más que él: se aguanta y de vez en cuando
+                // resbala un poco, a tirones, como una gota en un cristal
+                slipIn -= dt;
+                if (slipIn <= 0) {
+                    slipIn = 0.8 + Math.random() * 2.6;
+                    slipping = true;
+                    energy = 2.2;
+                    gT = -1;
+                    gRest = 0;
+                    swimTarget = ((swimD + (here.nx > 0 ? -1 : 1) * (8 + Math.random() * 26)) % tr.len + tr.len) % tr.len;
+                }
             }
             // En el techo no aguanta mucho: se suelta y cae como una gota
             if (here.ny < -0.9 && isNaN(swimTarget)) {
@@ -513,10 +662,13 @@ ShellRoot {
             } else {
                 ceilingTime = 0;
             }
-            swimV += (want - swimV) * Math.min(1, dt * 4);
-            swimD = ((swimD + swimV * dt) % tr.len + tr.len) % tr.len;
+            if (!moved) {
+                // La inercia que traiga (al pegarse volando…) se va frenando
+                swimV *= Math.exp(-4 * dt);
+                swimD = ((swimD + swimV * dt) % tr.len + tr.len) % tr.len;
+            }
             // Sigue el recorrido con suavidad (al salir del marco, al pegarse…)
-            const p = pointAt(tr, swimD), k = Math.min(1, dt * 10);
+            const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
             gx += (p.x - gx) * k;
             gy += (p.y - gy) * k;
             return;
@@ -665,6 +817,12 @@ ShellRoot {
     }
 
     onBubbleShownChanged: if (!bubbleShown) remark = ""
+    onSwimTargetChanged: {
+        if (isNaN(swimTarget))
+            slipping = false;
+        else if (!slipping)
+            startTrip();
+    }
     onAskingChanged: if (asking) remark = ""
 
     // El bocadillo se va solo al rato (más tiempo cuanto más largo)
@@ -755,6 +913,20 @@ ShellRoot {
         function face(name: string): void {
             shell.reacted(name, 2500);
         }
+        // Probar la marcha: ir px a lo largo del marco (+ = antihorario), con ganas `energy`
+        function walk(px: real, energy: real): void {
+            if (shell.phys !== "swim")
+                return;
+            shell.energy = energy > 0 ? energy : 1;
+            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
+            shell.swimTarget = ((shell.swimD + px) % tr.len + tr.len) % tr.len;
+        }
+        // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
+        function arrive(from: string): void {
+            const id = Hyprland.focusedWorkspace?.id ?? 1;
+            shell.mochiWs = from === "left" ? id - 1 : id + 1;
+            shell.arrive();
+        }
         // Dar un saltito (para probar el movimiento)
         function jump(): void {
             shell.hopsLeft = 1;
@@ -814,6 +986,17 @@ ShellRoot {
     Process {
         id: bgProc
 
+        property string edgeOut
+        property string edgeFor
+
+        onExited: code => {
+            if (code === 0 && edgeOut) {
+                shell.edgeScreen = edgeFor;
+                shell.edgeFile = edgeOut;
+                shell.edgeGen++;
+            }
+        }
+
         stdout: SplitParser {
             onRead: line => {
                 const [l, col] = line.trim().split(" ");
@@ -857,6 +1040,7 @@ ShellRoot {
                 for (let i = 0; i < 6; i++) {
                     const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
                     if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9) {
+                        shell.energy = 0.75 + Math.random() * 0.6;
                         shell.swimTarget = ((d % tr.len) + tr.len) % tr.len;
                         break;
                     }
@@ -902,6 +1086,7 @@ ShellRoot {
             required property ShellScreen modelData
 
             readonly property bool here: shell.screenAt(shell.gx, shell.gy) === modelData
+            readonly property bool hasEdge: shell.edgeScreen === modelData.name && edgeImg.status === Image.Ready
 
             screen: modelData
             visible: shell.shown
@@ -912,7 +1097,9 @@ ShellRoot {
             exclusionMode: ExclusionMode.Ignore
             color: "transparent"
 
-            WlrLayershell.layer: WlrLayer.Top
+            // Por encima de la capa de Caelestia: si no, la sombra del marco le cae encima y el
+            // cristal del marco (con blur) se aclara con él debajo → se nota la unión
+            WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "mochi"
             WlrLayershell.keyboardFocus: shell.asking && here ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
@@ -923,6 +1110,16 @@ ShellRoot {
                 Region {
                     item: bubble.visible ? bubble : null
                 }
+            }
+
+            Image {
+                id: edgeImg
+
+                visible: false
+                cache: false
+                asynchronous: false
+                smooth: true
+                source: shell.edgeScreen === win.modelData.name && shell.edgeFile ? "file://" + shell.edgeFile : ""
             }
 
             // Cuerpo de Mochi: mismo color, transparencia y sombra que el marco de Caelestia.
@@ -969,7 +1166,9 @@ ShellRoot {
                         property vector4d wobA: mochi.wobA
                         property vector4d wobB: mochi.wobB
                         property vector4d frame: Qt.vector4d(shell.barW - x, shell.frame - y, win.width - shell.frame - x, win.height - shell.frame - y)
-                        property color color: shell.frameColor   // sólido, del color que se ve el marco
+                        property color color: shell.frameColor   // de reserva, sin textura del marco
+                        property vector4d view: Qt.vector4d(x, y, edgeImg.sourceSize.width, win.hasEdge ? 1 : 0)
+                        property var edge: edgeImg
                         property real blobK: 26
                         property real frameK: shell.frameSmoothing
 
@@ -992,6 +1191,7 @@ ShellRoot {
                 falling: shell.phys === "air" && shell.vy > 900
                 bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
+                eyesOff: shell.phys === "burrow"
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 talking: Brain.talking
                 music: Mind.musicPlaying
@@ -1004,6 +1204,12 @@ ShellRoot {
                     }
                     function onReacted(name: string, ms: int): void {
                         mochi.react(name, ms);
+                    }
+                    function onKicked(ax: real, ay: real): void {
+                        mochi.kick(ax, ay);
+                    }
+                    function onLeaned(v: real): void {
+                        mochi.lean(v);
                     }
                 }
                 lookX: shell.dragging ? 0 : shell.lookX

@@ -37,6 +37,7 @@ Item {
     // Posición global de Mochi: si cambia, el fluido lo nota por inercia
     property real worldX: 0
     property real worldY: 0
+    property bool eyesOff: false   // buceando por dentro del marco: no se le ven los ojos
 
     readonly property real u: 1.45                 // escala respecto al Mochi original
     readonly property real rx: 32 * u              // semiejes del cuerpo en reposo
@@ -92,6 +93,18 @@ Item {
             sim.svy -= s;
             sim.svx += s * 0.7;
         }
+    }
+
+    // Empujón a la forma: ancho (ax) y alto (ay); positivo estira, negativo encoge. Para la
+    // marcha: se encoge antes de arrancar, se estira al lanzarse, se aplasta al frenar
+    function kick(ax: real, ay: real): void {
+        sim.svx += ax;
+        sim.svy += ay;
+    }
+
+    // Inclinar los ojos un momento (grados/s), como quien se echa hacia delante
+    function lean(v: real): void {
+        sim.rotV += v;
     }
 
     function react(name: string, ms: int): void {
@@ -532,6 +545,13 @@ Item {
 
         anchors.fill: parent
         anchors.margins: -root.rx
+        opacity: root.eyesOff ? 0 : 1
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 160
+            }
+        }
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
             const d = 9.5 * root.u;
