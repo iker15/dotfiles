@@ -10,7 +10,8 @@ import Quickshell.Wayland
 // - Si no le haces caso en un rato se esconde por debajo del borde (asoma los ojos).
 // - Clic (o doble +) para hablarle; la respuesta sale en un bocadillo.
 // - Vive en un workspace: si cambias de workspace, al rato viene detrás de ti (sin ponerse
-//   bajo el ratón). Lanzándolo fuerte contra un lado se va al workspace de ese lado.
+//   bajo el ratón). Lanzándolo contra un lado atraviesa el borde y sigue su trayectoria por los
+//   workspaces de ese lado hasta que se le acaba el impulso.
 // - Mind.qml le hace reaccionar (con los ojos) a lo que haces; acariciarlo (pasar el ratón de lado a lado) le encanta.
 // IPC: qs -c tamagotchi ipc call pet toggle|appear|hide|talk|ask "<texto>"|face <cara>|state
 ShellRoot {
@@ -58,6 +59,7 @@ ShellRoot {
     property int mochiWs: -1              // workspace donde vive
     property bool entering: false         // entrando por un lado de la pantalla (sin paredes)
     property bool thrown: false           // lanzado a mano: puede cruzar a otro workspace
+    property bool flung: false            // ha cruzado a otro workspace en este lanzamiento
     property real targetX: NaN            // sitio al que va dando saltos
     property real sulkUntil: 0            // tras lanzarlo a otro workspace, se queda allí un rato
     readonly property bool present: mochiWs < 0 || Hyprland.monitors.values.some(m => m.activeWorkspace?.id === mochiWs)
@@ -187,23 +189,20 @@ ShellRoot {
         followTimer.restart();
     }
 
-    // Lanzado contra un lado con fuerza: se va al workspace de ese lado (si hay)
-    function throwToWs(dir: int, s: var): bool {
+    // Lanzado contra un lado con fuerza: atraviesa el borde y sigue volando por el
+    // workspace de ese lado (si hay). Si al llegar al otro borde aún va rápido, pasa al
+    // siguiente, y así hasta que se le acabe el impulso.
+    function crossToWs(dir: int, s: var): bool {
         const ids = Hyprland.workspaces.values.map(w => w.id).filter(id => id > 0).sort((a, b) => a - b);
         const next = dir > 0 ? ids.find(id => id > mochiWs) : ids.filter(id => id < mochiWs).pop();
         if (next === undefined)
             return false;
         mochiWs = next;
-        sulkUntil = Date.now() + 120000;   // se queda allí un par de minutos antes de volver
-        thrown = false;
-        entering = false;
+        flung = true;
+        entering = true;
         targetX = NaN;
-        gx = dir > 0 ? s.x + 160 : s.x + s.width - 160;
-        gy = s.y + s.height - bodyRy;
-        vx = vy = 0;
-        phys = "ground";
-        followTimer.interval = 120000;
-        followTimer.restart();
+        gx = dir > 0 ? s.x - bodyRx * 0.5 : s.x + s.width + bodyRx * 0.5;
+        vx *= 0.9;
         return true;
     }
 
@@ -259,6 +258,18 @@ ShellRoot {
 
     function landed(): void {
         thrown = false;
+        // Ha acabado en otro workspace: se queda allí un par de minutos y luego vuelve contigo
+        if (flung) {
+            flung = false;
+            if (!present) {
+                sulkUntil = Date.now() + 120000;
+                followTimer.interval = 120000;
+                followTimer.restart();
+                return;
+            }
+        }
+        if (!present)
+            return;
         savePos();
         checkBg();
         // Se queda en el workspace de la pantalla donde ha caído
@@ -315,14 +326,14 @@ ShellRoot {
             if (nx >= left && nx <= right)
                 entering = false;
         } else if (nx < left && !screenAt(nx - bodyRx, ny)) {
-            if (thrown && vx < -1100 && throwToWs(-1, s))
+            if (thrown && vx < -1100 && crossToWs(-1, s))
                 return;
             nx = left;
             if (vx < -300)
                 splatted(-vx, true);
             vx = Math.abs(vx) * 0.45;
         } else if (nx > right && !screenAt(nx + bodyRx, ny)) {
-            if (thrown && vx > 1100 && throwToWs(1, s))
+            if (thrown && vx > 1100 && crossToWs(1, s))
                 return;
             nx = right;
             if (vx > 300)
@@ -610,7 +621,7 @@ ShellRoot {
     }
 
     FrameAnimation {
-        running: shell.shown && shell.present && (shell.phys === "air" || shell.phys === "held")
+        running: shell.shown && (shell.phys === "air" || shell.phys === "held")   // también volando por otro workspace
         onTriggered: shell.physStep(frameTime)
     }
 
@@ -775,6 +786,7 @@ ShellRoot {
                         shell.hopsLeft = 0;
                         shell.targetX = NaN;
                         shell.entering = false;
+                        shell.flung = false;
                         shell.phys = "held";
                         shell.vx = shell.vy = shell.hvx = shell.hvy = 0;
                         shell.prevX = shell.gx;
@@ -816,7 +828,7 @@ ShellRoot {
                         if (moved) {
                             // Soltarlo: sale lanzado con la velocidad del ratón y cae
                             shell.dragging = false;
-                            shell.vx = Math.max(-2600, Math.min(2600, shell.hvx));
+                            shell.vx = Math.max(-4500, Math.min(4500, shell.hvx));
                             shell.vy = Math.max(-2600, Math.min(2600, shell.hvy));
                             shell.phys = "air";
                             shell.thrown = true;
