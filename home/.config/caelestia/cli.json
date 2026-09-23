@@ -1,6 +1,6 @@
 {
     "wallpaper": {
-        "postHook": "$HOME/.config/matugen/apply.sh"
+        "postHook": "$HOME/.config/caelestia/strict_scheme.py"
     },
     "theme": {
         "enableTerm": false

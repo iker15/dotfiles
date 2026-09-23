@@ -7,8 +7,8 @@
 import json, os
 from pathlib import Path
 
-from caelestia.utils.paths import scheme_data_dir, wallpaper_thumbnail_path
-from caelestia.utils.scheme import Scheme, read_colours_from_file
+from caelestia.utils.paths import scheme_data_dir
+from caelestia.utils.scheme import read_colours_from_file
 from caelestia.utils.theme import gen_sequences
 
 state = Path.home() / ".local/state/caelestia"
@@ -24,9 +24,8 @@ s = json.loads(src.read_text())
 colours = s["colours"]
 if s["mode"] != "dark":
     if s["name"] == "dynamic":
-        from caelestia.utils.material import get_colours_for_image
-        dark = Scheme({**s, "mode": "dark"})
-        colours = get_colours_for_image(wallpaper_thumbnail_path, dark)
+        from strict_scheme import colours as strict_colours  # mismo color que la shell
+        colours = strict_colours("dark", s["flavour"])
     else:
         path = scheme_data_dir / s["name"] / s["flavour"] / "dark.txt"
         if path.exists():
