@@ -81,6 +81,17 @@ ShellRoot {
     property real diveStage: 0        // 0 coge aire · 0.5 zambulléndose · 1 dentro · 2 saliendo
     property real sink: 0             // cuánto va hundido respecto a nadar en la superficie
     property real diveUnder: 0        // 0-1: cuánto está dentro (los ojos no se ven)
+    property bool diveToNest: false   // el buceo acaba en el nido (no sale a la superficie)
+    // Nido: fundido del todo en la barra de la izquierda, en el hueco libre del medio (donde
+    // antes salía la ventana activa). Solo se le ven los ojos; al pasar el ratón se asoma un
+    // poco, y arrastrándolo se le saca. Vuelve ahí cuando no le haces caso.
+    readonly property real nestFrac: 0.53     // altura del hueco (fracción de la pantalla)
+    property bool nestHover: false
+    property real nestPeek: 0                 // 0 = solo ojos · 1 = asomado
+    // El cuerpo puede ir desplazado respecto a los ojos (en el nido: hundido en la barra
+    // mientras los ojos quedan a la vista); fuera del nido vuelve a 0
+    property real bodyOffX: 0
+    property real bodyOffY: 0
     property real hideX: 0
     property real hideY: 0
     property bool cursorNear: false
@@ -100,7 +111,7 @@ ShellRoot {
     readonly property real bodyRx: 32 * 1.45          // semiejes del cuerpo (como en Blob)
     readonly property real bodyRy: 29 * 1.45 * 0.95
     readonly property real embed: 12                  // cuánto va hundido en el marco al nadar
-    readonly property int hideAfter: 180000    // ms sin usarlo hasta que se esconde
+    readonly property int hideAfter: 90000     // ms sin usarlo hasta que vuelve al nido
 
     // Marco de Caelestia (barra a la izquierda y borde alrededor): Mochi vive dentro,
     // está hecho del mismo material y se funde con él al tocarlo
@@ -440,7 +451,7 @@ ShellRoot {
         swimD = ((diveFrom + diveDist * glide(u)) % tr.len + tr.len) % tr.len;
         const p = pointAt(tr, swimD), rn = normalRadius(p);
         const surface = 2 * rn - embed, mid = diveVisible(diveMode, rn);
-        const down = smooth((u - 0.05) / 0.2), up = smooth((u - 0.78) / 0.2);
+        const down = smooth((u - 0.05) / 0.2), up = diveToNest ? 0 : smooth((u - 0.78) / 0.2);
         let vis = (diveFromDeep ? diveVisible("hidden", rn) : surface) * (1 - down) + mid * down;
         vis = vis * (1 - up) + surface * up;
         if (!diveFromDeep && u < 0.06)
@@ -478,6 +489,10 @@ ShellRoot {
         glanceY = ahead.y;
         glanceUntil = Date.now() + 200;
 
+        if (u >= 1 && diveToNest) {
+            enterNest(nearestScreen(gx, gy));
+            return;
+        }
         if (u >= 1) {
             phys = "swim";
             diveMode = "";
@@ -488,6 +503,76 @@ ShellRoot {
             savePos();
             checkBg();
         }
+    }
+
+    // Punto del nido y del recorrido junto a él
+    function nestPoint(s: var): var {
+        return {
+            x: s.x + barW / 2,
+            y: s.y + s.height * nestFrac
+        };
+    }
+
+    // Vuelve al nido buceando por el marco (sin que se le vea); si no está a la vista, aparece
+    // directamente allí
+    function goNest(): void {
+        const s = present ? nearestScreen(gx, gy) : screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s)
+            return;
+        const tr = track(s), n = nestPoint(s);
+        const target = nearestD(tr, tr.L, n.y);
+        if (!present || phys !== "swim") {
+            mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;
+            enterNest(s);
+            return;
+        }
+        diveToNest = true;
+        dive(trackDiff(tr, swimD, target), "hidden", false);
+    }
+
+    function enterNest(s: var): void {
+        const n = nestPoint(s);
+        hopsLeft = 0;
+        swimTarget = NaN;
+        diveMode = "";
+        diveToNest = false;
+        diveUnder = 0;
+        nestPeek = 0;
+        nestHover = false;
+        // los ojos van al centro de la barra; el cuerpo, hundido en ella
+        const bodyX = s.x + barW - bodyRx + diveVisible("hidden", bodyRx);
+        bodyOffX = bodyX - n.x;
+        bodyOffY = 0;
+        gx = n.x;
+        gy = n.y;
+        phys = "nest";
+        savePos();
+    }
+
+    // Sale del nido al interior (lo has llamado, le has hecho clic…)
+    function leaveNest(): void {
+        const s = nearestScreen(gx, gy), tr = track(s);
+        swimD = nearestD(tr, tr.L, gy);
+        swimV = 0;
+        nestHover = false;
+        phys = "swim";
+        kicked(3, -1.5);   // sale estirándose hacia dentro
+        reacted("happy", 900);
+    }
+
+    function nestStep(s: var, dt: real): void {
+        const n = nestPoint(s);
+        nestPeek += ((nestHover ? 1 : 0) - nestPeek) * Math.min(1, dt * 7);
+        // Ojos: del centro de la barra a su borde; cuerpo: de hundido a asomar media cara
+        const eyeX = n.x + (s.x + barW + 12 - n.x) * nestPeek;
+        const vis = diveVisible("hidden", bodyRx) * (1 - nestPeek) + 48 * nestPeek;
+        const bodyX = s.x + barW - bodyRx + vis;
+        const k = Math.min(1, dt * 12);
+        gx += (eyeX - gx) * k;
+        gy += (n.y - gy) * k;
+        bodyOffX = bodyX - gx;
+        bodyOffY = 0;
+        mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;   // la barra está en todos
     }
 
     // Lo has llamado (++, voz, clic…) y no está aquí: sale del borde de abajo
@@ -514,7 +599,7 @@ ShellRoot {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
-        if (mochiWs < 0 || phys === "held") {   // si lo llevas agarrado, viene contigo
+        if (mochiWs < 0 || phys === "held" || phys === "nest") {   // agarrado o en el nido: está contigo
             mochiWs = ws.id;
             return;
         }
@@ -545,7 +630,10 @@ ShellRoot {
 
     // Acariciarlo con el ratón
     function pet(): void {
-        touch();
+        if (phys === "nest")
+            idleHide.restart();
+        else
+            touch();
         reacted("love", 2400);
         splatted(420, false);
     }
@@ -567,6 +655,10 @@ ShellRoot {
         idleHide.restart();
         if (!present) {
             summon();
+            return;
+        }
+        if (phys === "nest") {
+            leaveNest();
             return;
         }
         if (phys === "hidden") {
@@ -664,6 +756,12 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
+        if (phys !== "nest" && (bodyOffX || bodyOffY)) {
+            // (al sacarlo del nido, el cuerpo sale de la barra detrás de los ojos)
+            const f = Math.exp(-9 * dt);
+            bodyOffX = Math.abs(bodyOffX) < 0.3 ? 0 : bodyOffX * f;
+            bodyOffY = Math.abs(bodyOffY) < 0.3 ? 0 : bodyOffY * f;
+        }
         if (phys === "held") {
             // Velocidad del arrastre (suavizada) y sacudidas
             hvx = hvx * 0.6 + (gx - prevX) / dt * 0.4;
@@ -685,6 +783,10 @@ ShellRoot {
 
         if (phys === "dive") {
             diveStep(tr, dt);
+            return;
+        }
+        if (phys === "nest") {
+            nestStep(s, dt);
             return;
         }
 
@@ -834,6 +936,12 @@ ShellRoot {
         onLoaded: {
             const [x, y] = text().trim().split(" ").map(Number);
             if (!isNaN(x) && !isNaN(y)) {
+                // Estaba en el nido (dentro de la barra): vuelve a él
+                const s = shell.nearestScreen(x, y);
+                if (s && x < s.x + shell.barW) {
+                    shell.enterNest(s);
+                    return;
+                }
                 shell.gx = x;
                 shell.gy = y;
                 shell.settle();
@@ -1010,6 +1118,13 @@ ShellRoot {
                 shell.dive(px, mode === "peek" ? "peek" : "hidden", false);
         }
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
+        function nest(): void {
+            shell.goNest();
+        }
+        // Probar el asomo del nido (como si pasaras el ratón por encima)
+        function nestPeek(on: bool): void {
+            shell.nestHover = on;
+        }
         function arrive(from: string): void {
             const id = Hyprland.focusedWorkspace?.id ?? 1;
             shell.mochiWs = from === "left" ? id - 1 : id + 1;
@@ -1153,6 +1268,14 @@ ShellRoot {
         }
     }
 
+    // Te vas de encima del nido: se vuelve a meter al rato
+    Timer {
+        id: nestLeave
+
+        interval: 600
+        onTriggered: shell.nestHover = false
+    }
+
     Timer {
         id: hopAgain
 
@@ -1164,14 +1287,14 @@ ShellRoot {
     Timer {
         id: idleHide
 
-        running: shell.shown && shell.present && shell.phys !== "hidden" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         interval: shell.hideAfter
         onTriggered: {
             if (shell.phys !== "swim") {
                 restart();
                 return;
             }
-            shell.hideAway();
+            shell.goNest();
         }
     }
 
@@ -1227,10 +1350,11 @@ ShellRoot {
                 id: interior
 
                 visible: mochi.visible
-                x: shell.barW
-                y: shell.frame
-                width: win.width - shell.barW - shell.frame
-                height: win.height - 2 * shell.frame
+                // (3 px de más: el shader tapa el borde suavizado del marco junto a Mochi)
+                x: shell.barW - 3
+                y: shell.frame - 3
+                width: win.width - shell.barW - shell.frame + 6
+                height: win.height - 2 * shell.frame + 6
                 clip: true
 
                 Item {
@@ -1252,8 +1376,8 @@ ShellRoot {
 
                         readonly property real half: 140
 
-                        x: mochi.x + mochi.width / 2 - half
-                        y: mochi.y + mochi.height / 2 - half
+                        x: mochi.x + mochi.width / 2 - half + shell.bodyOffX
+                        y: mochi.y + mochi.height / 2 - half + shell.bodyOffY
                         width: 2 * half
                         height: 2 * half
 
@@ -1290,8 +1414,9 @@ ShellRoot {
                 bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
                 eyesOff: shell.phys === "dive" && shell.diveUnder > 0.4
-                // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen)
-                clipRect: Qt.rect(shell.barW - x, shell.frame - y, win.width - shell.barW - shell.frame, win.height - 2 * shell.frame)
+                // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
+                // salvo por la barra de la izquierda (el nido)
+                clipRect: Qt.rect(-x, shell.frame - y, win.width - shell.frame, win.height - 2 * shell.frame)
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 talking: Brain.talking
                 music: Mind.musicPlaying
@@ -1312,8 +1437,10 @@ ShellRoot {
                         mochi.lean(v);
                     }
                 }
-                lookX: shell.dragging ? 0 : shell.lookX
-                lookY: shell.dragging ? 0 : shell.lookY
+                // (en el nido la barra es estrecha: mira moviendo poco los ojos, salvo asomado)
+                readonly property real lookScale: shell.phys === "nest" ? 0.25 + 0.75 * shell.nestPeek : 1
+                lookX: shell.dragging ? 0 : shell.lookX * lookScale
+                lookY: shell.dragging ? 0 : shell.lookY * lookScale
 
                 MouseArea {
                     property real px
@@ -1332,7 +1459,17 @@ ShellRoot {
                     cursorShape: shell.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
 
                     // Pasar por encima lo despierta si estaba escondido
-                    onContainsMouseChanged: if (containsMouse && shell.phys === "hidden") shell.touch()
+                    onContainsMouseChanged: {
+                        // En el nido se asoma al pasar por encima, y se vuelve a meter al rato de irte
+                        if (containsMouse) {
+                            shell.nestHover = true;
+                            nestLeave.stop();
+                        } else {
+                            nestLeave.restart();
+                        }
+                        if (containsMouse && shell.phys === "hidden")
+                            shell.touch();
+                    }
 
                     // Clic derecho: historial · clic central: activar/silenciar el micro
                     onClicked: mouse => {
@@ -1349,7 +1486,10 @@ ShellRoot {
                         py = mouse.y;
                         moved = false;
                         wasPhys = shell.phys;
-                        shell.touch();
+                        if (wasPhys !== "nest")
+                            shell.touch();
+                        else
+                            idleHide.restart();
                         // Agarrado (también en el aire)
                         hopAgain.stop();
                         shell.hopsLeft = 0;
@@ -1405,7 +1545,12 @@ ShellRoot {
                                 shell.reacted("dizzy", 2400);
                             return;
                         }
-                        shell.phys = wasPhys === "swim" ? "swim" : "air";
+                        if (wasPhys === "nest") {
+                            shell.phys = "nest";
+                            shell.leaveNest();
+                        } else {
+                            shell.phys = wasPhys === "swim" ? "swim" : "air";
+                        }
                         if (shell.asking) {
                             mochi.poke();
                             shell.asking = false;

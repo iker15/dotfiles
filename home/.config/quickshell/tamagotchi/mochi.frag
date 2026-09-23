@@ -39,9 +39,11 @@ float smin(float a, float b, float k) {
 void main() {
     vec2 p = qt_TexCoord0 * size;
 
-    // Fuera del interior del marco no se pinta (el marco ya lo dibuja Caelestia)
+    // Fuera del interior del marco no se pinta (el marco ya lo dibuja Caelestia), salvo una
+    // franja de 3 px junto a Mochi: el borde del marco está suavizado (semitransparente) y
+    // encima de su cuerpo se veía como una rayita
     float inside = min(min(p.x - frame.x, frame.z - p.x), min(p.y - frame.y, frame.w - p.y));
-    if (inside < 0.0) {
+    if (inside < -3.0) {
         fragColor = vec4(0.0);
         return;
     }
@@ -55,11 +57,14 @@ void main() {
 
     d = smin(d, length(p - mass.xy) - mass.z, blobK);
     d = smin(d, length(p - tail.xy) - tail.z, blobK);
+    float dm = d;   // solo Mochi, sin el marco
 
     // Fundirse con el marco
     d = smin(d, inside, frameK);
 
     float alpha = clamp(0.5 - d, 0.0, 1.0);
+    if (inside < 0.0)   // en la franja del borde: solo donde Mochi está pegado, fundiéndose
+        alpha = clamp((frameK * 0.6 - dm) / (frameK * 0.3), 0.0, 1.0);
     if (alpha <= 0.0) {
         fragColor = vec4(0.0);
         return;
