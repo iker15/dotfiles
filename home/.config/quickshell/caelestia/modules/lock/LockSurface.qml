@@ -7,6 +7,7 @@ import Caelestia.Config
 import qs.components
 import qs.components.images
 import qs.services
+import "mochi" as Mochi
 
 WlSessionLockSurface {
     id: root
@@ -190,6 +191,23 @@ WlSessionLockSurface {
         CachingImage {
             path: Wallpapers.current
         }
+    }
+
+    // Mochi (~/.config/quickshell/tamagotchi) asomando por el borde de abajo, del mismo material
+    // que la tarjeta. Solo compañía: aquí no escucha ni obedece.
+    Mochi.LockPet {
+        pam: root.pam
+        failState: root.pam.state === Pam.MaxTries ? 2 : root.pam.state === Pam.Failed || root.pam.state === Pam.Error ? 1 : 0
+        capsLock: Hypr.capsLock
+        unlocking: root.unlocking
+        ready: !initAnim.running
+        bodyColor: Colours.palette.m3surface
+        bodyOpacity: Colours.transparency.enabled ? Colours.transparency.base : 1
+        shadowColor: Colours.palette.m3shadow
+        smoothing: Config.border.smoothing
+        fieldPos: Qt.point(width * 0.5, height * 0.68)
+        batteryPos: Qt.point(width * 0.667, height * 0.583)
+        opacity: background.opacity
     }
 
     Item {

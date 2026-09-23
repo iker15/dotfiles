@@ -26,6 +26,39 @@ Scope {
         lock: lock
     }
 
+    // Avisa a Mochi (tamagotchi): con la pantalla bloqueada no escucha ni obedece, y se viene
+    // a la pantalla de bloqueo. (Se comprueba también cada medio segundo: al desbloquear la
+    // señal no siempre llegaba a escribir el fichero.)
+    QtObject {
+        id: lockFlag
+
+        property int written: -1
+
+        function sync(): void {
+            const v = lock.locked ? 1 : 0;
+            if (v === written)
+                return;
+            written = v;
+            Quickshell.execDetached(["sh", "-c", 'printf "%s" "$1" > "$2"', "sh", String(v), `${Quickshell.env("XDG_RUNTIME_DIR")}/caelestia-locked`]);
+        }
+    }
+
+    Connections {
+        target: lock
+
+        function onLockedChanged(): void {
+            lockFlag.sync();
+        }
+    }
+
+    Timer {
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        interval: 500
+        onTriggered: lockFlag.sync()
+    }
+
     Loader {
         asynchronous: true
         active: true

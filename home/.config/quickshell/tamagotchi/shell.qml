@@ -36,6 +36,7 @@ ShellRoot {
     // Voz: ears.py escucha el micro y avisa al oír "Mochi"
     property bool earsOn: true
     property bool earsReady: false
+    property bool earsCooling: false   // se ha caído: espera un poco antes de relanzarlo
     property bool voiceWaiting: false  // ha oído "Mochi" y espera la orden
     property string heard: ""          // última orden dictada (se enseña mientras piensa)
 
@@ -82,6 +83,7 @@ ShellRoot {
     property real sink: 0             // cuánto va hundido respecto a nadar en la superficie
     property real diveUnder: 0        // 0-1: cuánto está dentro (los ojos no se ven)
     property bool diveToNest: false   // el buceo acaba en el nido (no sale a la superficie)
+    property bool diveStay: false     // el buceo acaba sumergido (se ha ido a la pantalla de bloqueo)
     // Nido: fundido del todo en la barra de la izquierda, en el hueco libre del medio (donde
     // antes salía la ventana activa). Solo se le ven los ojos; al pasar el ratón se asoma un
     // poco, y arrastrándolo se le saca. Vuelve ahí cuando no le haces caso.
@@ -151,6 +153,19 @@ ShellRoot {
     signal woke()                     // cualquier uso: se le quita el sueño
     signal sleepTest(string what)
     property bool dozing: false       // se ha quedado dormido (no pasea)
+
+    // Pantalla de bloqueo (la avisa caelestia/modules/lock/Lock.qml): mientras está bloqueada
+    // no escucha ni obedece, y se va a la pantalla de bloqueo (LockPet.qml, que dibuja Caelestia)
+    // saliendo por el borde de abajo; al desbloquear vuelve por ahí mismo a su sitio
+    property bool locked: false
+    property var preLock: null         // dónde estaba antes de bloquear
+    onLockedChanged: {
+        Brain.locked = locked;
+        if (locked)
+            goLock();
+        else
+            backFromLock();
+    }
     signal leaned(real v)
     signal reacted(string name, int ms)
 
@@ -464,7 +479,7 @@ ShellRoot {
         swimD = ((diveFrom + diveDist * glide(u)) % tr.len + tr.len) % tr.len;
         const p = pointAt(tr, swimD), rn = normalRadius(p);
         const surface = 2 * rn - embed, mid = diveVisible(diveMode, rn);
-        const down = smooth((u - 0.05) / 0.2), up = diveToNest ? 0 : smooth((u - 0.78) / 0.2);
+        const down = smooth((u - 0.05) / 0.2), up = diveToNest || diveStay ? 0 : smooth((u - 0.78) / 0.2);
         let vis = (diveFromDeep ? diveVisible("hidden", rn) : surface) * (1 - down) + mid * down;
         vis = vis * (1 - up) + surface * up;
         if (!diveFromDeep && u < 0.06)
@@ -504,6 +519,10 @@ ShellRoot {
 
         if (u >= 1 && diveToNest) {
             enterNest(nearestScreen(gx, gy));
+            return;
+        }
+        if (u >= 1 && diveStay) {
+            diveT = diveDur;   // se queda ahí abajo hasta que se desbloquee
             return;
         }
         if (u >= 1) {
@@ -577,6 +596,62 @@ ShellRoot {
         }
         phys = "swim";
         dive(trackDiff(tr, swimD, best), "hidden", false, 2.2);
+    }
+
+    // Se bloquea la pantalla: se hunde en el borde de abajo (en su x) y le cuenta a la pantalla de
+    // bloqueo dónde está y cuánto sueño tiene
+    function goLock(): void {
+        asking = false;
+        voiceWaiting = false;
+        const s = present ? nearestScreen(gx, gy) : screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s)
+            return;
+        const tr = track(s);
+        preLock = {
+            nest: phys === "nest",
+            d: swimD,
+            ws: mochiWs
+        };
+        const x = Math.max(tr.L + tr.c, Math.min(tr.R - tr.c, phys === "nest" ? s.x + s.width * 0.2 : gx));
+        lockState.setText(JSON.stringify({
+            screen: s.name,
+            x: Math.round(x - s.x),
+            drowsy: drowsy,
+            dozing: dozing
+        }));
+        if (present && (phys === "swim" || phys === "nest")) {
+            if (phys === "nest") {
+                phys = "swim";
+                swimD = nearestD(tr, tr.L, gy);
+            }
+            dive(trackDiff(tr, swimD, nearestD(tr, x, tr.B)), "hidden", false, 2.5);
+            diveToNest = false;
+            diveStay = true;   // se queda abajo
+        }
+    }
+
+    // Se desbloquea: sale del borde de abajo donde estaba en la pantalla de bloqueo, contento, y
+    // al rato vuelve a donde estaba
+    function backFromLock(): void {
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s)
+            return;
+        const tr = track(s);
+        let x = s.x + s.width * 0.7;
+        try {
+            x = s.x + JSON.parse(lockState.text()).x;
+        } catch (e) {}
+        mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;
+        diveStay = false;
+        diveToNest = false;
+        hopsLeft = 0;
+        swimTarget = NaN;
+        swimD = nearestD(tr, x, tr.B);
+        const p = pointAt(tr, swimD), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
+        gx = p.x;
+        gy = p.y + deep;
+        dive(0, "hidden", true, 2);
+        backHome.restart();
     }
 
     // Punto del nido y del recorrido junto a él
@@ -726,6 +801,8 @@ ShellRoot {
     // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
     // workspace, viene
     function touch(): void {
+        if (locked)
+            return;
         idleHide.restart();
         woke();
         if (!present) {
@@ -983,6 +1060,8 @@ ShellRoot {
     }
 
     function openInput(): void {
+        if (locked)
+            return;
         touch();
         shown = true;
         asking = true;
@@ -1106,14 +1185,16 @@ ShellRoot {
         id: earsRestart
 
         interval: 2000
-        onTriggered: if (shell.earsOn) ears.running = true
+        onTriggered: shell.earsCooling = false
     }
 
     Process {
         id: ears
 
         command: [Quickshell.shellDir + "/ears.sh"]
-        running: shell.earsOn
+        // (nunca con la pantalla bloqueada; el relanzamiento también pasa por aquí: asignar
+        // `running` a mano rompía este enlace y lo volvía a encender estando bloqueado)
+        running: shell.earsOn && !shell.locked && !shell.earsCooling
 
         stdout: SplitParser {
             onRead: line => {
@@ -1143,8 +1224,10 @@ ShellRoot {
         onExited: {
             shell.earsReady = false;
             shell.voiceWaiting = false;
-            if (shell.earsOn)
+            if (shell.earsOn && !shell.locked) {
+                shell.earsCooling = true;
                 earsRestart.restart();
+            }
         }
     }
 
@@ -1224,6 +1307,8 @@ ShellRoot {
             return `${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} v=${Math.round(shell.vx)},${Math.round(shell.vy)} ws=${shell.mochiWs} present=${shell.present} shown=${shell.shown}`;
         }
         function ask(text: string): void {
+            if (shell.locked)
+                return;
             shell.touch();
             shell.shown = true;
             shell.asking = false;
@@ -1361,6 +1446,46 @@ ShellRoot {
         onTriggered: {
             const d = new Date();
             shell.dayEnergy = shell.energyAt(d.getHours() + d.getMinutes() / 60);
+        }
+    }
+
+    // Estado de bloqueo (lo escribe Caelestia) y lo que le cuenta a la pantalla de bloqueo
+    FileView {
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/caelestia-locked`
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: shell.locked = text().trim() === "1"
+    }
+
+    FileView {
+        id: lockState
+
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-lock.json`
+        printErrors: false
+        blockLoading: true
+    }
+
+    // Tras volver del bloqueo, a su sitio de antes (o a su nido)
+    Timer {
+        id: backHome
+
+        interval: 1800
+        onTriggered: {
+            const pre = shell.preLock;
+            shell.preLock = null;
+            if (!pre || shell.phys !== "swim")
+                return;
+            if (pre.nest) {
+                shell.goNest();
+                return;
+            }
+            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
+            const dist = shell.trackDiff(tr, shell.swimD, pre.d);
+            if (Math.abs(dist) > 250)
+                shell.dive(dist, "hidden", false, 1.3);
+            else if (Math.abs(dist) > 10)
+                shell.swimTarget = pre.d;
         }
     }
 

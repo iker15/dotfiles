@@ -88,9 +88,12 @@ Singleton {
     }
 
     // Primero prueba los comandos rápidos (quick.sh); si no lo entiende, a Claude
+    // Con la pantalla bloqueada no obedece a nadie (cualquiera podría hablarle)
+    property bool locked: false
+
     function send(text: string, byVoice = false): void {
         text = text.trim();
-        if (!text || busy)
+        if (!text || busy || locked)
             return;
         if (text === "/nuevo" || text === "/new") {
             reset();

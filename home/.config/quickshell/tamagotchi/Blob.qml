@@ -24,7 +24,7 @@ Item {
     property bool music: false     // suena música: a veces baila
 
     // Color del cuerpo (el del marco) y ojos que contrasten con él
-    property color bodyColor: Theme.surface
+    property color bodyColor: "#1c1b1b"   // (sin singletons: también lo usa LockPet.qml)
     readonly property real bodyLum: 0.299 * bodyColor.r + 0.587 * bodyColor.g + 0.114 * bodyColor.b
     property color ink: bodyLum > 0.55 ? "#1c1b1b" : "#f4f1f0"
 
