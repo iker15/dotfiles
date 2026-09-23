@@ -326,6 +326,11 @@ ShellRoot {
         function history(): void {
             Qt.openUrlExternally("file://" + Brain.historyDir);
         }
+        // Probar una expresión: happy, smile, wink, surprised, held, squint, dizzy, sleepy, peek,
+        // listening, thinking, working, talking, sad, curious, lookaround, roll
+        function face(name: string): void {
+            shell.reacted(name, 2500);
+        }
         function state(): string {
             return `${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} v=${Math.round(shell.vx)},${Math.round(shell.vy)} shown=${shell.shown}`;
         }
@@ -436,7 +441,7 @@ ShellRoot {
             const s = shell.nearestScreen(shell.gx, shell.gy);
             shell.hopsLeft = 0;
             shell.phys = "hidden";
-            sinkAnim.to = s.y + s.height + shell.bodyRy - 46;   // solo asoman los ojos
+            sinkAnim.to = s.y + s.height + shell.bodyRy - 52;   // solo asoman los ojos
             sinkAnim.restart();
         }
     }
@@ -492,6 +497,7 @@ ShellRoot {
                 worldX: shell.gx
                 worldY: shell.gy
                 falling: shell.phys === "air" && shell.vy > 900
+                hidden: shell.phys === "hidden"
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 light: shell.lightBody
 
