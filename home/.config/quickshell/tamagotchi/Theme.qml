@@ -25,6 +25,7 @@ Singleton {
     readonly property color onPrimary: c("onPrimary", "464112")
     readonly property color primaryContainer: c("primaryContainer", "595422")
     readonly property color onPrimaryContainer: c("onPrimaryContainer", "ede5a6")
+    readonly property color secondary: c("secondary", "cbc6aa")   // iconos de la barra
     readonly property color tertiary: c("tertiary", "ffddb4")
     readonly property color error: c("error", "f97758")
     readonly property color surface: c("surface", "0f0e08")

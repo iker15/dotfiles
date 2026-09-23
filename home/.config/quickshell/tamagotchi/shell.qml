@@ -1425,6 +1425,94 @@ ShellRoot {
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
 
+            // En el nido, Mochi es un icono más de la barra: su silueta del color de los iconos
+            // de Caelestia, con los ojos como huecos (parpadea, mira un poco, respira)
+            Canvas {
+                id: nestIcon
+
+                readonly property real blink: mochi.blink
+                readonly property real lx: shell.lookX
+                readonly property real ly: shell.lookY
+                readonly property string face: mochi.face
+                readonly property color ink: Theme.secondary
+                property real breath: 0
+
+                visible: mochi.visible && shell.phys === "nest" && opacity > 0
+                opacity: Math.max(0, 1 - shell.nestPeek * 2.5)
+                width: 30
+                height: 28
+                x: shell.barW / 2 - width / 2
+                y: shell.gy - win.modelData.y - height / 2 - 2
+
+                onBlinkChanged: requestPaint()
+                onLxChanged: requestPaint()
+                onLyChanged: requestPaint()
+                onFaceChanged: requestPaint()
+                onInkChanged: requestPaint()
+                onBreathChanged: requestPaint()
+
+                SequentialAnimation on breath {
+                    running: nestIcon.visible
+                    loops: Animation.Infinite
+
+                    NumberAnimation {
+                        to: 1
+                        duration: 1800
+                        easing.type: Easing.InOutSine
+                    }
+                    NumberAnimation {
+                        to: 0
+                        duration: 1800
+                        easing.type: Easing.InOutSine
+                    }
+                }
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    // Respira: un pelín más ancho y bajo, apoyado en la base
+                    const b = breath, sx = 1 + 0.035 * b, sy = 1 - 0.045 * b;
+                    ctx.save();
+                    ctx.translate(15, 24);
+                    ctx.scale(sx, sy);
+                    ctx.translate(-15, -24);
+                    ctx.fillStyle = ink;
+                    ctx.beginPath();
+                    ctx.moveTo(4.2, 20.5);
+                    ctx.bezierCurveTo(2.6, 8.5, 9, 3, 15, 3);
+                    ctx.bezierCurveTo(21, 3, 27.4, 8.5, 25.8, 20.5);
+                    ctx.quadraticCurveTo(25.6, 24, 22.4, 24);
+                    ctx.lineTo(7.6, 24);
+                    ctx.quadraticCurveTo(4.4, 24, 4.2, 20.5);
+                    ctx.fill();
+                    ctx.restore();
+
+                    // Ojos: huecos en la silueta
+                    ctx.globalCompositeOperation = "destination-out";
+                    const ex = lx * 1.6, ey = ly * 1.3 + 1.2 * b;
+                    const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
+                    for (const cx of [11, 19]) {
+                        const x = cx + ex, y = 14 + ey;
+                        if (happy) {
+                            // ^ ^
+                            ctx.lineWidth = 1.7;
+                            ctx.lineCap = "round";
+                            ctx.beginPath();
+                            ctx.moveTo(x - 2.1, y + 1.2);
+                            ctx.quadraticCurveTo(x, y - 2.2, x + 2.1, y + 1.2);
+                            ctx.stroke();
+                        } else {
+                            const w = 3.5, h = Math.max(0.9, 4.7 * (1 - 0.85 * blink));
+                            ctx.fillStyle = "black";
+                            ctx.beginPath();
+                            ctx.roundedRect(x - w / 2, y - h / 2, w, h, Math.min(w, h) / 2, Math.min(w, h) / 2);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.globalCompositeOperation = "source-over";
+                }
+            }
+
             Blob {
                 id: mochi
 
@@ -1439,7 +1527,9 @@ ShellRoot {
                 falling: shell.phys === "air" && shell.vy > 900
                 bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
-                eyesOff: shell.phys === "dive" && shell.diveUnder > 0.4
+                // (en el nido, en reposo, lo que se ve es su icono en la barra; los ojos de
+                // verdad salen al asomarse)
+                eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
                 clipRect: Qt.rect(-x, shell.frame - y, win.width - shell.frame, win.height - 2 * shell.frame)
