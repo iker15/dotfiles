@@ -1,6 +1,9 @@
 import QtQuick
 
 // Mochi: gota blanda con forma de daifuku (cúpula arriba, base plana) y solo dos ojos.
+// El cuerpo NO se dibuja aquí: lo dibuja shell.qml con los blobs de Caelestia (mismo material
+// que la barra y el borde, y se funde con ellos). Aquí van la simulación, la geometría del
+// cuerpo (body*/mass*) y los ojos.
 // Toda la expresión va en los ojos: tamaño, párpados (arriba, inclinados, o por abajo en
 // media luna) y hacia dónde miran. Los ojos cambian de forma con muelles, así que
 // "rebotan" al pasar de una expresión a otra.
@@ -17,19 +20,12 @@ Item {
     property real lookY: 0
     property real bob: 0
     property real blink: 0         // 0 abierto → 1 cerrado
-    property bool light: false     // cuerpo blanco (para fondos oscuros)
     property bool talking: false   // escribiendo una respuesta: los ojos botan
     property bool music: false     // suena música: a veces baila
 
-    // Colores: cuerpo y ojos se invierten según el fondo
-    property color bodyColor: light ? "#f2f1ec" : "#0b0b0b"
-    property color ink: light ? "#141414" : "white"
+    // Ojos del color de los iconos de la barra
+    property color ink: Theme.onSurface
 
-    Behavior on bodyColor {
-        ColorAnimation {
-            duration: 450
-        }
-    }
     Behavior on ink {
         ColorAnimation {
             duration: 450
@@ -49,6 +45,18 @@ Item {
     property real oy: 0
     property real sx: 1     // escala del cuerpo (muelle hacia la de reposo/agarre)
     property real sy: 1
+
+    // Geometría del cuerpo (coordenadas de este Item), apoyado por abajo
+    readonly property real bodyW: 2 * rx * sx
+    readonly property real bodyH: 1.9 * ry * sy
+    readonly property real bottomY: height / 2 + ry
+    readonly property real bodyX: width / 2 - bodyW / 2
+    readonly property real bodyY: bottomY - bodyH
+    readonly property real centerY: bottomY - 0.84 * ry * sy
+    // La masa que se queda atrás al moverlo (se une al cuerpo como una gota)
+    readonly property real massR: ry * 0.78
+    readonly property real massX: width / 2 + ox
+    readonly property real massY: centerY + oy
 
     // Expresión: una reacción puntual manda sobre todo lo demás
     property string reaction: ""     // cualquier cara, durante un rato (react)
@@ -94,9 +102,6 @@ Item {
     QtObject {
         id: sim
 
-        readonly property int n: 24
-        property var w: new Array(24).fill(0)       // deformación radial de cada nodo (fracción del radio)
-        property var wv: new Array(24).fill(0)
         property real vx: 0
         property real vy: 0
         property real svx: 0
@@ -376,21 +381,6 @@ Item {
                 oy *= lim / m;
             }
 
-            // Ondas en la superficie: cada nodo es un muelle unido a sus vecinos
-            const kw = 260, cw = 7, kc = 200, g = 0.045;
-            const fx = Math.max(-12, Math.min(12, mx)), fy = Math.max(-12, Math.min(12, my));
-            const nw = w.slice(), nv = wv.slice();
-            for (let i = 0; i < n; i++) {
-                const a = 2 * Math.PI * i / n;
-                const lap = w[(i + 1) % n] + w[(i + n - 1) % n] - 2 * w[i];
-                nv[i] += (-kw * w[i] - cw * wv[i] + kc * lap) * dt;
-                // El movimiento empuja el fluido hacia atrás: se aplasta delante y se abomba detrás
-                nv[i] -= (fx * Math.cos(a) + fy * Math.sin(a)) * g;
-                nw[i] = Math.max(-0.35, Math.min(0.35, w[i] + nv[i] * dt));
-            }
-            w = nw;
-            wv = nv;
-
             // Escala: aplastarse al respirar, estirarse al cogerlo
             const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04;
             const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04;
@@ -430,10 +420,8 @@ Item {
 
         // Empujoncito (al hacerle clic)
         function poke(): void {
-            for (let i = 0; i < n; i++)
-                wv[i] += (Math.random() - 0.5) * 1.2 - 0.6;
-            svy -= 2;
-            svx += 2;
+            svy -= 2.4;
+            svx += 2.4;
         }
     }
 
@@ -477,13 +465,12 @@ Item {
         }
     }
 
-    // Cuerpo y ojos, todo en un lienzo que se repinta cada frame
+    // Ojos (el cuerpo lo dibuja shell.qml)
     Canvas {
         id: canvas
 
-        anchors.centerIn: parent
-        width: root.width + 2 * root.rx
-        height: root.height + 2 * root.rx
+        anchors.fill: parent
+        anchors.margins: -root.rx
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
             const d = 9.5 * root.u;
@@ -505,8 +492,9 @@ Item {
             ctx.roundedRect(x - w / 2, y - h / 2, w, h, r, r);
             ctx.fill();
 
-            // Los párpados se pintan del color del cuerpo
-            ctx.fillStyle = root.bodyColor;
+            // Los párpados borran el ojo (el cuerpo es translúcido: no se puede tapar pintando)
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.fillStyle = "black";
 
             // Párpado de arriba (recto, inclinado hacia dentro o hacia fuera)
             if (e.lt > 0.01) {
@@ -539,55 +527,19 @@ Item {
                 ctx.ellipse(x - R * 1.1, cut, 2.2 * R, 2 * R);
                 ctx.fill();
             }
+            ctx.globalCompositeOperation = "source-over";
         }
 
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            const sx = root.sx, sy = root.sy;
-            // Forma de mochi: cúpula alta arriba, base más baja, ancha y plana
-            const rt = root.ry * 1.06, rb = root.ry * 0.84;
-            const cx = width / 2, bottom = height / 2 + root.ry;
-            const cy = bottom - rb * sy;
-            const n = sim.n, m = Math.hypot(root.ox, root.oy);
-            const ux = m > 0.01 ? root.ox / m : 0, uy = m > 0.01 ? root.oy / m : 0;
-            const pts = [];
-            for (let i = 0; i < n; i++) {
-                const a = 2 * Math.PI * i / n;
-                const ca = Math.cos(a), sa = Math.sin(a);
-                let px = ca * root.rx, py = sa * rt;
-                if (sa > 0) {
-                    px = Math.sign(ca) * Math.pow(Math.abs(ca), 0.8) * root.rx;
-                    py = Math.pow(sa, 0.5) * rb;
-                }
-                // Ondulación lenta, como una gota de lava
-                const idle = 0.012 * Math.sin(sim.t * 1.7 + i * 0.9) + 0.008 * Math.sin(sim.t * 2.9 - i * 1.4);
-                const r = 1 + sim.w[i] + idle;
-                // La parte de atrás sigue a la masa; la de delante se queda donde la agarras
-                const d = ca * ux + sa * uy;
-                const back = (1 + d) / 2;
-                const thin = 1 - 0.18 * (m / root.rx) * (1 - d * d);   // se adelgaza al estirarse
-                pts.push([cx + px * sx * r * thin + root.ox * back, cy + py * sy * r * thin + root.oy * back]);
-            }
-            ctx.beginPath();
-            const mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
-            const s = mid(pts[n - 1], pts[0]);
-            ctx.moveTo(s[0], s[1]);
-            for (let i = 0; i < n; i++) {
-                const e = mid(pts[i], pts[(i + 1) % n]);
-                ctx.quadraticCurveTo(pts[i][0], pts[i][1], e[0], e[1]);
-            }
-            ctx.closePath();
-            ctx.fillStyle = root.bodyColor;
-            ctx.fill();
-
-            // Ojos: van con la masa, un poco por detrás
+            const cx = width / 2, cy = root.centerY + root.rx;   // + margen del lienzo
             ctx.save();
-            ctx.translate(cx + root.ox * 0.5, cy - rt * 0.1 * sy + root.oy * 0.5);
+            ctx.translate(cx + root.ox * 0.5, cy - root.ry * 1.06 * 0.1 * root.sy + root.oy * 0.5);
             ctx.rotate(sim.rot * Math.PI / 180);
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                drawEye(ctx, side * 11.5 * root.u * sx + e.x, e.y, e, side);
+                drawEye(ctx, side * 11.5 * root.u * root.sx + e.x, e.y, e, side);
             }
             ctx.restore();
         }

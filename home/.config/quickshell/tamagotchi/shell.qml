@@ -5,6 +5,8 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
+import Caelestia.Blobs
+import Caelestia.Config
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
@@ -55,6 +57,13 @@ ShellRoot {
     readonly property real bodyRx: 32 * 1.45   // igual que Blob.rx / Blob.ry
     readonly property real bodyRy: 29 * 1.45
     readonly property int hideAfter: 180000    // ms sin usarlo hasta que se esconde
+
+    // Marco de Caelestia (barra a la izquierda y borde alrededor): Mochi vive dentro,
+    // está hecho del mismo material y se funde con él al tocarlo
+    readonly property real barW: 60            // ancho de la barra de Caelestia (medido)
+    readonly property real frame: cfg.Config.border.thickness
+    readonly property real frameRounding: cfg.Config.border.rounding
+    readonly property real frameSmoothing: cfg.Config.border.smoothing
 
     // Workspaces
     property int mochiWs: -1              // workspace donde vive
@@ -146,8 +155,9 @@ ShellRoot {
         hopsLeft = 0;
         targetX = spotFor(s);
         entering = true;
-        gx = fromLeft ? s.x - bodyRx : s.x + s.width + bodyRx;
-        gy = s.y + s.height - bodyRy - 80;
+        // Sale de dentro de la barra (izquierda) o del borde (derecha)
+        gx = fromLeft ? s.x + barW - bodyRx * 1.2 : s.x + s.width - frame + bodyRx * 1.2;
+        gy = s.y + s.height - frame - bodyRy - 80;
         vx = fromLeft ? 560 : -560;
         vy = -560;
         phys = "air";
@@ -166,7 +176,7 @@ ShellRoot {
         targetX = NaN;
         entering = false;
         gx = spotFor(s);
-        gy = s.y + s.height + bodyRy;
+        gy = s.y + s.height - frame + bodyRy + 10;   // sale del borde de abajo
         vx = 0;
         vy = -1150;
         phys = "air";
@@ -202,7 +212,7 @@ ShellRoot {
         flung = true;
         entering = true;
         targetX = NaN;
-        gx = dir > 0 ? s.x - bodyRx * 0.5 : s.x + s.width + bodyRx * 0.5;
+        gx = dir > 0 ? s.x + barW - bodyRx * 0.5 : s.x + s.width - frame + bodyRx * 0.5;
         vx *= 0.9;
         return true;
     }
@@ -319,8 +329,9 @@ ShellRoot {
         vy += 2600 * dt;
         vx *= 1 - 0.25 * dt;
         let nx = gx + vx * dt, ny = gy + vy * dt;
-        const left = s.x + bodyRx, right = s.x + s.width - bodyRx;
-        const top = s.y + bodyRy, floor = s.y + s.height - bodyRy;
+        // Dentro del marco; el suelo un pelín hundido en el borde para que se fundan
+        const left = s.x + barW + bodyRx, right = s.x + s.width - frame - bodyRx;
+        const top = s.y + frame + bodyRy, floor = s.y + s.height - frame - bodyRy + 3;
 
         // Paredes (salvo que al otro lado haya otra pantalla, o esté entrando)
         if (entering) {
@@ -378,7 +389,26 @@ ShellRoot {
         hideTimer.restart();
     }
 
+    // Para leer la configuración de Caelestia (propiedad adjunta Config)
+    Item {
+        id: cfg
+    }
+
+    // Que Hyprland desenfoque lo que hay detrás de Mochi, como hace con el marco
+    function applyBlurRule(): void {
+        Quickshell.execDetached(["hyprctl", "--batch", `eval hl.layer_rule({ match = { namespace = "mochi" }, blur = true }); eval hl.layer_rule({ match = { namespace = "mochi" }, ignore_alpha = ${(Theme.surfaceAlpha - 0.03).toFixed(2)} })`]);
+    }
+
+    Connections {
+        target: Theme
+
+        function onSurfaceAlphaChanged(): void {
+            shell.applyBlurRule();
+        }
+    }
+
     Component.onCompleted: {
+        applyBlurRule();
         mochiWs = Hyprland.focusedWorkspace?.id ?? -1;
         const s = Quickshell.screens[0];
         if (gx < 0 && s) {
@@ -548,6 +578,11 @@ ShellRoot {
         function face(name: string): void {
             shell.reacted(name, 2500);
         }
+        // Dar un saltito (para probar el movimiento)
+        function jump(): void {
+            shell.hopsLeft = 1;
+            shell.hop();
+        }
         function state(): string {
             return `${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} v=${Math.round(shell.vx)},${Math.round(shell.vy)} ws=${shell.mochiWs} present=${shell.present} shown=${shell.shown}`;
         }
@@ -669,7 +704,7 @@ ShellRoot {
             const s = shell.nearestScreen(shell.gx, shell.gy);
             shell.hopsLeft = 0;
             shell.phys = "hidden";
-            sinkAnim.to = s.y + s.height + shell.bodyRy - 52;   // solo asoman los ojos
+            sinkAnim.to = s.y + s.height - shell.frame - 22;   // se hunde en el borde: solo asoman los ojos
             sinkAnim.restart();
         }
     }
@@ -715,6 +750,108 @@ ShellRoot {
                 }
             }
 
+            // Cuerpo de Mochi con los blobs de Caelestia: mismo color, transparencia y sombra que
+            // el marco. Se recorta al interior del marco (para no pintar el borde dos veces) y
+            // unas tiras invisibles a lo largo del borde hacen que se funda con él al tocarlo.
+            Item {
+                id: interior
+
+                visible: mochi.visible
+                x: shell.barW
+                y: shell.frame
+                width: win.width - shell.barW - shell.frame
+                height: win.height - 2 * shell.frame
+                clip: true
+
+                Item {
+                    x: -interior.x
+                    y: -interior.y
+                    width: win.width
+                    height: win.height
+                    opacity: Theme.surfaceAlpha
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        blurMax: 15
+                        shadowColor: Qt.alpha(Theme.shadow, 0.7)
+                    }
+
+                    BlobGroup {
+                        id: blobs
+
+                        color: Theme.surface
+                        smoothing: shell.frameSmoothing
+                    }
+
+                    // Tiras del marco (fuera del interior; solo sirven para fundirse)
+                    readonly property real inset: shell.frameRounding + shell.frameSmoothing
+
+                    BlobRect {
+                        group: blobs
+                        x: shell.barW + parent.inset
+                        y: win.height - shell.frame
+                        width: win.width - shell.frame - shell.barW - 2 * parent.inset
+                        height: shell.frame + 60
+                    }
+                    BlobRect {
+                        group: blobs
+                        x: shell.barW + parent.inset
+                        y: -60
+                        width: win.width - shell.frame - shell.barW - 2 * parent.inset
+                        height: shell.frame + 60
+                    }
+                    BlobRect {
+                        group: blobs
+                        x: -60
+                        y: shell.frame + parent.inset
+                        width: shell.barW + 60
+                        height: win.height - 2 * shell.frame - 2 * parent.inset
+                    }
+                    BlobRect {
+                        group: blobs
+                        x: win.width - shell.frame
+                        y: shell.frame + parent.inset
+                        width: shell.frame + 60
+                        height: win.height - 2 * shell.frame - 2 * parent.inset
+                    }
+
+                    // El cuerpo: daifuku (cúpula arriba, base plana) que tiembla como gelatina
+                    BlobRect {
+                        group: blobs
+                        x: mochi.x + mochi.bodyX
+                        y: mochi.y + mochi.bodyY
+                        width: mochi.bodyW
+                        height: mochi.bodyH
+                        topLeftRadius: Math.min(width / 2, height * 0.62)
+                        topRightRadius: Math.min(width / 2, height * 0.62)
+                        // Apoyado: base plana; en el aire se redondea entero
+                        property real baseRound: shell.phys === "ground" || shell.phys === "hidden" ? 0.34 : 0.5
+                        bottomLeftRadius: Math.min(width / 2, height * baseRound)
+                        bottomRightRadius: Math.min(width / 2, height * baseRound)
+                        stiffness: 180
+                        damping: 12
+                        deformScale: 0.000015
+
+                        Behavior on baseRound {
+                            NumberAnimation {
+                                duration: 220
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    // La masa que se queda atrás al moverlo: se une al cuerpo como una gota
+                    BlobRect {
+                        group: blobs
+                        x: mochi.x + mochi.massX - mochi.massR
+                        y: mochi.y + mochi.massY - mochi.massR
+                        width: 2 * mochi.massR
+                        height: 2 * mochi.massR
+                        radius: mochi.massR
+                    }
+                }
+            }
+
             Blob {
                 id: mochi
 
@@ -729,7 +866,6 @@ ShellRoot {
                 falling: shell.phys === "air" && shell.vy > 900
                 hidden: shell.phys === "hidden"
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
-                light: shell.lightBody
                 talking: Brain.talking
                 music: Mind.musicPlaying
 

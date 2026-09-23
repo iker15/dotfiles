@@ -9,6 +9,13 @@ Singleton {
     id: root
 
     property var scheme: ({})
+    property string mode: "dark"
+
+    // Material de la barra de Caelestia: superficie translúcida (transparency.base = 0.85,
+    // 0.1 menos en tema claro) con desenfoque de Hyprland y sombra
+    readonly property bool light: mode === "light"
+    readonly property real surfaceAlpha: 0.85 - (light ? 0.1 : 0)
+    readonly property color shadow: c("shadow", "000000")
 
     function c(name: string, fallback: string): color {
         return "#" + (root.scheme[name] ?? fallback);
@@ -38,7 +45,9 @@ Singleton {
         onFileChanged: reload()
         onLoaded: {
             try {
-                root.scheme = JSON.parse(text()).colours ?? {};
+                const d = JSON.parse(text());
+                root.scheme = d.colours ?? {};
+                root.mode = d.mode ?? "dark";
             } catch (e) {}
         }
     }
