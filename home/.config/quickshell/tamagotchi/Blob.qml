@@ -18,6 +18,8 @@ Item {
     property real bob: 0
     property real blink: 0         // 0 abierto → 1 cerrado
     property bool light: false     // cuerpo blanco (para fondos oscuros)
+    property bool talking: false   // escribiendo una respuesta: los ojos botan
+    property bool music: false     // suena música: a veces baila
 
     // Colores: cuerpo y ojos se invierten según el fondo
     property color bodyColor: light ? "#f2f1ec" : "#0b0b0b"
@@ -49,9 +51,9 @@ Item {
     property real sy: 1
 
     // Expresión: una reacción puntual manda sobre todo lo demás
-    property string reaction: ""     // happy, squint, dizzy
-    property string idleExpr: ""     // wink, smile, curious, lookaround, roll
-    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy ? "sleepy" : hidden ? "peek" : idleExpr)
+    property string reaction: ""     // cualquier cara, durante un rato (react)
+    property string idleExpr: ""     // gestos sueltos cuando está tranquilo
+    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy ? "asleep" : hidden ? "peek" : idleExpr)
 
     implicitWidth: 2 * rx + 8
     implicitHeight: 2 * ry + 8
@@ -106,9 +108,11 @@ Item {
         // Ojos: forma actual y su velocidad (muelles hacia la forma de la expresión)
         // x, y: desplazamiento (px) · w, h: tamaño relativo · lt: párpado de arriba (0-1)
         // tilt: inclinación del párpado (+ enfadado, − triste) · lb: párpado de abajo (media luna feliz)
+        // heart: >0.5 → ojo de corazón
         property var eyes: [newEye(), newEye()]
         property real rot: 0
         property real rotV: 0
+        property int lastBeat: 0
 
         function newEye(): var {
             return {
@@ -119,7 +123,8 @@ Item {
                     h: 1,
                     lt: 0,
                     tilt: 0,
-                    lb: 0
+                    lb: 0,
+                    heart: 0
                 },
                 vel: {
                     x: 0,
@@ -128,7 +133,8 @@ Item {
                     h: 0,
                     lt: 0,
                     tilt: 0,
-                    lb: 0
+                    lb: 0,
+                    heart: 0
                 }
             };
         }
@@ -142,7 +148,8 @@ Item {
                 h: 1,
                 lt: 0,
                 tilt: 0,
-                lb: 0
+                lb: 0,
+                heart: 0
             };
             let lx = root.lookX, ly = root.lookY;
             switch (root.face) {
@@ -188,7 +195,7 @@ Item {
                 ly = 0.75 * Math.sin(t * 8 * side);
                 e.w = e.h = 0.95 + 0.18 * Math.sin(t * 5 + side);
                 break;
-            case "sleepy":      // cerrados, respirando
+            case "asleep":      // cerrados, respirando
                 e.w = 1.2;
                 e.h = 0.13;
                 lx = 0;
@@ -230,6 +237,94 @@ Item {
             case "curious":     // un ojo grande y otro pequeño
                 e.w = e.h = side > 0 ? 1.25 : 0.84;
                 break;
+            case "excited":     // grandes, brillantes, dando botes
+                e.w = e.h = 1.3;
+                e.lb = 0.12;
+                lx = 0;
+                ly = -0.35 - 0.3 * Math.abs(Math.sin(t * 9));
+                break;
+            case "love":        // ojos de corazón que laten
+                e.heart = 1;
+                e.w = e.h = 1.25 + 0.1 * Math.max(0, Math.sin(t * 7));
+                lx = 0;
+                ly = -0.2;
+                break;
+            case "proud":       // media luna y barbilla arriba
+                e.lb = 0.45;
+                e.w = 1.15;
+                lx = 0;
+                ly = -0.6;
+                break;
+            case "confused":    // un ojo entornado y otro abierto
+                if (side < 0) {
+                    e.lt = 0.4;
+                    e.tilt = -0.35;
+                    e.h = 0.92;
+                } else {
+                    e.w = e.h = 1.15;
+                }
+                lx = 0.25 * Math.sin(t * 1.5);
+                ly = -0.2;
+                break;
+            case "sorry":       // pequeños, cejas tristes, apartando la mirada
+                e.lt = 0.28;
+                e.tilt = -0.6;
+                e.w = e.h = 0.9;
+                lx = -0.35;
+                ly = 0.55;
+                break;
+            case "playful":     // guiño
+                if (side < 0) {
+                    e.lb = 0.52;
+                    e.w = 1.2;
+                    e.h = 1.1;
+                } else {
+                    e.w = e.h = 1.1;
+                }
+                ly = -0.1;
+                break;
+            case "sleepy":      // párpados pesados
+                e.lt = 0.5;
+                e.lb = 0.12;
+                e.w = 1.1;
+                ly = 0.3;
+                lx = 0;
+                break;
+            case "yawn":        // bostezo: aprieta los ojos y los abre despacio
+                e.w = 1.3;
+                e.h = 0.16;
+                e.tilt = 0.4;
+                lx = 0;
+                ly = -0.2;
+                break;
+            case "focused":     // serio, a trabajar
+                e.lt = 0.35;
+                e.tilt = 0.3;
+                lx = 0.2 * Math.sin(t * 0.9);
+                ly = 0.1;
+                break;
+            case "reading": {   // lee línea a línea: barre a la derecha y vuelve de golpe
+                const ph = (t * 0.8) % 1;
+                e.lt = 0.22;
+                lx = ph < 0.85 ? -0.8 + 1.6 * ph / 0.85 : 0.8 - 1.6 * (ph - 0.85) / 0.15;
+                ly = 0.25 + 0.2 * (Math.floor(t * 0.8) % 3) / 2;
+                break;
+            }
+            case "searching":   // buscando por ahí
+                e.w = e.h = 1.1;
+                lx = 0.9 * Math.sin(t * 3.2);
+                ly = -0.2 + 0.35 * Math.sin(t * 1.7);
+                break;
+            case "calm":
+                e.lt = 0.2;
+                e.lb = 0.2;
+                break;
+            case "dance":       // bailando al ritmo
+                e.lb = 0.45;
+                e.w = 1.15;
+                lx = 0.6 * Math.sin(t * 7.5);
+                ly = -0.2;
+                break;
             case "lookaround":
                 lx = Math.sin(t * 2.2) > 0 ? 0.95 : -0.95;
                 ly = 0.1;
@@ -238,6 +333,11 @@ Item {
                 lx = 0.85 * Math.cos(t * 5);
                 ly = -0.85 * Math.abs(Math.sin(t * 5));
                 break;
+            }
+            // Mientras escribe la respuesta, los ojos botan un poco
+            if (root.talking) {
+                e.h *= 1 + 0.07 * Math.sin(t * 11);
+                ly -= 0.12 * Math.abs(Math.sin(t * 5.5));
             }
             e.x = lx * 6 * root.u;
             e.y = ly * 5 * root.u;
@@ -309,7 +409,17 @@ Item {
                     cur[key] += vel[key] * dt;
                 }
             }
-            const trot = root.face === "curious" ? 9 : 0;
+            const f = root.face;
+            const trot = f === "curious" ? 9 : f === "confused" ? -8 : f === "dance" ? 8 * Math.sin(t * 7.5) : 0;
+            // Bailando: un botecito en cada golpe
+            if (f === "dance") {
+                const beat = Math.floor(t / 0.42);
+                if (beat !== lastBeat) {
+                    lastBeat = beat;
+                    svy -= 1.7;
+                    svx += 1.1;
+                }
+            }
             rotV += (-200 * (rot - trot) - 14 * rotV) * dt;
             rot += rotV * dt;
 
@@ -377,6 +487,16 @@ Item {
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
             const d = 9.5 * root.u;
+            if (e.heart > 0.5) {
+                const hs = d * e.w * 0.62;
+                ctx.fillStyle = root.ink;
+                ctx.beginPath();
+                ctx.moveTo(x, y + hs * 0.8);
+                ctx.bezierCurveTo(x - hs * 1.25, y - hs * 0.05, x - hs * 0.7, y - hs * 1.05, x, y - hs * 0.4);
+                ctx.bezierCurveTo(x + hs * 0.7, y - hs * 1.05, x + hs * 1.25, y - hs * 0.05, x, y + hs * 0.8);
+                ctx.fill();
+                return;
+            }
             const w = d * e.w, h = Math.max(1.9 * root.u, d * e.h * (1 - 0.92 * root.blink));
             const r = Math.min(w, h) / 2;
 
@@ -480,7 +600,7 @@ Item {
         interval: 6000
         onTriggered: {
             interval = 4000 + Math.random() * 7000;
-            const pick = ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll"][Math.floor(Math.random() * 7)];
+            const pick = root.music && Math.random() < 0.5 ? "dance" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
             if (pick === "doubleblink") {
                 root.doBlink();
                 doubleBlink.restart();
@@ -488,7 +608,7 @@ Item {
                 sim.poke();
             } else {
                 root.idleExpr = pick;
-                clearIdle.interval = pick === "wink" ? 500 : pick === "roll" ? 1250 : pick === "lookaround" ? 1500 : 1700;
+                clearIdle.interval = pick === "wink" ? 500 : pick === "roll" ? 1250 : pick === "lookaround" ? 1500 : pick === "dance" ? 4000 : 1700;
                 clearIdle.restart();
             }
         }

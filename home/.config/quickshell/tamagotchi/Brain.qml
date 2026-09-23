@@ -12,11 +12,18 @@ Singleton {
 
     property ListModel messages: ListModel {}
     property bool busy: false
-    // idle, thinking, working, talking, happy, sad
+    // Cara que pone Mochi: idle, thinking, talking, happy, sad, o una emoción (ver persona.md)
+    // o la de la herramienta que usa (reading, searching, focused, working)
     property string mood: "idle"
     property string toolName: ""
     property string sessionId: ""
-    property string reply: ""       // respuesta actual (para el bocadillo)
+    property string reply: ""       // respuesta actual, sin etiquetas (para el bocadillo)
+    property string rawReply: ""    // tal cual llega de Claude, con las etiquetas [[emoción]]
+    property string blockRaw: ""
+    property string emotion: ""     // última emoción que ha marcado Claude
+    property bool talking: false    // escribiendo la respuesta
+
+    readonly property var emotions: ["happy", "excited", "love", "proud", "curious", "thinking", "confused", "surprised", "sad", "sorry", "playful", "sleepy", "focused", "calm"]
 
     property int streamIdx: -1      // burbuja que se está escribiendo
     property bool gotInit: false
@@ -44,6 +51,42 @@ Singleton {
         }
     }
 
+    // Reacción inmediata a lo que le dices, antes de que Claude conteste
+    function guessMood(text: string): string {
+        const t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (/te quiero|te adoro|eres (el|la) mejor|mono|cuqui|precioso/.test(t))
+            return "love";
+        if (/gracias|genial|perfecto|bien hecho|guay|crack|increible|funciona/.test(t) && !/no funciona/.test(t))
+            return "happy";
+        if (/triste|mal dia|cansad|estresad|agobiad|harto|fatal/.test(t))
+            return "sorry";
+        if (/error|falla|no funciona|roto|problema|bug|ayuda|socorro|no va\b/.test(t))
+            return "focused";
+        if (/chiste|broma|jugar|juego|adivina/.test(t))
+            return "playful";
+        if (/^(hola|buenas|hey|ey|buenos|holi)/.test(t))
+            return "excited";
+        if (/\?\s*$|^(que|como|por que|cual|donde|quien|cuando|sabes)\b/.test(t))
+            return "curious";
+        return "";
+    }
+
+    // Cara según la herramienta: leer, buscar en internet, editar…
+    function toolMood(name: string): string {
+        if (/^(Read|Grep|Glob|NotebookRead)$/.test(name))
+            return "reading";
+        if (/^Web/.test(name))
+            return "searching";
+        if (/^(Edit|Write|NotebookEdit)$/.test(name))
+            return "focused";
+        return "working";
+    }
+
+    // Quita las etiquetas [[emoción]] (y una a medio llegar al final)
+    function clean(text: string): string {
+        return text.replace(/\[\[\w*\]\]\s*/g, "").replace(/\[\[?\w*$/, "");
+    }
+
     // Primero prueba los comandos rápidos (quick.sh); si no lo entiende, a Claude
     function send(text: string, byVoice = false): void {
         text = text.trim();
@@ -57,8 +100,12 @@ Singleton {
         log(byVoice ? "Tú 🎙" : "Tú", text);
         lastPrompt = text;
         reply = "";
+        rawReply = "";
+        emotion = "";
+        talking = false;
         busy = true;
-        mood = "thinking";
+        mood = guessMood(text) || "thinking";
+        startThinking.restart();
         streamIdx = -1;
         quick.command = [Quickshell.shellDir + "/quick.sh", text];
         quick.running = true;
@@ -67,7 +114,9 @@ Singleton {
     function askClaude(text: string): void {
         if (!proc.running)
             proc.running = true;
-        write({ type: "user", message: { role: "user", content: text } });
+        // Contexto de lo que pasa en el escritorio (Claude no lo ve si no)
+        const content = `<contexto automático, no lo menciones si no viene al caso: ${Mind.context()}>\n\n${text}`;
+        write({ type: "user", message: { role: "user", content: content } });
     }
 
     function log(who: string, text: string): void {
@@ -145,18 +194,30 @@ Singleton {
                 if (b.type === "text") {
                     messages.append({ role: "assistant", text: "" });
                     streamIdx = messages.count - 1;
-                    if (reply)
-                        reply += "\n\n";
-                    mood = "talking";
+                    blockRaw = "";
+                    if (clean(rawReply).trim())
+                        rawReply += "\n\n";
+                    talking = true;
+                    mood = emotion || "talking";
                 } else if (b.type === "thinking") {
+                    talking = false;
                     mood = "thinking";
                 } else if (b.type === "tool_use") {
                     toolName = b.name ?? "";
-                    mood = "working";
+                    talking = false;
+                    mood = toolMood(toolName);
                 }
             } else if (e.type === "content_block_delta" && e.delta?.type === "text_delta" && streamIdx >= 0) {
-                messages.setProperty(streamIdx, "text", messages.get(streamIdx).text + e.delta.text);
-                reply += e.delta.text;
+                blockRaw += e.delta.text;
+                rawReply += e.delta.text;
+                messages.setProperty(streamIdx, "text", clean(blockRaw));
+                reply = clean(rawReply).trim();
+                // La última emoción marcada manda en la cara
+                const tags = [...rawReply.matchAll(/\[\[(\w+)\]\]/g)].map(m => m[1].toLowerCase()).filter(t => emotions.includes(t));
+                if (tags.length && tags[tags.length - 1] !== emotion) {
+                    emotion = tags[tags.length - 1];
+                    mood = emotion;
+                }
             }
         } else if (d.type === "assistant") {
             // Los textos llegan por stream_event; aquí solo las herramientas (con su input completo)
@@ -165,11 +226,12 @@ Singleton {
                     messages.append({ role: "tool", text: `${b.name}  ${describeTool(b.name, b.input)}`.trim() });
         } else if (d.type === "result") {
             busy = false;
+            talking = false;
             streamIdx = -1;
             toolName = "";
             if (d.session_id && d.session_id !== sessionId)
                 saveSession(d.session_id);
-            mood = d.is_error ? "sad" : "happy";
+            mood = d.is_error ? "sad" : emotion || "happy";
             if (d.is_error && d.result) {
                 messages.append({ role: "info", text: String(d.result) });
                 reply = String(d.result);
@@ -187,10 +249,18 @@ Singleton {
         onTriggered: if (!proc.running) proc.running = true
     }
 
+    // La reacción al mensaje dura un momento; luego, a pensar
+    Timer {
+        id: startThinking
+
+        interval: 1500
+        onTriggered: if (root.busy && !root.talking && !root.toolName) root.mood = "thinking"
+    }
+
     Timer {
         id: moodTimer
 
-        interval: 2500
+        interval: 3500
         onTriggered: if (!root.busy) root.mood = "idle"
     }
 

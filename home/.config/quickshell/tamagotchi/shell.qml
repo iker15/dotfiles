@@ -2,13 +2,17 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import Quickshell.Wayland
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
 // - Si no le haces caso en un rato se esconde por debajo del borde (asoma los ojos).
 // - Clic (o doble +) para hablarle; la respuesta sale en un bocadillo.
-// IPC: qs -c tamagotchi ipc call pet toggle|appear|hide|talk|ask "<texto>"
+// - Vive en un workspace: si cambias de workspace, al rato viene detrás de ti (sin ponerse
+//   bajo el ratón). Lanzándolo fuerte contra un lado se va al workspace de ese lado.
+// - Mind.qml le hace reaccionar (con los ojos) a lo que haces; acariciarlo (pasar el ratón de lado a lado) le encanta.
+// IPC: qs -c tamagotchi ipc call pet toggle|appear|hide|talk|ask "<texto>"|face <cara>|state
 ShellRoot {
     id: shell
 
@@ -49,6 +53,22 @@ ShellRoot {
     readonly property real bodyRx: 32 * 1.45   // igual que Blob.rx / Blob.ry
     readonly property real bodyRy: 29 * 1.45
     readonly property int hideAfter: 180000    // ms sin usarlo hasta que se esconde
+
+    // Workspaces
+    property int mochiWs: -1              // workspace donde vive
+    property bool entering: false         // entrando por un lado de la pantalla (sin paredes)
+    property bool thrown: false           // lanzado a mano: puede cruzar a otro workspace
+    property real targetX: NaN            // sitio al que va dando saltos
+    property real sulkUntil: 0            // tras lanzarlo a otro workspace, se queda allí un rato
+    readonly property bool present: mochiWs < 0 || Hyprland.monitors.values.some(m => m.activeWorkspace?.id === mochiWs)
+    readonly property bool fsHide: Hyprland.workspaces.values.find(w => w.id === mochiWs)?.hasFullscreen ?? false
+
+    property real cursorX: 0
+    property real cursorY: 0
+    property real glanceX: 0              // mirar a otro sitio un momento (ventana nueva…)
+    property real glanceY: 0
+    property real glanceUntil: 0
+    property string remark: ""            // comentario espontáneo en el bocadillo
 
     signal splatted(real strength, bool horizontal)
     signal reacted(string name, int ms)
@@ -91,9 +111,117 @@ ShellRoot {
         Quickshell.execDetached(["sh", "-c", 'mkdir -p "$1" && printf "%s %s" "$2" "$3" > "$1/pos"', "sh", stateDir, Math.round(gx), Math.round(gy)]);
     }
 
-    // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido, sale
+    function screenOfMonitor(m: var): var {
+        return Quickshell.screens.find(q => q.name === m?.name) ?? Quickshell.screens[0];
+    }
+
+    // Un sitio en el suelo lejos del ratón y mejor hacia los lados (el centro de abajo suele
+    // tener cosas: reproductores, barras…), para no taparte lo que estás mirando
+    function spotFor(s: var): real {
+        const onScreen = cursorX >= s.x && cursorX < s.x + s.width;
+        let best = s.x + s.width * 0.08, bestScore = -1;
+        for (const f of [0.06, 0.14, 0.3, 0.7, 0.86, 0.94]) {
+            const x = s.x + s.width * f;
+            const score = (onScreen ? Math.abs(x - cursorX) : 500) + 500 * Math.abs(f - 0.5) + Math.random() * 200;
+            if (score > bestScore) {
+                bestScore = score;
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    // Llega al workspace en el que estás: entra saltando por el lado del que viene
+    function arrive(): void {
+        const ws = Hyprland.focusedWorkspace;
+        if (!ws)
+            return;
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        const fromLeft = mochiWs >= 0 && mochiWs < ws.id;
+        mochiWs = ws.id;
+        sinkAnim.stop();
+        hopsLeft = 0;
+        targetX = spotFor(s);
+        entering = true;
+        gx = fromLeft ? s.x - bodyRx : s.x + s.width + bodyRx;
+        gy = s.y + s.height - bodyRy - 80;
+        vx = fromLeft ? 560 : -560;
+        vy = -560;
+        phys = "air";
+        reacted("excited", 1300);
+    }
+
+    // Lo has llamado (++, voz, clic…) y no está aquí: sale de un salto desde abajo
+    function summon(): void {
+        const ws = Hyprland.focusedWorkspace;
+        if (!ws)
+            return;
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        mochiWs = ws.id;
+        sinkAnim.stop();
+        hopsLeft = 0;
+        targetX = NaN;
+        entering = false;
+        gx = spotFor(s);
+        gy = s.y + s.height + bodyRy;
+        vx = 0;
+        vy = -1150;
+        phys = "air";
+        reacted("happy", 900);
+    }
+
+    // Has cambiado de workspace: si no está a la vista, al rato viene detrás de ti
+    function wsChanged(): void {
+        const ws = Hyprland.focusedWorkspace;
+        if (!ws)
+            return;
+        if (mochiWs < 0 || phys === "held") {   // si lo llevas agarrado, viene contigo
+            mochiWs = ws.id;
+            return;
+        }
+        if (mochiWs === ws.id)
+            return;
+        // (si sigue a la vista en otro monitor, followTimer no hace nada)
+        const now = Date.now();
+        followTimer.interval = Brain.busy || bubbleShown ? 700 : now < sulkUntil ? sulkUntil - now : 2500 + Math.random() * 5000;
+        followTimer.restart();
+    }
+
+    // Lanzado contra un lado con fuerza: se va al workspace de ese lado (si hay)
+    function throwToWs(dir: int, s: var): bool {
+        const ids = Hyprland.workspaces.values.map(w => w.id).filter(id => id > 0).sort((a, b) => a - b);
+        const next = dir > 0 ? ids.find(id => id > mochiWs) : ids.filter(id => id < mochiWs).pop();
+        if (next === undefined)
+            return false;
+        mochiWs = next;
+        sulkUntil = Date.now() + 120000;   // se queda allí un par de minutos antes de volver
+        thrown = false;
+        entering = false;
+        targetX = NaN;
+        gx = dir > 0 ? s.x + 160 : s.x + s.width - 160;
+        gy = s.y + s.height - bodyRy;
+        vx = vy = 0;
+        phys = "ground";
+        followTimer.interval = 120000;
+        followTimer.restart();
+        return true;
+    }
+
+    // Acariciarlo con el ratón
+    function pet(): void {
+        touch();
+        reacted("love", 2400);
+        splatted(420, false);
+    }
+
+    // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
+    // workspace, viene
     function touch(): void {
         idleHide.restart();
+        if (!present) {
+            summon();
+            return;
+        }
         if (phys === "hidden") {
             sinkAnim.stop();
             phys = "air";
@@ -112,6 +240,8 @@ ShellRoot {
             hopDir = 1;
         else if (s.x + s.width - gx < 180)
             hopDir = -1;
+        else if (cursorY > s.y + s.height - 300 && Math.abs(cursorX - gx) < 350)
+            hopDir = cursorX > gx ? -1 : 1;   // no ir hacia el ratón
         const big = Math.random() < 0.15;
         vx = hopDir * (big ? 260 : 120 + Math.random() * 120);
         vy = big ? -950 : -(430 + Math.random() * 180);
@@ -128,10 +258,31 @@ ShellRoot {
     }
 
     function landed(): void {
+        thrown = false;
         savePos();
         checkBg();
+        // Se queda en el workspace de la pantalla donde ha caído
+        const id = Hyprland.monitorFor(nearestScreen(gx, gy))?.activeWorkspace?.id;
+        if (id !== undefined && id > 0)
+            mochiWs = id;
+        if (!isNaN(targetX)) {
+            if (Math.abs(targetX - gx) > 50) {
+                travelAgain.restart();
+                return;
+            }
+            targetX = NaN;
+        }
         if (hopsLeft > 0)
             hopAgain.restart();
+    }
+
+    // Saltito hacia targetX
+    function travelHop(): void {
+        if (phys !== "ground" || isNaN(targetX))
+            return;
+        vx = Math.max(-480, Math.min(480, (targetX - gx) / 0.5));
+        vy = -520;
+        phys = "air";
     }
 
     function physStep(dt: real): void {
@@ -159,13 +310,20 @@ ShellRoot {
         const left = s.x + bodyRx, right = s.x + s.width - bodyRx;
         const top = s.y + bodyRy, floor = s.y + s.height - bodyRy;
 
-        // Paredes (salvo que al otro lado haya otra pantalla)
-        if (nx < left && !screenAt(nx - bodyRx, ny)) {
+        // Paredes (salvo que al otro lado haya otra pantalla, o esté entrando)
+        if (entering) {
+            if (nx >= left && nx <= right)
+                entering = false;
+        } else if (nx < left && !screenAt(nx - bodyRx, ny)) {
+            if (thrown && vx < -1100 && throwToWs(-1, s))
+                return;
             nx = left;
             if (vx < -300)
                 splatted(-vx, true);
             vx = Math.abs(vx) * 0.45;
         } else if (nx > right && !screenAt(nx + bodyRx, ny)) {
+            if (thrown && vx > 1100 && throwToWs(1, s))
+                return;
             nx = right;
             if (vx > 300)
                 splatted(vx, true);
@@ -209,6 +367,7 @@ ShellRoot {
     }
 
     Component.onCompleted: {
+        mochiWs = Hyprland.focusedWorkspace?.id ?? -1;
         const s = Quickshell.screens[0];
         if (gx < 0 && s) {
             gx = s.x + s.width - 120;
@@ -233,6 +392,7 @@ ShellRoot {
 
         function onBusyChanged(): void {
             shell.touch();
+            shell.remark = "";
             if (Brain.busy) {
                 shell.bubbleShown = true;
                 hideTimer.stop();
@@ -242,11 +402,57 @@ ShellRoot {
         }
     }
 
+    Connections {
+        target: Hyprland
+
+        function onFocusedWorkspaceChanged(): void {
+            shell.wsChanged();
+        }
+    }
+
+    Timer {
+        id: followTimer
+
+        onTriggered: if (shell.shown && !shell.present && shell.phys !== "hidden") shell.arrive()
+    }
+
+    // Lo que hace Mind: gestos, y solo habla para avisar de la batería (nunca interrumpe)
+    Connections {
+        target: Mind
+
+        function onReact(face: string, ms: int): void {
+            if (shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
+                shell.reacted(face, ms);
+        }
+        function onDance(ms: int): void {
+            if (shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
+                shell.reacted("dance", ms);
+        }
+        function onGlance(x: real, y: real): void {
+            shell.glanceX = x;
+            shell.glanceY = y;
+            shell.glanceUntil = Date.now() + 1400;
+        }
+        function onSay(text: string, face: string): void {
+            if (!shell.shown || Brain.busy || shell.asking || shell.voiceWaiting || shell.dragging || (shell.bubbleShown && !shell.remark))
+                return;
+            if (!shell.present || shell.phys === "hidden")
+                shell.touch();
+            shell.remark = text;
+            shell.bubbleShown = true;
+            hideTimer.restart();
+            shell.reacted(face, 2500);
+        }
+    }
+
+    onBubbleShownChanged: if (!bubbleShown) remark = ""
+    onAskingChanged: if (asking) remark = ""
+
     // El bocadillo se va solo al rato (más tiempo cuanto más largo)
     Timer {
         id: hideTimer
 
-        interval: Math.min(30000, 6000 + Brain.reply.length * 45)
+        interval: shell.remark ? 5500 : Math.min(30000, 6000 + Brain.reply.length * 45)
         onTriggered: if (!Brain.busy) shell.bubbleShown = false
     }
 
@@ -326,13 +532,12 @@ ShellRoot {
         function history(): void {
             Qt.openUrlExternally("file://" + Brain.historyDir);
         }
-        // Probar una expresión: happy, smile, wink, surprised, held, squint, dizzy, sleepy, peek,
-        // listening, thinking, working, talking, sad, curious, lookaround, roll
+        // Probar una expresión (ver eyeTarget en Blob.qml)
         function face(name: string): void {
             shell.reacted(name, 2500);
         }
         function state(): string {
-            return `${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} v=${Math.round(shell.vx)},${Math.round(shell.vy)} shown=${shell.shown}`;
+            return `${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} v=${Math.round(shell.vx)},${Math.round(shell.vy)} ws=${shell.mochiWs} present=${shell.present} shown=${shell.shown}`;
         }
         function ask(text: string): void {
             shell.touch();
@@ -360,9 +565,13 @@ ShellRoot {
             onRead: data => {
                 try {
                     const p = JSON.parse(data + "}");
-                    const dx = p.x - shell.gx, dy = p.y - shell.gy;
+                    shell.cursorX = p.x;
+                    shell.cursorY = p.y;
+                    // Mira al ratón, salvo que algo le haya llamado la atención
+                    const glancing = Date.now() < shell.glanceUntil;
+                    const dx = (glancing ? shell.glanceX : p.x) - shell.gx, dy = (glancing ? shell.glanceY : p.y) - shell.gy;
                     const d = Math.hypot(dx, dy);
-                    shell.cursorNear = d < 220;
+                    shell.cursorNear = Math.hypot(p.x - shell.gx, p.y - shell.gy) < 220;
                     shell.lookX = d < 20 ? 0 : dx / (d + 60);
                     shell.lookY = d < 20 ? 0 : dy / (d + 60);
                 } catch (e) {}
@@ -401,13 +610,13 @@ ShellRoot {
     }
 
     FrameAnimation {
-        running: shell.shown && (shell.phys === "air" || shell.phys === "held")
+        running: shell.shown && shell.present && (shell.phys === "air" || shell.phys === "held")
         onTriggered: shell.physStep(frameTime)
     }
 
     // Paseos: de vez en cuando da unos saltitos por el suelo
     Timer {
-        running: shell.shown && shell.phys === "ground" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && shell.phys === "ground" && isNaN(shell.targetX) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -427,11 +636,18 @@ ShellRoot {
         onTriggered: shell.hop()
     }
 
+    Timer {
+        id: travelAgain
+
+        interval: 120
+        onTriggered: shell.travelHop()
+    }
+
     // Si no le haces caso, se esconde bajo el borde de la pantalla
     Timer {
         id: idleHide
 
-        running: shell.shown && shell.phys !== "hidden" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && shell.phys !== "hidden" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         interval: shell.hideAfter
         onTriggered: {
             if (shell.phys !== "ground") {
@@ -480,7 +696,7 @@ ShellRoot {
 
             // Solo Mochi y su bocadillo reciben clics; el resto del escritorio pasa de largo
             mask: Region {
-                item: mochi
+                item: mochi.visible ? mochi : null
 
                 Region {
                     item: bubble.visible ? bubble : null
@@ -490,6 +706,8 @@ ShellRoot {
             Blob {
                 id: mochi
 
+                // Solo en el workspace donde vive, y se aparta si hay algo a pantalla completa
+                visible: shell.present && !shell.fsHide
                 x: shell.gx - win.modelData.x - width / 2
                 y: shell.gy - win.modelData.y - height / 2
                 mood: shell.mood
@@ -500,6 +718,8 @@ ShellRoot {
                 hidden: shell.phys === "hidden"
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 light: shell.lightBody
+                talking: Brain.talking
+                music: Mind.musicPlaying
 
                 Connections {
                     target: shell
@@ -519,6 +739,11 @@ ShellRoot {
                     property real py
                     property bool moved
                     property string wasPhys
+                    // Caricias: pasar el ratón de lado a lado por encima
+                    property int petCount
+                    property int petDir
+                    property real petLastX
+                    property real petStart
 
                     anchors.fill: parent
                     hoverEnabled: true
@@ -548,6 +773,8 @@ ShellRoot {
                         sinkAnim.stop();
                         hopAgain.stop();
                         shell.hopsLeft = 0;
+                        shell.targetX = NaN;
+                        shell.entering = false;
                         shell.phys = "held";
                         shell.vx = shell.vy = shell.hvx = shell.hvy = 0;
                         shell.prevX = shell.gx;
@@ -556,8 +783,25 @@ ShellRoot {
                         shell.lastDir = 0;
                     }
                     onPositionChanged: mouse => {
-                        if (!(pressedButtons & Qt.LeftButton))
+                        if (!(pressedButtons & Qt.LeftButton)) {
+                            const now = Date.now();
+                            if (now - petStart > 1800) {
+                                petStart = now;
+                                petCount = 0;
+                            }
+                            const dir = Math.sign(mouse.x - petLastX);
+                            if (dir && dir !== petDir && Math.abs(mouse.x - petLastX) > 2) {
+                                petCount++;
+                                petDir = dir;
+                            }
+                            petLastX = mouse.x;
+                            if (petCount >= 5) {
+                                petCount = 0;
+                                petStart = now;
+                                shell.pet();
+                            }
                             return;
+                        }
                         if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
                             return;
                         moved = true;
@@ -575,6 +819,7 @@ ShellRoot {
                             shell.vx = Math.max(-2600, Math.min(2600, shell.hvx));
                             shell.vy = Math.max(-2600, Math.min(2600, shell.hvy));
                             shell.phys = "air";
+                            shell.thrown = true;
                             if (shell.reversals >= 4)
                                 shell.reacted("dizzy", 2400);
                             return;
@@ -593,7 +838,7 @@ ShellRoot {
 
             // Micro silenciado
             Text {
-                visible: !shell.earsOn
+                visible: !shell.earsOn && mochi.visible
                 x: mochi.x + mochi.width - 18
                 y: mochi.y + mochi.height - 20
                 text: "mic_off"
@@ -610,7 +855,7 @@ ShellRoot {
 
                 readonly property bool above: mochi.y - height - 22 > 8
 
-                visible: win.here && (shell.asking || shell.voiceWaiting || (shell.bubbleShown && (Brain.reply !== "" || Brain.busy)))
+                visible: win.here && mochi.visible && (shell.asking || shell.voiceWaiting || (shell.bubbleShown && (shell.remark !== "" || Brain.reply !== "" || Brain.busy)))
                 width: Math.max(input.visible ? 280 : 0, Math.min(320, reply.implicitWidth + 28))
                 height: content.height + 20
                 x: Math.max(8, Math.min(win.width - width - 8, mochi.x + mochi.width / 2 - width / 2))
@@ -654,6 +899,8 @@ ShellRoot {
                             text: {
                                 if (shell.asking)
                                     return "";
+                                if (shell.remark && !Brain.busy)
+                                    return shell.remark;
                                 if (shell.voiceWaiting && !Brain.busy)
                                     return "Te escucho… 👂";
                                 if (Brain.busy && !Brain.reply) {
