@@ -70,9 +70,21 @@ ShellRoot {
     property bool gHoriz: true    // la zancada va en horizontal (suelo/techo) o en vertical
     property bool slipping: false // resbalón por una pared (no cuenta como viaje)
     property real slipIn: 2
-    // Llegada buceando por dentro del borde de abajo (solo se ve un bulto que avanza)
-    property real burrowX: 0
-    property real burrowThen: NaN // a dónde nadar al salir (si su sitio está en una pared)
+    // Buceo: se sumerge en el marco (su medio: lo domina), nada por dentro y sale más
+    // adelante. "hidden" = no se le ve nada; "peek" = asoma un poco la cabeza con los ojos.
+    property string diveMode: ""
+    property real diveFrom: 0         // swimD al empezar
+    property real diveDist: 0         // recorrido (con signo, a lo largo del marco)
+    property real diveT: 0
+    property real diveDur: 1
+    property bool diveFromDeep: false // (al llegar de otro workspace) ya empieza sumergido
+    property real diveStage: 0        // 0 coge aire · 0.5 zambulléndose · 1 dentro · 2 saliendo
+    property real sink: 0             // cuánto va hundido respecto a nadar en la superficie
+    // Los ojos: al asomar se suben a lo alto de la cabeza y se giran según el lado (la
+    // cabeza apunta hacia dentro de la pantalla)
+    property real eyeLiftX: 0
+    property real eyeLiftY: 0
+    property real eyeAngle: 0
     property real hideX: 0
     property real hideY: 0
     property bool cursorNear: false
@@ -264,7 +276,7 @@ ShellRoot {
 
     // Curva de una zancada: coge impulso hacia atrás, se lanza, se pasa un pelín y vuelve
     function strideEase(u: real): real {
-        const c = 1.05 * 1.525;
+        const c = 0.6 * 1.525;
         return u < 0.5 ? Math.pow(2 * u, 2) * ((c + 1) * 2 * u - c) / 2 : (Math.pow(2 * u - 2, 2) * ((c + 1) * (2 * u - 2) + c) + 2) / 2;
     }
 
@@ -317,9 +329,9 @@ ShellRoot {
             // Frena: se aplasta un poco contra el sentido de la marcha
             kickAlong(-0.8, 0.5);
             const r = Math.random();
-            gRest = (r < 0.14 ? 0.7 + Math.random() * 0.6 : 0.06 + Math.random() * 0.22) / energy;
+            gRest = (r < 0.1 ? 0.7 + Math.random() * 0.6 : 0.03 + Math.random() * 0.12) / energy;
             // En las pausas largas se para a mirar (atrás, o a ti)
-            if (r < 0.14) {
+            if (r < 0.1) {
                 const back = Math.random() < 0.5;
                 glanceX = back ? gx - Math.sign(gLen) * (gHoriz ? 400 : 0) : cursorX;
                 glanceY = back ? gy - Math.sign(gLen) * (gHoriz ? 0 : 400) : cursorY;
@@ -337,11 +349,13 @@ ShellRoot {
 
     // Un sitio del marco lejos del ratón, mejor en las paredes o en las esquinas de abajo (el
     // centro de abajo suele tener cosas: reproductores, barras…) y no en el techo
-    function spotD(s: var, tr: var): real {
+    function spotD(s: var, tr: var, accept: var): real {
         const onScreen = cursorX >= s.x && cursorX < s.x + s.width && cursorY >= s.y && cursorY < s.y + s.height;
         let best = 0, bestScore = -Infinity;
         for (let i = 0; i < 24; i++) {
             const d = tr.len * i / 24, p = pointAt(tr, d);
+            if (accept && !accept(d))
+                continue;
             let score = (onScreen ? Math.min(900, Math.hypot(p.x - cursorX, p.y - cursorY)) : 500) + Math.random() * 250;
             if (p.nx !== 0 && Math.abs(p.ny) < 0.5)
                 score += 250 + 150 * (p.y - tr.T) / (tr.B - tr.T);   // paredes, mejor abajo
@@ -357,9 +371,9 @@ ShellRoot {
         return best;
     }
 
-    // Llega al workspace en el que estás buceando por dentro del borde de abajo: entra por la
-    // esquina del lado del que viene (solo se ve un bulto que avanza a zancadas) y sale a la
-    // superficie en un sitio tranquilo (si ese sitio es una pared, sale en su esquina y sube)
+    // Llega al workspace en el que estás buceando por el borde de abajo: entra sumergido por
+    // la esquina del lado del que viene, asomando la cabeza, y sale en un sitio tranquilo más
+    // allá (en el suelo o subiendo por la pared del otro lado)
     function arrive(): void {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
@@ -371,32 +385,117 @@ ShellRoot {
         entering = false;
         swimTarget = NaN;
         swimV = 0;
-        const spot = spotD(s, tr), p = pointAt(tr, spot);
-        const onFloor = p.ny > 0.9;
-        burrowX = onFloor ? p.x : p.x < (tr.L + tr.R) / 2 ? tr.L + tr.c : tr.R - tr.c;
-        burrowThen = onFloor ? NaN : spot;
-        gx = fromLeft ? tr.L - 10 : tr.R + 10;
-        gy = tr.B + 2 * bodyRy;   // del todo por debajo del borde
-        energy = 1.8;
-        startTrip();
-        phys = "burrow";
+        const dir = fromLeft ? 1 : -1;
+        const d0 = fromLeft ? tr.len - tr.q * 0.5 : tr.w + tr.q * 0.5;   // en la esquina de abajo
+        const ahead = d => ((d - d0) * dir % tr.len + tr.len) % tr.len;
+        const spot = spotD(s, tr, d => ahead(d) > 250 && ahead(d) < tr.w + tr.q + tr.h * 0.75);
+        swimD = d0;
+        const p = pointAt(tr, d0), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
+        gx = p.x + p.nx * deep;
+        gy = p.y + p.ny * deep;
+        dive(dir * ahead(spot), "peek", true);
     }
 
-    // Sale a la superficie al final del buceo
-    function emerge(s: var): void {
-        const tr = track(s);
-        swimD = nearestD(tr, gx, tr.B);
-        swimV = 0;
-        phys = "swim";
-        energy = 1.3;
-        swimTarget = burrowThen;
-        if (!isNaN(burrowThen))
-            startTrip();
-        else
+    // Radio del cuerpo en la dirección de la normal (hacia el marco)
+    function normalRadius(p: var): real {
+        return Math.abs(p.nx) * bodyRx + Math.abs(p.ny) * bodyRy;
+    }
+
+    // Cuánto asoma del marco (px) en cada modo; negativo = hundido de más (ni el remolino
+    // que hace al fundirse con el marco se ve)
+    function diveVisible(mode: string, rn: real): real {
+        return mode === "peek" ? 24 : -(0.35 * rn + frameSmoothing * 0.3 + 8);
+    }
+
+    // Velocidad suave: acelera, va de crucero y frena, sin tirones (dentro del marco se
+    // mueve como pez en el agua)
+    function glide(u: real): real {
+        const a = 0.22, S = 1 - a;
+        const ramp = x => x / 2 - a / (2 * Math.PI) * Math.sin(Math.PI * x / a);
+        if (u < a)
+            return ramp(u) / S;
+        if (u > 1 - a)
+            return (S - ramp(1 - u)) / S;
+        return (a / 2 + u - a) / S;
+    }
+
+    function smooth(x: real): real {
+        x = Math.max(0, Math.min(1, x));
+        return x * x * x * (x * (6 * x - 15) + 10);
+    }
+
+    // Se zambulle en el marco, bucea `dist` px a lo largo de él y sale
+    function dive(dist: real, mode: string, fromDeep: bool): void {
+        diveMode = mode;
+        diveFrom = swimD;
+        diveDist = dist;
+        diveT = 0;
+        diveDur = 1 + Math.abs(dist) / (mode === "peek" ? 380 : 620);
+        diveFromDeep = fromDeep;
+        diveStage = fromDeep ? 1 : 0;
+        swimTarget = NaN;
+        hopsLeft = 0;
+        phys = "dive";
+    }
+
+    function diveStep(tr: var, dt: real): void {
+        diveT += dt;
+        const u = Math.min(1, diveT / diveDur);
+        swimD = ((diveFrom + diveDist * glide(u)) % tr.len + tr.len) % tr.len;
+        const p = pointAt(tr, swimD), rn = normalRadius(p);
+        const surface = 2 * rn - embed, mid = diveVisible(diveMode, rn);
+        const down = smooth((u - 0.05) / 0.2), up = smooth((u - 0.78) / 0.2);
+        let vis = (diveFromDeep ? diveVisible("hidden", rn) : surface) * (1 - down) + mid * down;
+        vis = vis * (1 - up) + surface * up;
+        if (!diveFromDeep && u < 0.06)
+            vis += 5 * Math.sin(Math.PI * u / 0.06);   // coge aire: se estira hacia arriba antes
+        const under = down * (1 - up);
+        if (diveMode === "peek")
+            vis += 2.5 * Math.sin(diveT * 8) * under;   // ondula al nadar
+        sink = surface - vis;
+        const k = Math.min(1, dt * 14);
+        gx += (p.x + p.nx * sink - gx) * k;
+        gy += (p.y + p.ny * sink - gy) * k;
+
+        // Forma: se estira hacia arriba al coger aire, se alarga al zambullirse y al salir
+        // se estira hacia fuera y se sacude
+        gHoriz = Math.abs(p.ny) > 0.5;
+        if (diveStage === 0 && u > 0.01) {
+            diveStage = 0.5;
+            kickAlong(-1.0, 2.2);
+        } else if (diveStage < 1 && down > 0.35) {
+            diveStage = 1;
+            kickAlong(2.2, -1.8);
+            leaned(Math.sign(diveDist) * 110);
+        } else if (diveStage === 1 && up > 0.25) {
+            diveStage = 2;
+            kickAlong(-1.4, 3.4);
+            splatted(380, !gHoriz);
+            reacted(diveFromDeep ? "excited" : "happy", 900);
+        }
+
+        // Ojos: asomando, suben a lo alto de la cabeza (por encima del borde) y se giran
+        const peek = diveMode === "peek" ? under : 0;
+        const c = sink + embed - rn;   // centro, por debajo del borde del marco
+        const lift = Math.max(0, c + 12) * peek;
+        eyeLiftX = -p.nx * lift;
+        eyeLiftY = -p.ny * lift;
+        eyeAngle = Math.atan2(-p.nx, p.ny) * 180 / Math.PI * peek;
+        // mira hacia donde va
+        const ahead = pointAt(tr, swimD + Math.sign(diveDist) * 300);
+        glanceX = ahead.x;
+        glanceY = ahead.y;
+        glanceUntil = Date.now() + 200;
+
+        if (u >= 1) {
+            phys = "swim";
+            diveMode = "";
+            sink = 0;
+            swimV = 0;
             energy = 1;
-        burrowThen = NaN;
-        kicked(-1.5, 3.2);   // sale estirándose hacia arriba
-        reacted("excited", 1300);
+            savePos();
+            checkBg();
+        }
     }
 
     // Lo has llamado (++, voz, clic…) y no está aquí: sale del borde de abajo
@@ -592,17 +691,16 @@ ShellRoot {
             return;
         const tr = track(s);
 
-        if (phys === "burrow") {
-            // Un bulto bajo el borde de abajo: sube hasta asomar un poco y avanza a zancadas
-            const step = gait(burrowX - gx, dt, true, null);
-            if (isNaN(step)) {
-                emerge(s);
-                return;
-            }
-            gx += step;
-            const bumpY = tr.B + 2 * bodyRy - embed - 18;   // asoma ~18 px del cuerpo
-            gy += (bumpY - gy) * Math.min(1, dt * 4);
+        if (phys === "dive") {
+            diveStep(tr, dt);
             return;
+        }
+        // (si lo agarras buceando, los ojos vuelven a su sitio)
+        if (eyeLiftX || eyeLiftY || eyeAngle) {
+            const f = Math.exp(-10 * dt);
+            eyeLiftX = Math.abs(eyeLiftX) < 0.1 ? 0 : eyeLiftX * f;
+            eyeLiftY = Math.abs(eyeLiftY) < 0.1 ? 0 : eyeLiftY * f;
+            eyeAngle = Math.abs(eyeAngle) < 0.1 ? 0 : eyeAngle * f;
         }
 
         if (phys === "hidden") {
@@ -921,6 +1019,11 @@ ShellRoot {
             const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
             shell.swimTarget = ((shell.swimD + px) % tr.len + tr.len) % tr.len;
         }
+        // Probar el buceo: px a lo largo del marco, mode hidden|peek
+        function dive(px: real, mode: string): void {
+            if (shell.phys === "swim")
+                shell.dive(px, mode === "peek" ? "peek" : "hidden", false);
+        }
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function arrive(from: string): void {
             const id = Hyprland.focusedWorkspace?.id ?? 1;
@@ -1035,7 +1138,17 @@ ShellRoot {
             interval = 7000 + Math.random() * 11000;
             const s = shell.nearestScreen(shell.gx, shell.gy), tr = shell.track(s), p = shell.pointAt(tr, shell.swimD);
             const r = Math.random();
-            if (r < 0.45) {
+            if (r >= 0.38 && r < 0.62) {
+                // Se zambulle y sale más allá (a veces sin que se le vea nada, a veces asomando)
+                for (let i = 0; i < 6; i++) {
+                    const dist = (Math.random() < 0.5 ? -1 : 1) * (350 + Math.random() * 700), q = shell.pointAt(tr, shell.swimD + dist);
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9) {
+                        shell.dive(dist, Math.random() < 0.5 ? "hidden" : "peek", false);
+                        return;
+                    }
+                }
+            }
+            if (r < 0.38) {
                 // A otro sitio (no muy lejos, y que no sea junto al ratón)
                 for (let i = 0; i < 6; i++) {
                     const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
@@ -1045,11 +1158,11 @@ ShellRoot {
                         break;
                     }
                 }
-            } else if (r < 0.65 && p.ny > 0.9) {
+            } else if (r < 0.8 && p.ny > 0.9) {
                 shell.hopsLeft = 1 + Math.floor(Math.random() * 3);
                 shell.hopDir = Math.random() < 0.5 ? -1 : 1;
                 shell.hop();
-            } else if (r < 0.75 && Math.abs(p.nx) > 0.9) {
+            } else if (r < 0.9 && Math.abs(p.nx) > 0.9) {
                 shell.pushOff();
             }
         }
@@ -1191,7 +1304,11 @@ ShellRoot {
                 falling: shell.phys === "air" && shell.vy > 900
                 bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
-                eyesOff: shell.phys === "burrow"
+                eyeLiftX: shell.eyeLiftX
+                eyeLiftY: shell.eyeLiftY
+                eyeAngle: shell.eyeAngle
+                // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen)
+                clipRect: Qt.rect(shell.barW - x, shell.frame - y, win.width - shell.barW - shell.frame, win.height - 2 * shell.frame)
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 talking: Brain.talking
                 music: Mind.musicPlaying
@@ -1212,8 +1329,10 @@ ShellRoot {
                         mochi.lean(v);
                     }
                 }
-                lookX: shell.dragging ? 0 : shell.lookX
-                lookY: shell.dragging ? 0 : shell.lookY
+                // (la mirada va en el sistema de los ojos: si están girados, se gira con ellos)
+                readonly property real eyeRad: shell.eyeAngle * Math.PI / 180
+                lookX: shell.dragging ? 0 : Math.cos(eyeRad) * shell.lookX + Math.sin(eyeRad) * shell.lookY
+                lookY: shell.dragging ? 0 : -Math.sin(eyeRad) * shell.lookX + Math.cos(eyeRad) * shell.lookY
 
                 MouseArea {
                     property real px

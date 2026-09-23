@@ -37,7 +37,12 @@ Item {
     // Posición global de Mochi: si cambia, el fluido lo nota por inercia
     property real worldX: 0
     property real worldY: 0
-    property bool eyesOff: false   // buceando por dentro del marco: no se le ven los ojos
+    // Ojos al bucear asomando: desplazados (px) y girados (grados) respecto a lo normal
+    property real eyeLiftX: 0
+    property real eyeLiftY: 0
+    property real eyeAngle: 0
+    // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
+    property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
 
     readonly property real u: 1.45                 // escala respecto al Mochi original
     readonly property real rx: 32 * u              // semiejes del cuerpo en reposo
@@ -545,13 +550,6 @@ Item {
 
         anchors.fill: parent
         anchors.margins: -root.rx
-        opacity: root.eyesOff ? 0 : 1
-
-        Behavior on opacity {
-            NumberAnimation {
-                duration: 160
-            }
-        }
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
             const d = 9.5 * root.u;
@@ -615,9 +613,13 @@ Item {
             const ctx = getContext("2d");
             ctx.reset();
             const cx = width / 2, cy = root.centerY + root.rx;   // + margen del lienzo
+            const cr = root.clipRect;
             ctx.save();
-            ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.oy * 0.5);
-            ctx.rotate(sim.rot * Math.PI / 180);
+            ctx.beginPath();
+            ctx.rect(cr.x + root.rx, cr.y + root.rx, cr.width, cr.height);
+            ctx.clip();
+            ctx.translate(cx + root.ox * 0.5 + root.eyeLiftX, cy - root.bodyR * 0.12 + root.oy * 0.5 + root.eyeLiftY);
+            ctx.rotate((sim.rot + root.eyeAngle) * Math.PI / 180);
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
                 drawEye(ctx, side * 11.5 * root.u * root.sx + e.x, e.y, e, side);
