@@ -1,16 +1,34 @@
 import QtQuick
 
-// Mochi: gota negra blanda con ojos blancos. Mira hacia (lookX, lookY) en [-1, 1].
+// Mochi: gota negra blanda con ojitos blancos. Mira hacia (lookX, lookY) en [-1, 1].
 // El cuerpo es un fluido: al moverlo se queda atrás, se estira y tiembla al soltarlo.
 Item {
     id: root
 
     property string mood: "idle"   // idle, listening, thinking, working, talking, happy, sad
     property bool dragging: false
+    property bool falling: false   // cayendo deprisa (cara de susto)
+    property bool sleepy: false    // escondido y sin nadie cerca
     property real lookX: 0
     property real lookY: 0
     property bool blinking: false
     property real bob: 0
+    property bool light: false     // cuerpo blanco (para fondos oscuros)
+
+    // Colores: cuerpo y detalles se invierten según el fondo
+    property color bodyColor: light ? "#f2f1ec" : "#0b0b0b"
+    property color ink: light ? "#141414" : "white"
+
+    Behavior on bodyColor {
+        ColorAnimation {
+            duration: 450
+        }
+    }
+    Behavior on ink {
+        ColorAnimation {
+            duration: 450
+        }
+    }
 
     // Posición global de Mochi: si cambia, el fluido lo nota por inercia
     property real worldX: 0
@@ -26,8 +44,42 @@ Item {
     property real sx: 1     // escala del cuerpo (muelle hacia la de reposo/agarre)
     property real sy: 1
 
+    // Caras: una reacción puntual manda sobre todo lo demás
+    property string reaction: ""     // squint, dizzy, happy, surprised
+    property string idleExpr: ""     // wink, smile, curious
+    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy ? "sleepy" : idleExpr)
+
     implicitWidth: 2 * rx + 8
     implicitHeight: 2 * ry + 8
+
+    function poke(): void {
+        sim.poke();
+        react("happy", 900);
+    }
+
+    // Golpe contra el suelo o una pared: se aplasta en esa dirección
+    function splat(strength: real, horizontal: bool): void {
+        const s = Math.min(strength, 1800) * 0.006;
+        if (horizontal) {
+            sim.svx -= s;
+            sim.svy += s * 0.7;
+        } else {
+            sim.svy -= s;
+            sim.svx += s * 0.7;
+        }
+    }
+
+    function react(name: string, ms: int): void {
+        reaction = name;
+        reactionTimer.interval = ms;
+        reactionTimer.restart();
+    }
+
+    Timer {
+        id: reactionTimer
+
+        onTriggered: root.reaction = ""
+    }
 
     QtObject {
         id: sim
@@ -54,6 +106,8 @@ Item {
             lastY = root.worldY;
             if (Math.abs(mx) + Math.abs(my) > 400)   // saltos (arranque, cambio de pantalla)
                 mx = my = 0;
+            mx = Math.max(-25, Math.min(25, mx));
+            my = Math.max(-25, Math.min(25, my));
 
             // Inercia: la masa se queda atrás
             let ox = root.ox - mx * 0.75, oy = root.oy - my * 0.75;
@@ -72,13 +126,14 @@ Item {
 
             // Ondas en la superficie: cada nodo es un muelle unido a sus vecinos
             const kw = 260, cw = 7, kc = 140, g = 0.045;
+            const fx = Math.max(-12, Math.min(12, mx)), fy = Math.max(-12, Math.min(12, my));
             const nw = w.slice(), nv = wv.slice();
             for (let i = 0; i < n; i++) {
                 const a = 2 * Math.PI * i / n;
                 const lap = w[(i + 1) % n] + w[(i + n - 1) % n] - 2 * w[i];
                 nv[i] += (-kw * w[i] - cw * wv[i] + kc * lap) * dt;
                 // El movimiento empuja el fluido hacia atrás: se aplasta delante y se abomba detrás
-                nv[i] -= (mx * Math.cos(a) + my * Math.sin(a)) * g;
+                nv[i] -= (fx * Math.cos(a) + fy * Math.sin(a)) * g;
                 nw[i] = Math.max(-0.35, Math.min(0.35, w[i] + nv[i] * dt));
             }
             w = nw;
@@ -90,8 +145,8 @@ Item {
             const ks = 320, cs = 13;
             svx += (-ks * (root.sx - tsx) - cs * svx) * dt;
             svy += (-ks * (root.sy - tsy) - cs * svy) * dt;
-            root.sx += svx * dt;
-            root.sy += svy * dt;
+            root.sx = Math.max(0.55, Math.min(1.5, root.sx + svx * dt));
+            root.sy = Math.max(0.55, Math.min(1.5, root.sy + svy * dt));
 
             root.ox = ox;
             root.oy = oy;
@@ -107,10 +162,6 @@ Item {
         }
     }
 
-    function poke(): void {
-        sim.poke();
-    }
-
     FrameAnimation {
         running: root.visible
         onTriggered: sim.step(frameTime)
@@ -122,17 +173,17 @@ Item {
 
         NumberAnimation {
             to: root.mood === "working" ? 1 : 0.6
-            duration: root.mood === "working" ? 220 : 1100
+            duration: root.mood === "working" ? 220 : root.sleepy ? 2200 : 1100
             easing.type: Easing.InOutSine
         }
         NumberAnimation {
             to: 0
-            duration: root.mood === "working" ? 220 : 1100
+            duration: root.mood === "working" ? 220 : root.sleepy ? 2200 : 1100
             easing.type: Easing.InOutSine
         }
     }
 
-    // Cuerpo: curva suave que pasa por los nodos
+    // Cuerpo: curva suave que pasa por los nodos. Se aplasta hacia abajo (apoyado en el suelo).
     Canvas {
         id: canvas
 
@@ -143,7 +194,7 @@ Item {
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            const cx = width / 2, cy = height / 2;
+            const cx = width / 2, cy = height / 2 + root.ry * (1 - root.sy);
             const n = sim.n, m = Math.hypot(root.ox, root.oy);
             const ux = m > 0.01 ? root.ox / m : 0, uy = m > 0.01 ? root.oy / m : 0;
             const pts = [];
@@ -168,7 +219,7 @@ Item {
                 ctx.quadraticCurveTo(pts[i][0], pts[i][1], e[0], e[1]);
             }
             ctx.closePath();
-            ctx.fillStyle = "#0b0b0b";
+            ctx.fillStyle = root.bodyColor;
             ctx.fill();
         }
     }
@@ -177,10 +228,25 @@ Item {
     Item {
         id: face
 
+        // Miradas que no dependen del ratón
+        property real autoX: 0
+        property real autoY: 0
+        property bool autoLook: false
+
         width: 2 * root.rx * root.sx
         height: 2 * root.ry * root.sy
         x: (root.width - width) / 2 + root.ox * 0.5
-        y: (root.height - height) / 2 + root.oy * 0.5
+        y: (root.height - height) / 2 + root.oy * 0.5 + root.ry * (1 - root.sy)
+        rotation: root.face === "curious" ? 9 : root.face === "dizzy" ? 6 * Math.sin(sim.t * 7) : 0
+
+        Behavior on rotation {
+            enabled: root.face !== "dizzy"
+
+            NumberAnimation {
+                duration: 350
+                easing.type: Easing.OutBack
+            }
+        }
 
         // Ojos
         Repeater {
@@ -191,73 +257,280 @@ Item {
 
                 required property int modelData
 
-                readonly property bool happy: root.mood === "happy"
-                property real lx: root.mood === "thinking" ? 0.6 : root.mood === "listening" ? 0 : root.lookX
-                property real ly: root.mood === "thinking" ? -0.8 : root.mood === "listening" ? -0.5 : root.lookY
+                readonly property string f: root.face
+                readonly property string shape: ["happy", "squint", "dizzy", "sleepy"].includes(f) ? f : "dot"
+                // Tamaño y apertura según la cara
+                readonly property real size: f === "surprised" ? 1.4 : f === "held" ? 1.25 : f === "listening" ? 1.12 : f === "sad" ? 0.85 : 1
+                readonly property real openTarget: {
+                    if (root.blinking || (f === "wink" && modelData < 0))
+                        return 0;
+                    if (f === "working")
+                        return 0.5;
+                    if (f === "sad")
+                        return 0.7;
+                    return 1;
+                }
+                property real open: openTarget
+                property real lx: face.autoLook ? face.autoX : f === "thinking" ? 0.6 : f === "listening" || f === "sad" ? 0 : root.lookX
+                property real ly: face.autoLook ? face.autoY : f === "thinking" ? -0.8 : f === "listening" ? -0.5 : f === "sad" ? 0.7 : root.lookY
 
-                x: face.width / 2 + modelData * 12 * root.u - width / 2 + lx * 6 * root.u
+                x: face.width / 2 + modelData * 11 * root.u - width / 2 + lx * 6 * root.u
                 y: face.height * 0.42 - height / 2 + ly * 5 * root.u
-                width: 12 * root.u
-                height: 18 * root.u
+                width: 16 * root.u
+                height: 16 * root.u
 
                 Behavior on lx {
                     NumberAnimation {
-                        duration: 120
+                        duration: 140
                     }
                 }
                 Behavior on ly {
                     NumberAnimation {
-                        duration: 120
+                        duration: 140
+                    }
+                }
+                Behavior on open {
+                    NumberAnimation {
+                        duration: 70
                     }
                 }
 
-                Rectangle {
-                    visible: !eye.happy
-                    anchors.centerIn: parent
-                    width: (root.dragging ? 12 : 10) * root.u
-                    height: (root.blinking ? 2 : root.dragging ? 16 : root.mood === "working" ? 7 : root.mood === "sad" ? 9 : 15) * root.u
-                    radius: width / 2
-                    color: "white"
+                Canvas {
+                    id: eyeCanvas
 
-                    Behavior on height {
+                    property real d: 7 * root.u * eye.size
+
+                    anchors.fill: parent
+                    onDChanged: requestPaint()
+
+                    Behavior on d {
                         NumberAnimation {
-                            duration: 70
+                            duration: 160
+                            easing.type: Easing.OutBack
                         }
                     }
-                }
 
-                // ^ ^
-                Text {
-                    visible: eye.happy
-                    anchors.centerIn: parent
-                    text: "^"
-                    font.pixelSize: 22 * root.u
-                    font.bold: true
-                    color: "white"
+                    // Mareo: la espiral da vueltas
+                    RotationAnimation on rotation {
+                        running: eye.shape === "dizzy"
+                        loops: Animation.Infinite
+                        from: 0
+                        to: 360 * eye.modelData
+                        duration: 700
+                    }
+
+                    Connections {
+                        target: eye
+
+                        function onShapeChanged(): void {
+                            eyeCanvas.rotation = 0;
+                            eyeCanvas.requestPaint();
+                        }
+                        function onOpenChanged(): void {
+                            eyeCanvas.requestPaint();
+                        }
+                    }
+
+                    Connections {
+                        target: root
+
+                        function onInkChanged(): void {
+                            eyeCanvas.requestPaint();
+                        }
+                    }
+
+                    onPaint: {
+                        const ctx = getContext("2d");
+                        ctx.reset();
+                        ctx.fillStyle = root.ink;
+                        ctx.strokeStyle = root.ink;
+                        ctx.lineWidth = 2.2 * root.u;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        const cx = width / 2, cy = height / 2, r = d / 2;
+                        ctx.beginPath();
+                        switch (eye.shape) {
+                        case "happy":      // ^
+                            ctx.arc(cx, cy + r * 0.6, r * 1.05, Math.PI * 1.15, Math.PI * 1.85);
+                            ctx.stroke();
+                            break;
+                        case "sleepy":     // ‿ ojos cerrados
+                            ctx.arc(cx, cy - r * 0.5, r * 1.05, Math.PI * 0.15, Math.PI * 0.85);
+                            ctx.stroke();
+                            break;
+                        case "squint": {   // > <
+                            const s = eye.modelData < 0 ? 1 : -1;
+                            ctx.moveTo(cx - s * r * 0.8, cy - r * 0.9);
+                            ctx.lineTo(cx + s * r * 0.8, cy);
+                            ctx.lineTo(cx - s * r * 0.8, cy + r * 0.9);
+                            ctx.stroke();
+                            break;
+                        }
+                        case "dizzy":      // @
+                            for (let a = 0; a <= Math.PI * 4; a += 0.25) {
+                                const rr = r * 1.1 * a / (Math.PI * 4);
+                                ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+                            }
+                            ctx.lineWidth = 1.6 * root.u;
+                            ctx.stroke();
+                            break;
+                        default: {         // ● (parpadea aplastándose)
+                            const h = Math.max(2.2 * root.u, d * eye.open);
+                            ctx.ellipse(cx - r, cy - h / 2, d, h);
+                            ctx.fill();
+                        }
+                        }
+                    }
                 }
             }
         }
 
-        // Boca pequeña solo al hablar
-        Rectangle {
-            visible: root.mood === "talking"
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: face.height * 0.68
-            width: 7 * root.u
-            radius: width / 2
-            color: "white"
+        // Mofletes
+        Repeater {
+            model: [-1, 1]
 
-            SequentialAnimation on height {
+            Rectangle {
+                required property int modelData
+
+                readonly property bool on: ["happy", "smile", "held"].includes(root.face)
+
+                x: face.width / 2 + modelData * 19 * root.u - width / 2
+                y: face.height * 0.56
+                width: 8 * root.u
+                height: 4.5 * root.u
+                radius: height / 2
+                color: "#ff7fa3"
+                opacity: on ? 0.55 : 0
+                scale: on ? 1 : 0.4
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 250
+                    }
+                }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: 250
+                        easing.type: Easing.OutBack
+                    }
+                }
+            }
+        }
+
+        // Boca
+        Item {
+            id: mouth
+
+            readonly property string kind: {
+                const f = root.face;
+                if (f === "talking")
+                    return "talk";
+                if (f === "surprised" || f === "held" || f === "dizzy")
+                    return "o";
+                if (f === "happy" || f === "smile")
+                    return "smile";
+                if (f === "sad")
+                    return "frown";
+                return "";
+            }
+
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: face.height * 0.64
+            width: 14 * root.u
+            height: 8 * root.u
+
+            Rectangle {
+                visible: mouth.kind === "talk" || mouth.kind === "o"
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: (mouth.kind === "o" ? 5 : 7) * root.u
+                height: mouth.kind === "o" ? width : 4 * root.u
+                radius: width / 2
+                color: root.ink
+
+                SequentialAnimation on height {
+                    loops: Animation.Infinite
+                    running: mouth.kind === "talk"
+
+                    NumberAnimation {
+                        to: 6 * root.u
+                        duration: 120
+                    }
+                    NumberAnimation {
+                        to: 2 * root.u
+                        duration: 120
+                    }
+                }
+            }
+
+            Canvas {
+                id: arcMouth
+
+                visible: mouth.kind === "smile" || mouth.kind === "frown"
+                anchors.fill: parent
+
+                Connections {
+                    target: mouth
+
+                    function onKindChanged(): void {
+                        arcMouth.requestPaint();
+                    }
+                }
+
+                Connections {
+                    target: root
+
+                    function onInkChanged(): void {
+                        arcMouth.requestPaint();
+                    }
+                }
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    ctx.strokeStyle = root.ink;
+                    ctx.lineWidth = 2 * root.u;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    const r = 4 * root.u;
+                    if (mouth.kind === "smile")
+                        ctx.arc(width / 2, 0, r, Math.PI * 0.2, Math.PI * 0.8);
+                    else
+                        ctx.arc(width / 2, height, r, Math.PI * 1.2, Math.PI * 1.8);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // Zzz mientras duerme escondido
+        Text {
+            id: zzz
+
+            visible: root.face === "sleepy"
+            x: face.width * 0.72
+            text: "z"
+            font.pixelSize: 11 * root.u
+            font.bold: true
+            color: root.ink
+
+            NumberAnimation on y {
                 loops: Animation.Infinite
-                running: root.mood === "talking"
+                running: zzz.visible
+                from: face.height * 0.2
+                to: -face.height * 0.15
+                duration: 1800
+            }
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                running: zzz.visible
 
                 NumberAnimation {
-                    to: 6 * root.u
-                    duration: 120
+                    from: 0
+                    to: 0.9
+                    duration: 500
                 }
                 NumberAnimation {
-                    to: 2 * root.u
-                    duration: 120
+                    to: 0
+                    duration: 1300
                 }
             }
         }
@@ -281,7 +554,7 @@ Item {
                     width: 6
                     height: 6
                     radius: 3
-                    color: "white"
+                    color: root.ink
                     opacity: 0.2
 
                     SequentialAnimation on opacity {
@@ -308,8 +581,88 @@ Item {
         }
     }
 
+    // Mirar a un lado y a otro
+    SequentialAnimation {
+        id: lookAround
+
+        PropertyAction {
+            target: face
+            property: "autoX"
+            value: -0.9
+        }
+        PropertyAction {
+            target: face
+            property: "autoLook"
+            value: true
+        }
+        PauseAnimation {
+            duration: 650
+        }
+        PropertyAction {
+            target: face
+            property: "autoX"
+            value: 0.9
+        }
+        PauseAnimation {
+            duration: 650
+        }
+        PropertyAction {
+            target: face
+            property: "autoX"
+            value: 0
+        }
+        PauseAnimation {
+            duration: 250
+        }
+        PropertyAction {
+            target: face
+            property: "autoLook"
+            value: false
+        }
+    }
+
+    // Gestos al azar cuando está tranquilo
     Timer {
-        running: root.visible
+        running: root.visible && root.mood === "idle" && !root.dragging && !root.sleepy
+        repeat: true
+        interval: 6000
+        onTriggered: {
+            interval = 4000 + Math.random() * 7000;
+            const pick = ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle"][Math.floor(Math.random() * 6)];
+            if (pick === "lookaround") {
+                lookAround.restart();
+            } else if (pick === "doubleblink") {
+                root.blinking = true;
+                unblink.restart();
+                doubleBlink.restart();
+            } else if (pick === "wiggle") {
+                sim.poke();
+            } else {
+                root.idleExpr = pick;
+                clearIdle.interval = pick === "wink" ? 450 : 1600;
+                clearIdle.restart();
+            }
+        }
+    }
+
+    Timer {
+        id: clearIdle
+
+        onTriggered: root.idleExpr = ""
+    }
+
+    Timer {
+        id: doubleBlink
+
+        interval: 260
+        onTriggered: {
+            root.blinking = true;
+            unblink.restart();
+        }
+    }
+
+    Timer {
+        running: root.visible && !root.sleepy
         repeat: true
         interval: 3000
         onTriggered: {
