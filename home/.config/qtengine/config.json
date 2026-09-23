@@ -1,7 +1,7 @@
 {
     "theme": {
         "colorScheme": "~/.config/qtengine/caelestia.colors",
-        "iconTheme": "Papirus-Dark",
+        "iconTheme": "Papirus-Light",
         "style": "Darkly",
         "font": {
             "family": "Sans Serif",
