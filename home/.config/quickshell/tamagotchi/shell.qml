@@ -57,8 +57,8 @@ ShellRoot {
         }
         if (!s)
             return;
-        gx = Math.max(s.x + 40, Math.min(s.x + s.width - 40, gx));
-        gy = Math.max(s.y + 40, Math.min(s.y + s.height - 40, gy));
+        gx = Math.max(s.x + 55, Math.min(s.x + s.width - 55, gx));
+        gy = Math.max(s.y + 55, Math.min(s.y + s.height - 55, gy));
     }
 
     function savePos(): void {
@@ -271,6 +271,8 @@ ShellRoot {
                 y: shell.gy - win.modelData.y - height / 2
                 mood: shell.mood
                 dragging: shell.dragging
+                worldX: shell.gx
+                worldY: shell.gy
                 lookX: shell.dragging ? 0 : shell.lookX
                 lookY: shell.dragging ? 0 : shell.lookY
 
@@ -317,8 +319,10 @@ ShellRoot {
                             shell.settle();
                             shell.savePos();
                         } else if (shell.asking) {
+                            mochi.poke();
                             shell.asking = false;
                         } else {
+                            mochi.poke();
                             shell.openInput();
                         }
                     }
