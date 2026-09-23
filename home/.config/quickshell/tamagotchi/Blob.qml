@@ -23,8 +23,10 @@ Item {
     property bool talking: false   // escribiendo una respuesta: los ojos botan
     property bool music: false     // suena música: a veces baila
 
-    // Ojos del color de los iconos de la barra
-    property color ink: Theme.onSurface
+    // Color del cuerpo (el del marco) y ojos que contrasten con él
+    property color bodyColor: Theme.surface
+    readonly property real bodyLum: 0.299 * bodyColor.r + 0.587 * bodyColor.g + 0.114 * bodyColor.b
+    property color ink: bodyLum > 0.55 ? "#1c1b1b" : "#f4f1f0"
 
     Behavior on ink {
         ColorAnimation {
@@ -46,17 +48,26 @@ Item {
     property real sx: 1     // escala del cuerpo (muelle hacia la de reposo/agarre)
     property real sy: 1
 
-    // Geometría del cuerpo (coordenadas de este Item), apoyado por abajo
-    readonly property real bodyW: 2 * rx * sx
-    readonly property real bodyH: 1.9 * ry * sy
-    readonly property real bottomY: height / 2 + ry
-    readonly property real bodyX: width / 2 - bodyW / 2
-    readonly property real bodyY: bottomY - bodyH
-    readonly property real centerY: bottomY - 0.84 * ry * sy
-    // La masa que se queda atrás al moverlo (se une al cuerpo como una gota)
-    readonly property real massR: ry * 0.78
+    // Geometría del cuerpo (coordenadas de este Item), apoyado por abajo. Todo son círculos
+    // que se funden entre sí (metaballs), así nunca se ve una caja:
+    // - dos círculos del cuerpo, separados en horizontal (más cuanto más se aplasta)
+    // - la masa, que se queda atrás al moverlo, y la cola, que se queda aún más atrás
+    property real ox2: 0
+    property real oy2: 0
+    // El cuerpo es una elipse centrada en el Item (semiejes bodyRx/bodyRy) con ondas
+    // en la superficie (wobA/wobB: armónicos 2-5, los usa mochi.frag)
+    readonly property real bodyRx: rx * sx
+    readonly property real bodyRy: 0.95 * ry * sy
+    readonly property real bodyR: bodyRy
+    readonly property real centerY: height / 2
+    property vector4d wobA: Qt.vector4d(0, 0, 0, 0)
+    property vector4d wobB: Qt.vector4d(0, 0, 0, 0)
+    readonly property real massR: bodyR * 0.8
     readonly property real massX: width / 2 + ox
     readonly property real massY: centerY + oy
+    readonly property real tailR: bodyR * 0.55
+    readonly property real tailX: width / 2 + ox2
+    readonly property real tailY: centerY + oy2
 
     // Expresión: una reacción puntual manda sobre todo lo demás
     property string reaction: ""     // cualquier cara, durante un rato (react)
@@ -102,8 +113,13 @@ Item {
     QtObject {
         id: sim
 
+        readonly property int n: 16
+        property var w: new Array(16).fill(0)       // deformación radial de cada punto del borde
+        property var wv: new Array(16).fill(0)
         property real vx: 0
         property real vy: 0
+        property real vx2: 0
+        property real vy2: 0
         property real svx: 0
         property real svy: 0
         property real lastX: NaN
@@ -381,6 +397,49 @@ Item {
                 oy *= lim / m;
             }
 
+            // La cola: más blanda y más rezagada (estira el cuerpo como una gota)
+            let ox2 = root.ox2 - mx * 0.95, oy2 = root.oy2 - my * 0.95;
+            vx2 += (-90 * ox2 - 6 * vx2) * dt;
+            vy2 += (-90 * oy2 - 6 * vy2) * dt;
+            ox2 += vx2 * dt;
+            oy2 += vy2 * dt;
+            const lim2 = root.rx * 0.95, m2 = Math.hypot(ox2, oy2);
+            if (m2 > lim2) {
+                ox2 *= lim2 / m2;
+                oy2 *= lim2 / m2;
+            }
+            root.ox2 = ox2;
+            root.oy2 = oy2;
+
+            // Ondas en la superficie: cada punto del borde es un muelle unido a sus vecinos,
+            // y el movimiento empuja el fluido hacia atrás
+            const kw = 260, cw = 7, kc = 200, g = 0.045;
+            const fx = Math.max(-12, Math.min(12, mx)), fy = Math.max(-12, Math.min(12, my));
+            const nw = w.slice(), nv = wv.slice();
+            for (let i = 0; i < n; i++) {
+                const a = 2 * Math.PI * i / n;
+                const lap = w[(i + 1) % n] + w[(i + n - 1) % n] - 2 * w[i];
+                nv[i] += (-kw * w[i] - cw * wv[i] + kc * lap) * dt;
+                nv[i] -= (fx * Math.cos(a) + fy * Math.sin(a)) * g;
+                nw[i] = Math.max(-0.3, Math.min(0.3, w[i] + nv[i] * dt));
+            }
+            w = nw;
+            wv = nv;
+            // A armónicos para el shader (+ una ondulación lenta, como una gota de lava)
+            const hc = [0, 0, 0, 0, 0, 0, 0, 0];
+            for (let i = 0; i < n; i++) {
+                const a = 2 * Math.PI * i / n;
+                for (let k = 2; k <= 5; k++) {
+                    hc[(k - 2) * 2] += w[i] * Math.cos(k * a) * 2 / n;
+                    hc[(k - 2) * 2 + 1] += w[i] * Math.sin(k * a) * 2 / n;
+                }
+            }
+            hc[0] += 0.012 * Math.sin(t * 1.7);
+            hc[3] += 0.008 * Math.sin(t * 2.3);
+            hc[4] += 0.006 * Math.sin(t * 2.9);
+            root.wobA = Qt.vector4d(hc[0], hc[1], hc[2], hc[3]);
+            root.wobB = Qt.vector4d(hc[4], hc[5], hc[6], hc[7]);
+
             // Escala: aplastarse al respirar, estirarse al cogerlo
             const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04;
             const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04;
@@ -420,8 +479,10 @@ Item {
 
         // Empujoncito (al hacerle clic)
         function poke(): void {
-            svy -= 2.4;
-            svx += 2.4;
+            for (let i = 0; i < n; i++)
+                wv[i] += (Math.random() - 0.5) * 1.2 - 0.6;
+            svy -= 2;
+            svx += 2;
         }
     }
 
@@ -535,7 +596,7 @@ Item {
             ctx.reset();
             const cx = width / 2, cy = root.centerY + root.rx;   // + margen del lienzo
             ctx.save();
-            ctx.translate(cx + root.ox * 0.5, cy - root.ry * 1.06 * 0.1 * root.sy + root.oy * 0.5);
+            ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.oy * 0.5);
             ctx.rotate(sim.rot * Math.PI / 180);
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;

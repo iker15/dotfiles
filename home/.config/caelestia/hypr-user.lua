@@ -26,4 +26,3 @@ for _, k in ipairs({ "minus", "KP_Subtract" }) do
     hl.bind(k, hl.dsp.exec_cmd("~/.config/quickshell/tamagotchi/toggle.sh minus"), { non_consuming = true })
 end
 hl.layer_rule({ match = { namespace = "mochi" }, no_anim = true })
-hl.layer_rule({ match = { namespace = "mochi" }, blur = true })  -- mismo material que el marco (ignore_alpha lo pone Mochi según el tema)

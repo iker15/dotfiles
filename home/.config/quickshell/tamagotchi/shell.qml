@@ -5,7 +5,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
-import Caelestia.Blobs
 import Caelestia.Config
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
@@ -40,7 +39,8 @@ ShellRoot {
     property bool voiceWaiting: false  // ha oído "Mochi" y espera la orden
     property string heard: ""          // última orden dictada (se enseña mientras piensa)
 
-    // Física: held (agarrado), air (volando/cayendo), ground (en el suelo), hidden (escondido)
+    // Física: held (agarrado), air (volando/cayendo), swim (nadando por el marco, que es su
+    // medio), hidden (hundido en el marco, asomando los ojos)
     property string phys: "air"
     property real vx: 0
     property real vy: 0
@@ -52,10 +52,27 @@ ShellRoot {
     property int lastDir: 0
     property int hopsLeft: 0
     property int hopDir: 1
+    // Nado: posición a lo largo del recorrido (px desde la esquina de abajo a la izquierda,
+    // en sentido antihorario visto en pantalla: abajo → derecha → arriba → izquierda)
+    property real swimD: 0
+    property real swimV: 0
+    property real swimTarget: NaN
+    property real swimPhase: 0
+    property real ceilingTime: 0
+    property real hideX: 0
+    property real hideY: 0
     property bool cursorNear: false
-    property bool lightBody: false      // fondo oscuro → Mochi blanco
-    readonly property real bodyRx: 32 * 1.45   // igual que Blob.rx / Blob.ry
-    readonly property real bodyRy: 29 * 1.45
+    property bool lightBody: false      // fondo oscuro → subtítulos claros
+    property color frameColor: Theme.surface   // color real del marco a su lado (lo mide bg.py)
+
+    Behavior on frameColor {
+        ColorAnimation {
+            duration: 400
+        }
+    }
+    readonly property real bodyRx: 32 * 1.45          // semiejes del cuerpo (como en Blob)
+    readonly property real bodyRy: 29 * 1.45 * 0.95
+    readonly property real embed: 12                  // cuánto va hundido en el marco al nadar
     readonly property int hideAfter: 180000    // ms sin usarlo hasta que se esconde
 
     // Marco de Caelestia (barra a la izquierda y borde alrededor): Mochi vive dentro,
@@ -70,7 +87,6 @@ ShellRoot {
     property bool entering: false         // entrando por un lado de la pantalla (sin paredes)
     property bool thrown: false           // lanzado a mano: puede cruzar a otro workspace
     property bool flung: false            // ha cruzado a otro workspace en este lanzamiento
-    property real targetX: NaN            // sitio al que va dando saltos
     property real sulkUntil: 0            // tras lanzarlo a otro workspace, se queda allí un rato
     readonly property bool present: mochiWs < 0 || Hyprland.monitors.values.some(m => m.activeWorkspace?.id === mochiWs)
     readonly property bool fsHide: Hyprland.workspaces.values.find(w => w.id === mochiWs)?.hasFullscreen ?? false
@@ -127,59 +143,163 @@ ShellRoot {
         return Quickshell.screens.find(q => q.name === m?.name) ?? Quickshell.screens[0];
     }
 
-    // Un sitio en el suelo lejos del ratón y mejor hacia los lados (el centro de abajo suele
-    // tener cosas: reproductores, barras…), para no taparte lo que estás mirando
-    function spotFor(s: var): real {
-        const onScreen = cursorX >= s.x && cursorX < s.x + s.width;
-        let best = s.x + s.width * 0.08, bestScore = -1;
-        for (const f of [0.06, 0.14, 0.3, 0.7, 0.86, 0.94]) {
-            const x = s.x + s.width * f;
-            const score = (onScreen ? Math.abs(x - cursorX) : 500) + 500 * Math.abs(f - 0.5) + Math.random() * 200;
+    // El recorrido por el que nada: un rectángulo de esquinas redondeadas por dentro del marco
+    // (los puntos son el centro de Mochi, que va algo hundido en el marco)
+    function track(s: var): var {
+        const L = s.x + barW + bodyRx - embed, R = s.x + s.width - frame - bodyRx + embed;
+        const T = s.y + frame + bodyRy - embed, B = s.y + s.height - frame - bodyRy + embed;
+        const c = 45, w = R - L - 2 * c, h = B - T - 2 * c, q = c * Math.PI / 2;
+        return {
+            L: L,
+            R: R,
+            T: T,
+            B: B,
+            c: c,
+            w: w,
+            h: h,
+            q: q,
+            len: 2 * w + 2 * h + 4 * q
+        };
+    }
+
+    // Punto del recorrido y su normal hacia fuera (hacia el marco)
+    function pointAt(tr: var, d: real): var {
+        d = ((d % tr.len) + tr.len) % tr.len;
+        const arc = (cx, cy, a) => ({
+                    x: cx + tr.c * Math.cos(a),
+                    y: cy + tr.c * Math.sin(a),
+                    nx: Math.cos(a),
+                    ny: Math.sin(a)
+                });
+        if (d < tr.w)
+            return {
+                x: tr.L + tr.c + d,
+                y: tr.B,
+                nx: 0,
+                ny: 1
+            };
+        d -= tr.w;
+        if (d < tr.q)
+            return arc(tr.R - tr.c, tr.B - tr.c, Math.PI / 2 - d / tr.c);
+        d -= tr.q;
+        if (d < tr.h)
+            return {
+                x: tr.R,
+                y: tr.B - tr.c - d,
+                nx: 1,
+                ny: 0
+            };
+        d -= tr.h;
+        if (d < tr.q)
+            return arc(tr.R - tr.c, tr.T + tr.c, -d / tr.c);
+        d -= tr.q;
+        if (d < tr.w)
+            return {
+                x: tr.R - tr.c - d,
+                y: tr.T,
+                nx: 0,
+                ny: -1
+            };
+        d -= tr.w;
+        if (d < tr.q)
+            return arc(tr.L + tr.c, tr.T + tr.c, -Math.PI / 2 - d / tr.c);
+        d -= tr.q;
+        if (d < tr.h)
+            return {
+                x: tr.L,
+                y: tr.T + tr.c + d,
+                nx: -1,
+                ny: 0
+            };
+        d -= tr.h;
+        return arc(tr.L + tr.c, tr.B - tr.c, Math.PI - d / tr.c);
+    }
+
+    // El punto del recorrido más cercano a (x, y)
+    function nearestD(tr: var, x: real, y: real): real {
+        let best = 0, bestDist = Infinity;
+        for (let d = 0; d < tr.len; d += 8) {
+            const p = pointAt(tr, d), dist = Math.hypot(p.x - x, p.y - y);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = d;
+            }
+        }
+        for (let d = best - 8; d <= best + 8; d += 1) {
+            const p = pointAt(tr, d), dist = Math.hypot(p.x - x, p.y - y);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = d;
+            }
+        }
+        return ((best % tr.len) + tr.len) % tr.len;
+    }
+
+    // Distancia más corta (con signo) a lo largo del recorrido
+    function trackDiff(tr: var, from: real, to: real): real {
+        let d = ((to - from) % tr.len + tr.len) % tr.len;
+        return d > tr.len / 2 ? d - tr.len : d;
+    }
+
+    // Un sitio del marco lejos del ratón, mejor en las paredes o en las esquinas de abajo (el
+    // centro de abajo suele tener cosas: reproductores, barras…) y no en el techo
+    function spotD(s: var, tr: var): real {
+        const onScreen = cursorX >= s.x && cursorX < s.x + s.width && cursorY >= s.y && cursorY < s.y + s.height;
+        let best = 0, bestScore = -Infinity;
+        for (let i = 0; i < 24; i++) {
+            const d = tr.len * i / 24, p = pointAt(tr, d);
+            let score = (onScreen ? Math.min(900, Math.hypot(p.x - cursorX, p.y - cursorY)) : 500) + Math.random() * 250;
+            if (p.nx !== 0 && Math.abs(p.ny) < 0.5)
+                score += 250 + 150 * (p.y - tr.T) / (tr.B - tr.T);   // paredes, mejor abajo
+            else if (p.ny > 0.5)
+                score += 400 * Math.abs((p.x - tr.L) / (tr.R - tr.L) - 0.5);   // suelo, mejor a los lados
+            else
+                score -= 300;   // techo
             if (score > bestScore) {
                 bestScore = score;
-                best = x;
+                best = d;
             }
         }
         return best;
     }
 
-    // Llega al workspace en el que estás: entra saltando por el lado del que viene
+    // Llega al workspace en el que estás: sale nadando de la barra (o del borde derecho) por el
+    // lado del que viene y va a un sitio tranquilo
     function arrive(): void {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
-        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        const s = screenOfMonitor(Hyprland.focusedMonitor), tr = track(s);
         const fromLeft = mochiWs >= 0 && mochiWs < ws.id;
         mochiWs = ws.id;
-        sinkAnim.stop();
         hopsLeft = 0;
-        targetX = spotFor(s);
-        entering = true;
-        // Sale de dentro de la barra (izquierda) o del borde (derecha)
-        gx = fromLeft ? s.x + barW - bodyRx * 1.2 : s.x + s.width - frame + bodyRx * 1.2;
-        gy = s.y + s.height - frame - bodyRy - 80;
-        vx = fromLeft ? 560 : -560;
-        vy = -560;
-        phys = "air";
+        entering = false;
+        const y = tr.T + (tr.B - tr.T) * 0.7;
+        swimD = nearestD(tr, fromLeft ? tr.L : tr.R, y);
+        swimV = 0;
+        swimTarget = spotD(s, tr);
+        gx = fromLeft ? tr.L - 80 : tr.R + 80;   // empieza dentro del marco
+        gy = y;
+        phys = "swim";
         reacted("excited", 1300);
     }
 
-    // Lo has llamado (++, voz, clic…) y no está aquí: sale de un salto desde abajo
+    // Lo has llamado (++, voz, clic…) y no está aquí: sale del borde de abajo
     function summon(): void {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
-        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        const s = screenOfMonitor(Hyprland.focusedMonitor), tr = track(s);
         mochiWs = ws.id;
-        sinkAnim.stop();
         hopsLeft = 0;
-        targetX = NaN;
         entering = false;
-        gx = spotFor(s);
-        gy = s.y + s.height - frame + bodyRy + 10;   // sale del borde de abajo
-        vx = 0;
-        vy = -1150;
-        phys = "air";
+        swimTarget = NaN;
+        swimV = 0;
+        const x = s.x + s.width * (cursorX - s.x < s.width / 2 ? 0.8 : 0.2);   // lejos del ratón
+        swimD = nearestD(tr, x, tr.B);
+        gx = x;
+        gy = tr.B + 70;
+        phys = "swim";
         reacted("happy", 900);
     }
 
@@ -211,8 +331,8 @@ ShellRoot {
         mochiWs = next;
         flung = true;
         entering = true;
-        targetX = NaN;
-        gx = dir > 0 ? s.x + barW - bodyRx * 0.5 : s.x + s.width - frame + bodyRx * 0.5;
+        const tr = track(s);
+        gx = dir > 0 ? tr.L - bodyRx : tr.R + bodyRx;
         vx *= 0.9;
         return true;
     }
@@ -224,6 +344,17 @@ ShellRoot {
         splatted(420, false);
     }
 
+    // Se hunde en el marco (donde esté) dejando solo los ojos fuera
+    function hideAway(): void {
+        const s = nearestScreen(gx, gy), p = pointAt(track(s), swimD);
+        const depth = Math.abs(p.ny) > 0.5 ? 26 : 14;   // en las paredes, menos (los ojos van de lado)
+        hideX = p.x + p.nx * depth;
+        hideY = p.y + p.ny * depth;
+        hopsLeft = 0;
+        swimTarget = NaN;
+        phys = "hidden";
+    }
+
     // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
     // workspace, viene
     function touch(): void {
@@ -233,24 +364,27 @@ ShellRoot {
             return;
         }
         if (phys === "hidden") {
-            sinkAnim.stop();
-            phys = "air";
-            vx = 0;
-            vy = -780;
+            phys = "swim";   // vuelve a asomar entero
+            swimV = 0;
             reacted("happy", 800);
         }
     }
 
+    // Saltito desde el suelo (la gravedad hace el resto)
     function hop(): void {
         const s = nearestScreen(gx, gy);
-        if (!s || phys !== "ground")
+        if (!s || phys !== "swim")
             return;
-        // Cerca de una pared, dar la vuelta
-        if (gx - s.x < 180)
+        const tr = track(s), p = pointAt(tr, swimD);
+        if (p.ny < 0.9) {   // solo desde el suelo
+            hopsLeft = 0;
+            return;
+        }
+        if (gx - tr.L < 150)
             hopDir = 1;
-        else if (s.x + s.width - gx < 180)
+        else if (tr.R - gx < 150)
             hopDir = -1;
-        else if (cursorY > s.y + s.height - 300 && Math.abs(cursorX - gx) < 350)
+        else if (Math.hypot(cursorX - gx, cursorY - gy) < 400)
             hopDir = cursorX > gx ? -1 : 1;   // no ir hacia el ratón
         const big = Math.random() < 0.15;
         vx = hopDir * (big ? 260 : 120 + Math.random() * 120);
@@ -259,16 +393,43 @@ ShellRoot {
         phys = "air";
     }
 
+    // Se impulsa desde una pared hacia dentro y cae (vuelve al marco donde caiga)
+    function pushOff(): void {
+        const s = nearestScreen(gx, gy);
+        if (!s || phys !== "swim")
+            return;
+        const p = pointAt(track(s), swimD);
+        vx = -p.nx * (300 + Math.random() * 250);
+        vy = -p.ny * 300 - 250;
+        phys = "air";
+    }
+
     function checkBg(): void {
         const s = nearestScreen(gx, gy);
         if (!s || bgProc.running)
             return;
-        bgProc.command = [Quickshell.shellDir + "/bg.py", gx, gy, bodyRx, bodyRy, s.x, s.y, s.width, s.height].map(String);
+        bgProc.command = [Quickshell.shellDir + "/bg.py", gx, gy, bodyRx, bodyRy, s.x, s.y, s.width, s.height, barW, frame].map(String);
         bgProc.running = true;
     }
 
-    function landed(): void {
+    // Toca el marco: se funde con él y se queda nadando ahí (sin rebotar: es un fluido)
+    function attach(s: var, impact: real, horizontal: bool): void {
+        const tr = track(s);
+        swimD = nearestD(tr, gx, gy);
+        const p = pointAt(tr, swimD);
+        swimV = (vx * p.ny - vy * p.nx) * 0.45;   // conserva algo de la velocidad a lo largo
+        vx = vy = 0;
+        if (impact > 1300)
+            reacted("squint", 500);
+        if (impact > 250)
+            splatted(impact, horizontal);
+        phys = "swim";
+        attached();
+    }
+
+    function attached(): void {
         thrown = false;
+        entering = false;
         // Ha acabado en otro workspace: se queda allí un par de minutos y luego vuelve contigo
         if (flung) {
             flung = false;
@@ -287,24 +448,8 @@ ShellRoot {
         const id = Hyprland.monitorFor(nearestScreen(gx, gy))?.activeWorkspace?.id;
         if (id !== undefined && id > 0)
             mochiWs = id;
-        if (!isNaN(targetX)) {
-            if (Math.abs(targetX - gx) > 50) {
-                travelAgain.restart();
-                return;
-            }
-            targetX = NaN;
-        }
         if (hopsLeft > 0)
             hopAgain.restart();
-    }
-
-    // Saltito hacia targetX
-    function travelHop(): void {
-        if (phys !== "ground" || isNaN(targetX))
-            return;
-        vx = Math.max(-480, Math.min(480, (targetX - gx) / 0.5));
-        vy = -520;
-        phys = "air";
     }
 
     function physStep(dt: real): void {
@@ -326,52 +471,98 @@ ShellRoot {
         const s = nearestScreen(gx, gy);
         if (!s)
             return;
+        const tr = track(s);
+
+        if (phys === "hidden") {
+            const k = Math.min(1, dt * 2.5);
+            gx += (hideX - gx) * k;
+            gy += (hideY - gy) * k;
+            return;
+        }
+
+        if (phys === "swim") {
+            const here = pointAt(tr, swimD);
+            let want = 0;
+            if (!isNaN(swimTarget)) {
+                // Nada hacia el sitio elegido, a brazadas
+                const diff = trackDiff(tr, swimD, swimTarget);
+                if (Math.abs(diff) < 6) {
+                    swimTarget = NaN;
+                    savePos();
+                    checkBg();
+                } else {
+                    swimPhase += dt * 7;
+                    want = Math.sign(diff) * Math.min(280, Math.abs(diff) * 2 + 40) * (0.55 + 0.45 * Math.max(0, Math.sin(swimPhase)));
+                }
+            } else if (Math.abs(here.nx) > 0.9) {
+                // En una pared: la gravedad lo va bajando despacio
+                want = here.nx > 0 ? -22 : 22;
+            }
+            // En el techo no aguanta mucho: se suelta y cae como una gota
+            if (here.ny < -0.9 && isNaN(swimTarget)) {
+                ceilingTime += dt;
+                if (ceilingTime > 3 + Math.random() * 3) {
+                    ceilingTime = 0;
+                    vx = 0;
+                    vy = 60;
+                    gy += 14;
+                    phys = "air";
+                    reacted("surprised", 700);
+                    return;
+                }
+            } else {
+                ceilingTime = 0;
+            }
+            swimV += (want - swimV) * Math.min(1, dt * 4);
+            swimD = ((swimD + swimV * dt) % tr.len + tr.len) % tr.len;
+            // Sigue el recorrido con suavidad (al salir del marco, al pegarse…)
+            const p = pointAt(tr, swimD), k = Math.min(1, dt * 10);
+            gx += (p.x - gx) * k;
+            gy += (p.y - gy) * k;
+            return;
+        }
+
+        // En el aire: gravedad
         vy += 2600 * dt;
         vx *= 1 - 0.25 * dt;
         let nx = gx + vx * dt, ny = gy + vy * dt;
-        // Dentro del marco; el suelo un pelín hundido en el borde para que se fundan
-        const left = s.x + barW + bodyRx, right = s.x + s.width - frame - bodyRx;
-        const top = s.y + frame + bodyRy, floor = s.y + s.height - frame - bodyRy + 3;
 
-        // Paredes (salvo que al otro lado haya otra pantalla, o esté entrando)
         if (entering) {
-            if (nx >= left && nx <= right)
+            if (nx >= tr.L && nx <= tr.R)
                 entering = false;
-        } else if (nx < left && !screenAt(nx - bodyRx, ny)) {
+            gx = nx;
+            gy = Math.min(ny, tr.B);
+            return;
+        }
+        // Paredes (salvo que al otro lado haya otra pantalla): se pega, o si va muy rápido
+        // atraviesa al workspace de ese lado
+        if (nx < tr.L && !screenAt(nx - bodyRx - barW, ny)) {
             if (thrown && vx < -1100 && crossToWs(-1, s))
                 return;
-            nx = left;
-            if (vx < -300)
-                splatted(-vx, true);
-            vx = Math.abs(vx) * 0.45;
-        } else if (nx > right && !screenAt(nx + bodyRx, ny)) {
+            gx = tr.L;
+            gy = Math.max(tr.T, Math.min(tr.B, ny));
+            attach(s, -vx, true);
+            return;
+        }
+        if (nx > tr.R && !screenAt(nx + bodyRx + frame, ny)) {
             if (thrown && vx > 1100 && crossToWs(1, s))
                 return;
-            nx = right;
-            if (vx > 300)
-                splatted(vx, true);
-            vx = -Math.abs(vx) * 0.45;
+            gx = tr.R;
+            gy = Math.max(tr.T, Math.min(tr.B, ny));
+            attach(s, vx, true);
+            return;
         }
-        if (ny < top && vy < 0 && !screenAt(nx, ny - bodyRy)) {
-            ny = top;
-            vy = Math.abs(vy) * 0.3;
+        if (ny < tr.T && vy < 0 && !screenAt(nx, ny - bodyRy - frame)) {
+            gx = nx;
+            gy = tr.T;
+            attach(s, -vy, false);
+            return;
         }
-        // Suelo: rebota un poco y se aplasta
-        if (ny > floor && vy > 0 && !screenAt(nx, ny + bodyRy)) {
-            ny = floor;
-            if (vy > 1300)
-                reacted("squint", 500);
-            if (vy > 250)
-                splatted(vy, false);
-            if (vy > 480) {
-                vy = -vy * 0.32;
-                vx *= 0.7;
-            } else {
-                vx = 0;
-                vy = 0;
-                phys = "ground";
-                landed();
-            }
+        if (ny > tr.B && vy > 0 && !screenAt(nx, ny + bodyRy + frame)) {
+            gx = nx;
+            gy = tr.B;
+            attach(s, vy, false);
+            return;
         }
         gx = nx;
         gy = ny;
@@ -394,21 +585,7 @@ ShellRoot {
         id: cfg
     }
 
-    // Que Hyprland desenfoque lo que hay detrás de Mochi, como hace con el marco
-    function applyBlurRule(): void {
-        Quickshell.execDetached(["hyprctl", "--batch", `eval hl.layer_rule({ match = { namespace = "mochi" }, blur = true }); eval hl.layer_rule({ match = { namespace = "mochi" }, ignore_alpha = ${(Theme.surfaceAlpha - 0.03).toFixed(2)} })`]);
-    }
-
-    Connections {
-        target: Theme
-
-        function onSurfaceAlphaChanged(): void {
-            shell.applyBlurRule();
-        }
-    }
-
     Component.onCompleted: {
-        applyBlurRule();
         mochiWs = Hyprland.focusedWorkspace?.id ?? -1;
         const s = Quickshell.screens[0];
         if (gx < 0 && s) {
@@ -639,11 +816,14 @@ ShellRoot {
 
         stdout: SplitParser {
             onRead: line => {
-                const lum = parseFloat(line);
+                const [l, col] = line.trim().split(" ");
+                const lum = parseFloat(l);
                 if (lum < 0.4)
                     shell.lightBody = true;
                 else if (lum > 0.5)
                     shell.lightBody = false;
+                if (col && col.startsWith("#"))
+                    shell.frameColor = col;
             }
         }
     }
@@ -657,21 +837,36 @@ ShellRoot {
     }
 
     FrameAnimation {
-        running: shell.shown && (shell.phys === "air" || shell.phys === "held")   // también volando por otro workspace
+        // (también volando por otro workspace, aunque no se vea)
+        running: shell.shown && (shell.present || shell.phys === "air" || shell.phys === "held")
         onTriggered: shell.physStep(frameTime)
     }
 
-    // Paseos: de vez en cuando da unos saltitos por el suelo
+    // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
+    // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && shell.phys === "ground" && isNaN(shell.targetX) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
-            interval = 7000 + Math.random() * 12000;
-            if (Math.random() < 0.6) {
+            interval = 7000 + Math.random() * 11000;
+            const s = shell.nearestScreen(shell.gx, shell.gy), tr = shell.track(s), p = shell.pointAt(tr, shell.swimD);
+            const r = Math.random();
+            if (r < 0.45) {
+                // A otro sitio (no muy lejos, y que no sea junto al ratón)
+                for (let i = 0; i < 6; i++) {
+                    const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9) {
+                        shell.swimTarget = ((d % tr.len) + tr.len) % tr.len;
+                        break;
+                    }
+                }
+            } else if (r < 0.65 && p.ny > 0.9) {
                 shell.hopsLeft = 1 + Math.floor(Math.random() * 3);
                 shell.hopDir = Math.random() < 0.5 ? -1 : 1;
                 shell.hop();
+            } else if (r < 0.75 && Math.abs(p.nx) > 0.9) {
+                shell.pushOff();
             }
         }
     }
@@ -683,39 +878,19 @@ ShellRoot {
         onTriggered: shell.hop()
     }
 
-    Timer {
-        id: travelAgain
-
-        interval: 120
-        onTriggered: shell.travelHop()
-    }
-
-    // Si no le haces caso, se esconde bajo el borde de la pantalla
+    // Si no le haces caso, se hunde en el marco (solo asoman los ojos)
     Timer {
         id: idleHide
 
         running: shell.shown && shell.present && shell.phys !== "hidden" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         interval: shell.hideAfter
         onTriggered: {
-            if (shell.phys !== "ground") {
+            if (shell.phys !== "swim") {
                 restart();
                 return;
             }
-            const s = shell.nearestScreen(shell.gx, shell.gy);
-            shell.hopsLeft = 0;
-            shell.phys = "hidden";
-            sinkAnim.to = s.y + s.height - shell.frame - 22;   // se hunde en el borde: solo asoman los ojos
-            sinkAnim.restart();
+            shell.hideAway();
         }
-    }
-
-    NumberAnimation {
-        id: sinkAnim
-
-        target: shell
-        property: "gy"
-        duration: 1600
-        easing.type: Easing.InOutSine
     }
 
     Variants {
@@ -750,9 +925,9 @@ ShellRoot {
                 }
             }
 
-            // Cuerpo de Mochi con los blobs de Caelestia: mismo color, transparencia y sombra que
-            // el marco. Se recorta al interior del marco (para no pintar el borde dos veces) y
-            // unas tiras invisibles a lo largo del borde hacen que se funda con él al tocarlo.
+            // Cuerpo de Mochi: mismo color, transparencia y sombra que el marco de Caelestia.
+            // Se recorta al interior del marco (el marco ya lo pinta Caelestia) y el shader lo
+            // funde con él al tocarlo.
             Item {
                 id: interior
 
@@ -768,7 +943,6 @@ ShellRoot {
                     y: -interior.y
                     width: win.width
                     height: win.height
-                    opacity: Theme.surfaceAlpha
                     layer.enabled: true
                     layer.effect: MultiEffect {
                         shadowEnabled: true
@@ -776,78 +950,30 @@ ShellRoot {
                         shadowColor: Qt.alpha(Theme.shadow, 0.7)
                     }
 
-                    BlobGroup {
-                        id: blobs
+                    // El cuerpo: metaballs en un shader (mochi.frag). Solo se calcula en una caja
+                    // alrededor de Mochi.
+                    ShaderEffect {
+                        id: body
 
-                        color: Theme.surface
-                        smoothing: shell.frameSmoothing
-                    }
+                        readonly property real half: 140
 
-                    // Tiras del marco (fuera del interior; solo sirven para fundirse)
-                    readonly property real inset: shell.frameRounding + shell.frameSmoothing
+                        x: mochi.x + mochi.width / 2 - half
+                        y: mochi.y + mochi.height / 2 - half
+                        width: 2 * half
+                        height: 2 * half
 
-                    BlobRect {
-                        group: blobs
-                        x: shell.barW + parent.inset
-                        y: win.height - shell.frame
-                        width: win.width - shell.frame - shell.barW - 2 * parent.inset
-                        height: shell.frame + 60
-                    }
-                    BlobRect {
-                        group: blobs
-                        x: shell.barW + parent.inset
-                        y: -60
-                        width: win.width - shell.frame - shell.barW - 2 * parent.inset
-                        height: shell.frame + 60
-                    }
-                    BlobRect {
-                        group: blobs
-                        x: -60
-                        y: shell.frame + parent.inset
-                        width: shell.barW + 60
-                        height: win.height - 2 * shell.frame - 2 * parent.inset
-                    }
-                    BlobRect {
-                        group: blobs
-                        x: win.width - shell.frame
-                        y: shell.frame + parent.inset
-                        width: shell.frame + 60
-                        height: win.height - 2 * shell.frame - 2 * parent.inset
-                    }
+                        property vector2d size: Qt.vector2d(width, height)
+                        property vector4d body: Qt.vector4d(half, half, mochi.bodyRx, mochi.bodyRy)
+                        property vector4d mass: Qt.vector4d(half + mochi.massX - mochi.width / 2, half + mochi.massY - mochi.height / 2, mochi.massR, 0)
+                        property vector4d tail: Qt.vector4d(half + mochi.tailX - mochi.width / 2, half + mochi.tailY - mochi.height / 2, mochi.tailR, 0)
+                        property vector4d wobA: mochi.wobA
+                        property vector4d wobB: mochi.wobB
+                        property vector4d frame: Qt.vector4d(shell.barW - x, shell.frame - y, win.width - shell.frame - x, win.height - shell.frame - y)
+                        property color color: shell.frameColor   // sólido, del color que se ve el marco
+                        property real blobK: 26
+                        property real frameK: shell.frameSmoothing
 
-                    // El cuerpo: daifuku (cúpula arriba, base plana) que tiembla como gelatina
-                    BlobRect {
-                        group: blobs
-                        x: mochi.x + mochi.bodyX
-                        y: mochi.y + mochi.bodyY
-                        width: mochi.bodyW
-                        height: mochi.bodyH
-                        topLeftRadius: Math.min(width / 2, height * 0.62)
-                        topRightRadius: Math.min(width / 2, height * 0.62)
-                        // Apoyado: base plana; en el aire se redondea entero
-                        property real baseRound: shell.phys === "ground" || shell.phys === "hidden" ? 0.34 : 0.5
-                        bottomLeftRadius: Math.min(width / 2, height * baseRound)
-                        bottomRightRadius: Math.min(width / 2, height * baseRound)
-                        stiffness: 180
-                        damping: 12
-                        deformScale: 0.000015
-
-                        Behavior on baseRound {
-                            NumberAnimation {
-                                duration: 220
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-                    }
-
-                    // La masa que se queda atrás al moverlo: se une al cuerpo como una gota
-                    BlobRect {
-                        group: blobs
-                        x: mochi.x + mochi.massX - mochi.massR
-                        y: mochi.y + mochi.massY - mochi.massR
-                        width: 2 * mochi.massR
-                        height: 2 * mochi.massR
-                        radius: mochi.massR
+                        fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
                 }
             }
@@ -864,6 +990,7 @@ ShellRoot {
                 worldX: shell.gx
                 worldY: shell.gy
                 falling: shell.phys === "air" && shell.vy > 900
+                bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
                 talking: Brain.talking
@@ -918,10 +1045,9 @@ ShellRoot {
                         wasPhys = shell.phys;
                         shell.touch();
                         // Agarrado (también en el aire)
-                        sinkAnim.stop();
                         hopAgain.stop();
                         shell.hopsLeft = 0;
-                        shell.targetX = NaN;
+                        shell.swimTarget = NaN;
                         shell.entering = false;
                         shell.flung = false;
                         shell.phys = "held";
@@ -973,7 +1099,7 @@ ShellRoot {
                                 shell.reacted("dizzy", 2400);
                             return;
                         }
-                        shell.phys = wasPhys === "ground" ? "ground" : "air";
+                        shell.phys = wasPhys === "swim" ? "swim" : "air";
                         if (shell.asking) {
                             mochi.poke();
                             shell.asking = false;
