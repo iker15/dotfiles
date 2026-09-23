@@ -37,7 +37,14 @@ Item {
     // Posición global de Mochi: si cambia, el fluido lo nota por inercia
     property real worldX: 0
     property real worldY: 0
-    property real drowsy: 0          // 0-1: sueño según la hora (entorna los ojos)
+    // Color de las ojeras: el del cuerpo más oscuro, tirando a morado
+    readonly property color bagColor: Qt.tint(Qt.darker(bodyColor, bodyLum > 0.5 ? 1.32 : 1.9), Qt.rgba(0.4, 0.15, 0.5, 0.22))
+    property real drowsy: 0          // 0-1: sueño según la hora (entorna los ojos, ojeras)
+    // Sueño: cabezadas (nod: 0 despierto → 1 cabeza caída) y quedarse dormido del todo
+    property real nod: 0
+    property real nodDir: 1
+    property int nods: 0             // cabezadas seguidas
+    property bool dozing: false
     property bool eyesOff: false   // buceando: los ojos se quedan bajo el marco
     // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
     property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
@@ -76,7 +83,7 @@ Item {
     // Expresión: una reacción puntual manda sobre todo lo demás
     property string reaction: ""     // cualquier cara, durante un rato (react)
     property string idleExpr: ""     // gestos sueltos cuando está tranquilo
-    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy ? "asleep" : hidden ? "peek" : idleExpr)
+    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy || dozing ? "asleep" : hidden ? "peek" : idleExpr)
 
     implicitWidth: 2 * rx + 8
     implicitHeight: 2 * ry + 8
@@ -108,6 +115,56 @@ Item {
     // Inclinar los ojos un momento (grados/s), como quien se echa hacia delante
     function lean(v: real): void {
         sim.rotV += v;
+    }
+
+    // Da una cabezada: se le van cerrando los ojos y se le cae la cabeza… y se despierta de golpe
+    function startNod(): void {
+        if (dozing)
+            return;
+        nodDir = Math.random() < 0.5 ? -1 : 1;
+        nodAnim.restart();
+    }
+
+    function nodEnd(): void {
+        nods++;
+        // Tras unas cuantas, de madrugada, se queda frito
+        if (nods >= 3 && drowsy > 0.6 && Math.random() < 0.6) {
+            dozing = true;
+            settleNod.restart();
+            return;
+        }
+        // Sobresalto: la cabeza vuelve arriba de golpe, ojos como platos, y parpadea
+        nod = 0;
+        sim.svy += 2.4;
+        sim.svx -= 1;
+        sim.rotV -= nodDir * 160;
+        react("surprised", 420);
+        doubleBlink.interval = 520;
+        doubleBlink.restart();
+        if (Math.random() < 0.35)
+            nodAgain.restart();   // …y al rato vuelve a caer
+    }
+
+    // Lo despiertan (le hablas, lo tocas, le pasas el ratón): se sobresalta, se estira y bosteza
+    function wake(): void {
+        nodAnim.stop();
+        nodAgain.stop();
+        settleNod.stop();
+        nod = 0;
+        nods = 0;
+        if (!dozing)
+            return;
+        dozing = false;
+        react("surprised", 380);
+        sim.svy += 2.8;
+        sim.svx -= 1.2;
+        wakeYawn.restart();
+    }
+
+    function yawn(): void {
+        react("yawn", 1800);
+        sim.svy += 1.8;   // se estira
+        sim.svx -= 0.9;
     }
 
     function react(name: string, ms: int): void {
@@ -371,6 +428,12 @@ Item {
                 ly = -0.85 * Math.abs(Math.sin(t * 5));
                 break;
             }
+            // Cabezada: los párpados caen y la mirada se va abajo
+            if (root.nod > 0) {
+                e.lt = Math.max(e.lt, 0.92 * root.nod);
+                ly += 0.5 * root.nod;
+                lx *= 1 - root.nod;
+            }
             // Con sueño (según la hora), párpados a media asta y mirada algo caída
             if (root.drowsy > 0 && ["", "smile", "peek", "calm", "curious", "lookaround"].includes(root.face)) {
                 e.lt = Math.max(e.lt, 0.34 * root.drowsy);
@@ -462,8 +525,8 @@ Item {
             root.wobB = Qt.vector4d(hc[4], hc[5], hc[6], hc[7]);
 
             // Escala: aplastarse al respirar, estirarse al cogerlo
-            const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04;
-            const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04;
+            const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05;
+            const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07;
             const ks = 320, cs = 13;
             svx += (-ks * (root.sx - tsx) - cs * svx) * dt;
             svy += (-ks * (root.sy - tsy) - cs * svy) * dt;
@@ -480,7 +543,7 @@ Item {
                 }
             }
             const f = root.face;
-            const trot = f === "curious" ? 9 : f === "confused" ? -8 : f === "dance" ? 8 * Math.sin(t * 7.5) : 0;
+            const trot = (f === "curious" ? 9 : f === "confused" ? -8 : f === "dance" ? 8 * Math.sin(t * 7.5) : 0) + root.nod * 8 * root.nodDir;
             // Bailando: un botecito en cada golpe
             if (f === "dance") {
                 const beat = Math.floor(t / 0.42);
@@ -535,14 +598,14 @@ Item {
             target: root
             property: "blink"
             to: 1
-            duration: 55
+            duration: 55 + 140 * root.drowsy
             easing.type: Easing.InQuad
         }
         NumberAnimation {
             target: root
             property: "blink"
             to: 0
-            duration: 110
+            duration: 110 + 260 * root.drowsy
             easing.type: Easing.OutQuad
         }
     }
@@ -617,6 +680,21 @@ Item {
                 ctx.fill();
             }
             ctx.globalCompositeOperation = "source-over";
+
+            // Ojeras: una media luna oscura (algo morada) bajo cada ojo, según el sueño
+            const bags = Math.max(0, Math.min(1, (root.drowsy - 0.2) / 0.6));
+            if (bags > 0.01) {
+                const by = y + h / 2 + 2.3 * root.u;
+                ctx.globalAlpha = 0.85 * bags;
+                ctx.strokeStyle = root.bagColor;
+                ctx.lineWidth = 1.5 * root.u;
+                ctx.lineCap = "round";
+                ctx.beginPath();
+                ctx.moveTo(x - w * 0.55, by);
+                ctx.quadraticCurveTo(x, by + 2.6 * root.u, x + w * 0.55, by);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
         }
 
         onPaint: {
@@ -645,6 +723,20 @@ Item {
         interval: 6000
         onTriggered: {
             interval = 4000 + Math.random() * 7000;
+            if (root.dozing || nodAnim.running)
+                return;
+            // Con sueño, muchas veces lo que le sale es una cabezada, un bostezo o un parpadeo lento
+            if (root.drowsy > 0.25 && Math.random() < 0.3 + 0.5 * root.drowsy) {
+                const r = Math.random();
+                if (r < 0.5)
+                    root.startNod();
+                else if (r < 0.75)
+                    root.yawn();
+                else
+                    slowBlink.restart();
+                return;
+            }
+            root.nods = 0;
             const pick = root.music && Math.random() < 0.5 ? "dance" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
             if (pick === "doubleblink") {
                 root.doBlink();
@@ -658,6 +750,75 @@ Item {
             }
         }
     }
+
+    SequentialAnimation {
+        id: nodAnim
+
+        NumberAnimation {
+            target: root
+            property: "nod"
+            to: 1
+            duration: 1800 + Math.random() * 900
+            easing.type: Easing.InQuad
+        }
+        PauseAnimation {
+            duration: 350 + Math.random() * 500
+        }
+        ScriptAction {
+            script: root.nodEnd()
+        }
+    }
+
+    // Dormido: la cabeza se asienta despacio
+    NumberAnimation {
+        id: settleNod
+
+        target: root
+        property: "nod"
+        to: 0.25
+        duration: 1400
+        easing.type: Easing.OutSine
+    }
+
+    Timer {
+        id: nodAgain
+
+        interval: 1600 + Math.random() * 1400
+        onTriggered: root.startNod()
+    }
+
+    Timer {
+        id: wakeYawn
+
+        interval: 480
+        onTriggered: root.yawn()
+    }
+
+    SequentialAnimation {
+        id: slowBlink
+
+        NumberAnimation {
+            target: root
+            property: "blink"
+            to: 1
+            duration: 420
+            easing.type: Easing.InOutSine
+        }
+        PauseAnimation {
+            duration: 380
+        }
+        NumberAnimation {
+            target: root
+            property: "blink"
+            to: 0
+            duration: 520
+            easing.type: Easing.InOutSine
+        }
+    }
+
+    // Si pasa algo (le hablas, lo coges…) se le quita el sueño
+    onMoodChanged: if (mood !== "idle") wake()
+    onDraggingChanged: if (dragging) wake()
 
     Timer {
         id: clearIdle
@@ -678,7 +839,7 @@ Item {
         interval: 3000
         onTriggered: {
             root.doBlink();
-            interval = 2500 + Math.random() * 3000;
+            interval = (2500 + Math.random() * 3000) * (1 + 0.6 * root.drowsy);
         }
     }
 }

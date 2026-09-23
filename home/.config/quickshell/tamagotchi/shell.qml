@@ -148,6 +148,9 @@ ShellRoot {
 
     signal splatted(real strength, bool horizontal)
     signal kicked(real ax, real ay)
+    signal woke()                     // cualquier uso: se le quita el sueño
+    signal sleepTest(string what)
+    property bool dozing: false       // se ha quedado dormido (no pasea)
     signal leaned(real v)
     signal reacted(string name, int ms)
 
@@ -724,6 +727,7 @@ ShellRoot {
     // workspace, viene
     function touch(): void {
         idleHide.restart();
+        woke();
         if (!present) {
             summon();
             return;
@@ -1194,6 +1198,14 @@ ShellRoot {
         function nest(): void {
             shell.goNest();
         }
+        // Probar el sueño: nod | yawn | doze | wake
+        function sleep(what: string): void {
+            shell.sleepTest(what);
+        }
+        // Probar el humor de una hora (energía 0.5-1.25; se recalcula al minuto)
+        function energy(e: real): void {
+            shell.dayEnergy = e;
+        }
         // Probar el asomo del nido (como si pasaras el ratón por encima)
         function nestPeek(on: bool): void {
             shell.nestHover = on;
@@ -1304,7 +1316,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -1528,7 +1540,9 @@ ShellRoot {
                 readonly property real ly: shell.lookY
                 readonly property string face: mochi.face
                 // de madrugada, si no andas cerca, duerme (ojos cerrados y respira más despacio)
-                readonly property bool asleep: shell.drowsy > 0.8 && !shell.cursorNear
+                readonly property bool asleep: mochi.dozing || (shell.drowsy > 0.8 && !shell.cursorNear)
+                readonly property real nod: mochi.nod
+                onNodChanged: requestPaint()
                 onAsleepChanged: requestPaint()
                 readonly property color ink: Theme.secondary
                 property real breath: 0
@@ -1570,7 +1584,8 @@ ShellRoot {
                     const b = breath, sx = 1 + 0.035 * b, sy = 1 - 0.045 * b;
                     ctx.save();
                     ctx.translate(15, 24);
-                    ctx.scale(sx, sy);
+                    ctx.rotate(nod * 0.13 * mochi.nodDir);   // cabezada: se ladea
+                    ctx.scale(sx, sy * (1 - 0.06 * nod));
                     ctx.translate(-15, -24);
                     ctx.fillStyle = ink;
                     ctx.beginPath();
@@ -1585,7 +1600,7 @@ ShellRoot {
 
                     // Ojos: huecos en la silueta
                     ctx.globalCompositeOperation = "destination-out";
-                    const ex = lx * 1.6, ey = ly * 1.3 + 1.2 * b;
+                    const ex = lx * 1.6 * (1 - nod), ey = ly * 1.3 + 1.2 * b + 1.6 * nod;
                     const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
                     for (const cx of [11, 19]) {
                         const x = cx + ex, y = 14 + ey;
@@ -1604,7 +1619,7 @@ ShellRoot {
                             ctx.quadraticCurveTo(x, y - 2.2, x + 2.1, y + 1.2);
                             ctx.stroke();
                         } else {
-                            const w = 3.5, h = Math.max(0.9, 4.7 * (1 - 0.85 * blink));
+                            const w = 3.5, h = Math.max(0.9, 4.7 * (1 - 0.85 * Math.max(blink, 0.9 * nod, 0.35 * shell.drowsy)));
                             ctx.fillStyle = "black";
                             ctx.beginPath();
                             ctx.roundedRect(x - w / 2, y - h / 2, w, h, Math.min(w, h) / 2, Math.min(w, h) / 2);
@@ -1632,6 +1647,7 @@ ShellRoot {
                 // (en el nido, en reposo, lo que se ve es su icono en la barra; los ojos de
                 // verdad salen al asomarse)
                 drowsy: shell.drowsy
+                onDozingChanged: if (visible) shell.dozing = dozing
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
@@ -1654,6 +1670,20 @@ ShellRoot {
                     }
                     function onLeaned(v: real): void {
                         mochi.lean(v);
+                    }
+                    function onWoke(): void {
+                        mochi.wake();
+                    }
+                    function onSleepTest(what: string): void {
+                        if (what === "nod")
+                            mochi.startNod();
+                        else if (what === "yawn")
+                            mochi.yawn();
+                        else if (what === "doze") {
+                            mochi.nods = 3;
+                            mochi.startNod();
+                        } else if (what === "wake")
+                            mochi.wake();
                     }
                 }
                 // (en el nido la barra es estrecha: mira moviendo poco los ojos, salvo asomado)
@@ -1681,6 +1711,7 @@ ShellRoot {
                     onContainsMouseChanged: {
                         // En el nido se asoma al pasar por encima, y se vuelve a meter al rato de irte
                         if (containsMouse) {
+                            mochi.wake();   // pasarle el ratón lo despierta
                             shell.nestHover = true;
                             nestLeave.stop();
                         } else {
