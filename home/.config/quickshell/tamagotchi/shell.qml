@@ -71,7 +71,7 @@ ShellRoot {
     property bool slipping: false // resbalón por una pared (no cuenta como viaje)
     property real slipIn: 2
     // Buceo: se sumerge en el marco (su medio: lo domina), nada por dentro y sale más
-    // adelante. "hidden" = no se le ve nada; "peek" = asoma un poco la cabeza con los ojos.
+    // adelante. "hidden" = no se le ve nada; "peek" = asoma un poco la cabeza (sin ojos).
     property string diveMode: ""
     property real diveFrom: 0         // swimD al empezar
     property real diveDist: 0         // recorrido (con signo, a lo largo del marco)
@@ -80,11 +80,7 @@ ShellRoot {
     property bool diveFromDeep: false // (al llegar de otro workspace) ya empieza sumergido
     property real diveStage: 0        // 0 coge aire · 0.5 zambulléndose · 1 dentro · 2 saliendo
     property real sink: 0             // cuánto va hundido respecto a nadar en la superficie
-    // Los ojos: al asomar se suben a lo alto de la cabeza y se giran según el lado (la
-    // cabeza apunta hacia dentro de la pantalla)
-    property real eyeLiftX: 0
-    property real eyeLiftY: 0
-    property real eyeAngle: 0
+    property real diveUnder: 0        // 0-1: cuánto está dentro (los ojos no se ven)
     property real hideX: 0
     property real hideY: 0
     property bool cursorNear: false
@@ -372,7 +368,7 @@ ShellRoot {
     }
 
     // Llega al workspace en el que estás buceando por el borde de abajo: entra sumergido por
-    // la esquina del lado del que viene, asomando la cabeza, y sale en un sitio tranquilo más
+    // la esquina del lado del que viene, asomando un poco la cabeza, y sale en un sitio tranquilo más
     // allá (en el suelo o subiendo por la pared del otro lado)
     function arrive(): void {
         const ws = Hyprland.focusedWorkspace;
@@ -450,6 +446,7 @@ ShellRoot {
         if (!diveFromDeep && u < 0.06)
             vis += 5 * Math.sin(Math.PI * u / 0.06);   // coge aire: se estira hacia arriba antes
         const under = down * (1 - up);
+        diveUnder = under;
         if (diveMode === "peek")
             vis += 2.5 * Math.sin(diveT * 8) * under;   // ondula al nadar
         sink = surface - vis;
@@ -474,13 +471,7 @@ ShellRoot {
             reacted(diveFromDeep ? "excited" : "happy", 900);
         }
 
-        // Ojos: asomando, suben a lo alto de la cabeza (por encima del borde) y se giran
-        const peek = diveMode === "peek" ? under : 0;
-        const c = sink + embed - rn;   // centro, por debajo del borde del marco
-        const lift = Math.max(0, c + 12) * peek;
-        eyeLiftX = -p.nx * lift;
-        eyeLiftY = -p.ny * lift;
-        eyeAngle = Math.atan2(-p.nx, p.ny) * 180 / Math.PI * peek;
+        // (los ojos se hunden con él: se recortan al interior del marco, como el cuerpo)
         // mira hacia donde va
         const ahead = pointAt(tr, swimD + Math.sign(diveDist) * 300);
         glanceX = ahead.x;
@@ -490,6 +481,7 @@ ShellRoot {
         if (u >= 1) {
             phys = "swim";
             diveMode = "";
+            diveUnder = 0;
             sink = 0;
             swimV = 0;
             energy = 1;
@@ -694,13 +686,6 @@ ShellRoot {
         if (phys === "dive") {
             diveStep(tr, dt);
             return;
-        }
-        // (si lo agarras buceando, los ojos vuelven a su sitio)
-        if (eyeLiftX || eyeLiftY || eyeAngle) {
-            const f = Math.exp(-10 * dt);
-            eyeLiftX = Math.abs(eyeLiftX) < 0.1 ? 0 : eyeLiftX * f;
-            eyeLiftY = Math.abs(eyeLiftY) < 0.1 ? 0 : eyeLiftY * f;
-            eyeAngle = Math.abs(eyeAngle) < 0.1 ? 0 : eyeAngle * f;
         }
 
         if (phys === "hidden") {
@@ -1304,9 +1289,7 @@ ShellRoot {
                 falling: shell.phys === "air" && shell.vy > 900
                 bodyColor: shell.frameColor
                 hidden: shell.phys === "hidden"
-                eyeLiftX: shell.eyeLiftX
-                eyeLiftY: shell.eyeLiftY
-                eyeAngle: shell.eyeAngle
+                eyesOff: shell.phys === "dive" && shell.diveUnder > 0.4
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen)
                 clipRect: Qt.rect(shell.barW - x, shell.frame - y, win.width - shell.barW - shell.frame, win.height - 2 * shell.frame)
                 sleepy: shell.phys === "hidden" && !shell.cursorNear
@@ -1329,10 +1312,8 @@ ShellRoot {
                         mochi.lean(v);
                     }
                 }
-                // (la mirada va en el sistema de los ojos: si están girados, se gira con ellos)
-                readonly property real eyeRad: shell.eyeAngle * Math.PI / 180
-                lookX: shell.dragging ? 0 : Math.cos(eyeRad) * shell.lookX + Math.sin(eyeRad) * shell.lookY
-                lookY: shell.dragging ? 0 : -Math.sin(eyeRad) * shell.lookX + Math.cos(eyeRad) * shell.lookY
+                lookX: shell.dragging ? 0 : shell.lookX
+                lookY: shell.dragging ? 0 : shell.lookY
 
                 MouseArea {
                     property real px
