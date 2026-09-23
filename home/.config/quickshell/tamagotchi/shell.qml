@@ -878,32 +878,13 @@ ShellRoot {
                         return shell.remark;
                     return Brain.reply;
                 }
-                // Estado mientras no hay respuesta todavía
-                readonly property string status: {
-                    if (shell.voiceWaiting && !Brain.busy)
-                        return "te escucho…";
-                    if (!Brain.busy || Brain.reply)
-                        return "";
-                    switch (Brain.mood) {
-                    case "reading":
-                        return "leyendo…";
-                    case "searching":
-                        return "buscando…";
-                    case "focused":
-                        return "editando…";
-                    case "working":
-                        return "trabajando…";
-                    default:
-                        return "pensando…";
-                    }
-                }
                 // Lo que has dicho (por escrito o por voz), en pequeño encima de la respuesta
                 readonly property string said: !shell.asking && !shell.remark && (Brain.busy || Brain.reply) ? Brain.lastPrompt : ""
                 property int revealed: 0     // la respuesta aparece palabra a palabra
 
                 visible: opacity > 0.01
                 opacity: showing ? 1 : 0
-                width: Math.max(shell.asking ? 320 : 0, Math.min(460, Math.max(reply.implicitWidth, saidText.implicitWidth, statusText.implicitWidth) + 8))
+                width: Math.max(shell.asking ? 320 : 0, Math.min(460, Math.max(reply.implicitWidth, saidText.implicitWidth) + 8))
                 height: content.implicitHeight
                 x: Math.max(12, Math.min(win.width - width - 12, mochi.x + mochi.width / 2 - width / 2))
                 y: above ? mochi.y - height - 14 : mochi.y + mochi.height + 12
@@ -985,35 +966,6 @@ ShellRoot {
                         opacity: 0.6
                     }
 
-                    Text {
-                        id: statusText
-
-                        visible: text !== ""
-                        width: parent.width
-                        text: bubble.status
-                        horizontalAlignment: Text.AlignHCenter
-                        font.family: Theme.font
-                        font.pixelSize: 13
-                        font.letterSpacing: 0.5
-                        color: bubble.ink
-
-                        SequentialAnimation on opacity {
-                            loops: Animation.Infinite
-                            running: statusText.visible
-
-                            NumberAnimation {
-                                to: 0.35
-                                duration: 700
-                                easing.type: Easing.InOutSine
-                            }
-                            NumberAnimation {
-                                to: 0.85
-                                duration: 700
-                                easing.type: Easing.InOutSine
-                            }
-                        }
-                    }
-
                     Flickable {
                         visible: reply.text !== ""
                         width: parent.width
@@ -1065,7 +1017,7 @@ ShellRoot {
                             cursorDelegate: Rectangle {
                                 width: 2
                                 color: bubble.ink
-                                visible: input.text !== ""   // vacío: el cursor va delante del texto de ayuda
+                                visible: input.text !== ""   // vacío: solo el cursor de abajo, centrado
 
                                 SequentialAnimation on opacity {
                                     loops: Animation.Infinite
@@ -1106,7 +1058,7 @@ ShellRoot {
 
                             Rectangle {
                                 width: 2
-                                height: hint.implicitHeight
+                                height: input.implicitHeight
                                 color: bubble.ink
 
                                 SequentialAnimation on opacity {
@@ -1126,14 +1078,6 @@ ShellRoot {
                                 }
                             }
 
-                            Text {
-                                id: hint
-
-                                text: "Escríbele a Mochi…"
-                                font: input.font
-                                color: bubble.ink
-                                opacity: 0.55
-                            }
                         }
                     }
                 }
