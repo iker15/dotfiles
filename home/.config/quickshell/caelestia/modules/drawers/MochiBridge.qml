@@ -1,11 +1,15 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Notifications
+import qs.services
 
 // Para Mochi (~/.config/quickshell/tamagotchi): publica dónde están los paneles abiertos de esta
-// pantalla, para que se aparte y no se quede debajo de ellos. Escribe
-// $XDG_RUNTIME_DIR/caelestia-panels-<pantalla>.json = {"rects": [[x, y, w, h], ...]} (coordenadas de
-// la pantalla, tamaño final del panel), solo cuando algo se abre, se cierra o cambia de tamaño.
+// pantalla (para que se aparte y no se quede debajo de ellos), la notificación nueva (para ir a
+// mirarla) y si están activos No molestar y la cafeína. Escribe
+// $XDG_RUNTIME_DIR/caelestia-panels-<pantalla>.json = {"rects": [[x, y, w, h], ...], "notif": {id,
+// urgent, rect} | null, "dnd": bool, "caffeine": bool} (coordenadas de la pantalla, tamaño final
+// del panel), solo cuando algo cambia.
 Item {
     id: root
 
@@ -40,8 +44,18 @@ Item {
             add(P.utilities.x + bw, H - P.utilities.height - border, P.utilities.width, P.utilities.height + border);
         if (opened(P.popoutsWrapper, P.popoutsWrapper.offsetScale))
             add(P.popoutsWrapper.x + bw, P.popoutsWrapper.y + border, P.popoutsWrapper.width, P.popoutsWrapper.height);
+        // La notificación emergente más reciente (y dónde se ve)
+        const pops = Notifs.popups, last = pops.length ? pops[pops.length - 1] : null;
+        const notif = last && opened(P.notifications, 0) ? {
+            id: `${new Date(last.time).getTime()}|${last.summary}`,   // ("id" no se puede leer en QML)
+            urgent: last.urgency === NotificationUrgency.Critical,
+            rect: [Math.round(P.notifications.x + bw), 0, Math.round(P.notifications.width), Math.round(P.notifications.height + border)]
+        } : null;
         return JSON.stringify({
-            rects: rects
+            rects: rects,
+            notif: notif,
+            dnd: Notifs.dnd,
+            caffeine: IdleInhibitor.enabled
         });
     }
 

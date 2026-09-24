@@ -124,6 +124,27 @@ ShellRoot {
         }
     }
 
+    // Arcoíris durante ms (0 = 5 s)
+    property real rainbowAmt: 0
+    property real rainbowT: 0
+    Behavior on rainbowAmt {
+        NumberAnimation {
+            duration: 400
+        }
+    }
+    NumberAnimation on rainbowT {
+        running: shell.rainbowAmt > 0
+        from: 0
+        to: 1000
+        duration: 1000000
+        loops: Animation.Infinite
+    }
+    function rainbow(ms: int): void {
+        rainbowAmt = 1;
+        rainbowTimer.interval = ms > 0 ? ms : 5000;
+        rainbowTimer.restart();
+    }
+
     function shapeShift(name: string, ms: int): void {
         tempShape = name;
         tempShapeTimer.interval = ms > 0 ? ms : 2500;
@@ -1343,6 +1364,10 @@ ShellRoot {
         function shape(name: string, ms: int): void {
             shell.shapeShift(name, ms);
         }
+        // Arcoíris durante ms (0 = 5 s)
+        function rainbow(ms: int): void {
+            shell.rainbow(ms);
+        }
         // Probar el sueño: nod | yawn | doze | wake
         function sleep(what: string): void {
             shell.sleepTest(what);
@@ -1557,6 +1582,12 @@ ShellRoot {
         onTriggered: shell.tempShape = ""
     }
 
+    Timer {
+        id: rainbowTimer
+
+        onTriggered: shell.rainbowAmt = 0
+    }
+
     // Te vas de encima del nido: se vuelve a meter al rato
     Timer {
         id: nestLeave
@@ -1694,6 +1725,7 @@ ShellRoot {
                         property vector4d shape: Qt.vector4d(shell.lastShape, Math.max(0, shell.morph), shell.shapeRot, 44)
                         // Clawd es naranja (el de Claude)
                         property vector4d shapeTint: shell.lastShape === 2 ? Qt.vector4d(0.851, 0.467, 0.341, 1) : Qt.vector4d(0, 0, 0, 0)
+                        property vector4d rainbow: Qt.vector4d(shell.rainbowAmt, shell.rainbowT, 0, 0)
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
@@ -1724,6 +1756,7 @@ ShellRoot {
                 property real bandOnly: 1
                 property vector4d shape: bodyFx.shape
                 property vector4d shapeTint: bodyFx.shapeTint
+                property vector4d rainbow: bodyFx.rainbow
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
