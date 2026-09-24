@@ -5,8 +5,8 @@
 // El color sale de `edge`: el marco visto justo en la unión, a lo largo de cada lado (bg.py),
 // así que en la unión Mochi es del mismo color que el marco, píxel a píxel.
 // Puede imitar formas (engranaje, Clawd —el bichito naranja de Claude Code—, corazón,
-// estrella, flecha, taza de café): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da
-// su color.
+// estrella, flecha): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da su color.
+// Y sacar un bracito (`arm`) de su propio material, p. ej. para sujetar la taza de café.
 // Compilar: /usr/lib/qt6/bin/qsb --glsl "100 es,120,150" --hlsl 50 --msl 12 -o mochi.frag.qsb mochi.frag
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -27,11 +27,11 @@ layout(std140, binding = 0) uniform buf {
     float blobK;     // suavizado entre las partes de Mochi
     float frameK;    // suavizado con el marco (el de Caelestia)
     float bandOnly;  // 1 = pintar solo la franja sobre el borde del marco (pasada sin sombra)
-    vec4 shape;      // forma: id (0 ninguna, 1 engranaje, 2 Clawd, 3 corazón, 4 estrella, 5 flecha,
-                     //        6 taza), mezcla 0-1, giro (rad; en Clawd y la taza, el tiempo de su
-                     //        animación), tamaño (px)
+    vec4 shape;      // forma: id (0 ninguna, 1 engranaje, 2 Clawd, 3 corazón, 4 estrella, 5 flecha),
+                     //        mezcla 0-1, giro (rad; en Clawd, el tiempo de su animación), tamaño (px)
     vec4 shapeTint;  // color de la forma (rgb) y cuánto (a); junto al marco sigue siendo marco
     vec4 rainbow;    // arcoíris: cuánto (x, 0-1), tiempo (y, s)
+    vec4 arm;        // bracito: punta x, y (px), cuánto ha salido (0-1), grosor de la punta (px)
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
@@ -108,30 +108,6 @@ float sdArrow(vec2 p) {
     return min(head, shaft) - 0.06;
 }
 
-// Taza de café humeante: cuerpo, asa a la derecha y dos hilos de vapor que suben ondulando; se
-// inclina un poco de vez en cuando (da sorbos)
-float cupSd(vec2 p, float t) {
-    p.y -= 0.24;   // (los ojos de Mochi quedan en el cuerpo de la taza)
-    float tilt = 0.18 * max(0.0, sin(t * 1.6));
-    float c = cos(tilt), s = sin(tilt);
-    p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
-    float body = sdBox(p - vec2(-0.08, -0.28), vec2(0.58, 0.46)) - 0.1;
-    body = max(body, p.y - 0.2);       // boca de la taza, recta
-    vec2 h = p - vec2(0.58, -0.25);
-    float handle = abs(length(h) - 0.24) - 0.075;
-    handle = max(handle, -h.x);        // solo la mitad de fuera
-    float d = min(body, handle);
-    for (int i = 0; i < 2; i++) {
-        float x0 = i == 0 ? -0.3 : 0.1;
-        float y = p.y - 0.36;
-        float wave = 0.09 * sin(y * 9.0 - t * 5.0 + float(i) * 2.0);
-        float steam = abs(p.x - x0 - wave) - 0.045 * (1.0 - clamp(y / 0.62, 0.0, 1.0));
-        steam = max(steam, max(-y, y - 0.62));
-        d = min(d, steam);
-    }
-    return d;
-}
-
 float shapeSd(vec2 q) {
     float c = cos(shape.z), s = sin(shape.z);
     vec2 p = vec2(c * q.x + s * q.y, -s * q.x + c * q.y) / shape.w;
@@ -145,10 +121,8 @@ float shapeSd(vec2 q) {
         d = sdHeart(p * 0.84 + vec2(0.0, 0.72)) / 0.84;   // (los ojos, en los lóbulos)
     else if (id < 4.5)
         d = sdStar5(p, 1.0, 0.46) - 0.07;
-    else if (id < 5.5)
-        d = sdArrow(p);
     else
-        d = cupSd(vec2(q.x, -q.y) / shape.w, shape.z);   // (sin girar: z es su tiempo)
+        d = sdArrow(p);
     return d * shape.w;
 }
 
@@ -178,6 +152,12 @@ void main() {
 
     d = smin(d, length(p - mass.xy) - mass.z, blobK);
     d = smin(d, length(p - tail.xy) - tail.z, blobK);
+    // Bracito: sale del centro y se va afinando hasta la punta
+    if (arm.z > 0.001) {
+        vec2 pa = p - body.xy, ba = (arm.xy - body.xy) * arm.z;
+        float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1.0), 0.0, 1.0);
+        d = smin(d, length(pa - ba * h) - mix(0.42 * min(body.z, body.w), arm.w, h), 16.0);
+    }
     // Imitando una forma: el cuerpo se convierte en su silueta
     if (shape.y > 0.001)
         d = mix(d, shapeSd(q), shape.y);

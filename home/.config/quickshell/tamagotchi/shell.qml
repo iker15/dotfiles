@@ -104,8 +104,7 @@ ShellRoot {
             "claude": 2,
             "heart": 3,
             "star": 4,
-            "arrow": 5,
-            "cup": 6
+            "arrow": 5
         })[shapeName] ?? 0
     property int lastShape: 0
     property real morph: shapeId ? 1 : 0
@@ -144,6 +143,61 @@ ShellRoot {
         rainbowAmt = 1;
         rainbowTimer.interval = ms > 0 ? ms : 5000;
         rainbowTimer.restart();
+    }
+
+    // Café (cafeína): saca un bracito de su material, con una tacita en la punta, y le da un par
+    // de sorbos. La taza va a un lado (hacia donde hay más sitio), a lo largo del marco.
+    property real cupAmt: 0      // 0-1: bracito y taza fuera
+    property real sip: 0         // 0 taza a un lado → 1 junto a la cara, inclinada
+    property real cupT: 0        // (vapor)
+    property real cupSide: 1
+    property real cupNx: 0       // normal del marco donde se lo toma (hacia el marco)
+    property real cupNy: 1
+    readonly property bool sipping: coffeeSeq.running
+    NumberAnimation on cupT {
+        running: shell.cupAmt > 0
+        from: 0
+        to: 1000
+        duration: 1000000
+        loops: Animation.Infinite
+    }
+    // Dónde está la taza (global): centro, giro (grados) y la punta del bracito (en el asa)
+    readonly property var cupGeom: {
+        const tx = cupNy * cupSide, ty = -cupNx * cupSide, ux = -cupNx, uy = -cupNy;   // a lo largo, arriba
+        const a = (1 - sip) * (bodyRx + 32) + sip * (bodyRx + 9), b = 2 + sip * 12 + 10 * Math.sin(Math.PI * sip);
+        const k = 0.35 + 0.65 * cupAmt;   // sale del cuerpo
+        const cx = gx + (tx * a + ux * b) * k, cy = gy + (ty * a + uy * b) * k;
+        // se inclina hacia él al beber
+        const rot = Math.atan2(ux, -uy) - cupSide * 1.15 * Math.max(0, sip - 0.4) / 0.6;
+        // el asa, del lado de Mochi (en la taza: x = -lado)
+        const hx = -cupSide * 17 * cupAmt, hy = 1;
+        return {
+            x: cx,
+            y: cy,
+            rot: rot * 180 / Math.PI,
+            hx: cx + Math.cos(rot) * hx - Math.sin(rot) * hy,
+            hy: cy + Math.sin(rot) * hx + Math.cos(rot) * hy
+        };
+    }
+    function coffee(): void {
+        if (phys !== "swim" || !present)
+            return;
+        const s = nearestScreen(gx, gy), p = pointAt(track(s), swimD);
+        cupNx = p.nx;
+        cupNy = p.ny;
+        // hacia donde haya más sitio (el centro de la pantalla)
+        cupSide = (s.x + s.width / 2 - gx) * p.ny - (s.y + s.height / 2 - gy) * p.nx >= 0 ? 1 : -1;
+        swimTarget = NaN;
+        coffeeSeq.restart();
+    }
+    function lookAtCup(ms: int): void {
+        focusX = cupGeom.x;
+        focusY = cupGeom.y;
+        focusUntil = Date.now() + ms;
+    }
+    onPhysChanged: if (sipping && phys !== "swim") {
+        coffeeSeq.stop();
+        cupAway.restart();
     }
 
     function shapeShift(name: string, ms: int): void {
@@ -1453,6 +1507,10 @@ ShellRoot {
         function shape(name: string, ms: int): void {
             shell.shapeShift(name, ms);
         }
+        // Se toma un café (lo que hace al activar la cafeína)
+        function coffee(): void {
+            shell.coffee();
+        }
         // Arcoíris durante ms (0 = 5 s)
         function rainbow(ms: int): void {
             shell.rainbow(ms);
@@ -1579,7 +1637,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -1684,27 +1742,146 @@ ShellRoot {
         id: coffeeTimer
 
         interval: 700
-        onTriggered: {
-            if (shell.phys === "swim") {
-                shell.shapeShift("cup", 4600);
-                afterCoffee.restart();
+        onTriggered: shell.coffee()
+    }
+
+    // Saca la taza, mira el café, sorbo (ojitos felices), la baja, otro sorbo más largo, la
+    // guarda… y subidón
+    SequentialAnimation {
+        id: coffeeSeq
+
+        ScriptAction {
+            script: {
+                shell.sip = 0;
+                shell.kicked(-0.8, 1.2);
+            }
+        }
+        NumberAnimation {
+            target: shell
+            property: "cupAmt"
+            from: 0
+            to: 1
+            duration: 650
+            easing.type: Easing.OutBack
+        }
+        ScriptAction {
+            script: shell.lookAtCup(1400)
+        }
+        PauseAnimation {
+            duration: 700
+        }
+        ScriptAction {
+            script: shell.reacted("happy", 1900)
+        }
+        NumberAnimation {
+            target: shell
+            property: "sip"
+            to: 1
+            duration: 700
+            easing.type: Easing.InOutSine
+        }
+        ScriptAction {
+            script: shell.kicked(0.5, -0.7)   // glup
+        }
+        PauseAnimation {
+            duration: 700
+        }
+        ScriptAction {
+            script: shell.kicked(0.5, -0.7)
+        }
+        PauseAnimation {
+            duration: 350
+        }
+        NumberAnimation {
+            target: shell
+            property: "sip"
+            to: 0
+            duration: 550
+            easing.type: Easing.InOutSine
+        }
+        ScriptAction {
+            script: {
+                shell.lookAtCup(1200);
+                shell.reacted("smile", 1100);
+            }
+        }
+        PauseAnimation {
+            duration: 1000
+        }
+        ScriptAction {
+            script: shell.reacted("happy", 2300)
+        }
+        NumberAnimation {
+            target: shell
+            property: "sip"
+            to: 1
+            duration: 650
+            easing.type: Easing.InOutSine
+        }
+        ScriptAction {
+            script: shell.kicked(0.5, -0.7)
+        }
+        PauseAnimation {
+            duration: 600
+        }
+        ScriptAction {
+            script: shell.kicked(0.5, -0.7)
+        }
+        PauseAnimation {
+            duration: 600
+        }
+        ScriptAction {
+            script: shell.kicked(0.6, -0.8)
+        }
+        PauseAnimation {
+            duration: 400
+        }
+        NumberAnimation {
+            target: shell
+            property: "sip"
+            to: 0
+            duration: 550
+            easing.type: Easing.InOutSine
+        }
+        PauseAnimation {
+            duration: 250
+        }
+        NumberAnimation {
+            target: shell
+            property: "cupAmt"
+            to: 0
+            duration: 450
+            easing.type: Easing.InBack
+        }
+        ScriptAction {
+            script: {
+                shell.reacted("excited", 1600);
+                shell.kicked(-1.4, 2.8);
             }
         }
     }
 
-    Timer {
-        id: afterCoffee
+    // (si le interrumpen: la guarda deprisa)
+    ParallelAnimation {
+        id: cupAway
 
-        interval: 4900
-        onTriggered: {
-            shell.reacted("excited", 1600);
-            shell.kicked(-1.4, 2.8);
+        NumberAnimation {
+            target: shell
+            property: "cupAmt"
+            to: 0
+            duration: 250
+        }
+        NumberAnimation {
+            target: shell
+            property: "sip"
+            to: 0
+            duration: 250
         }
     }
 
     // Con cafeína, de vez en cuando le da un subidón: tiembla un momento con los ojos como platos
     Timer {
-        running: shell.caffeine && shell.present && !shell.dnd && shell.phys === "swim" && !shell.asking && !Brain.busy
+        running: shell.caffeine && shell.present && !shell.dnd && shell.phys === "swim" && !shell.sipping && !shell.asking && !Brain.busy
         repeat: true
         interval: 7000
         onTriggered: {
@@ -1871,8 +2048,102 @@ ShellRoot {
                         // Clawd es naranja (el de Claude)
                         property vector4d shapeTint: shell.lastShape === 2 ? Qt.vector4d(0.851, 0.467, 0.341, 1) : Qt.vector4d(0, 0, 0, 0)
                         property vector4d rainbow: Qt.vector4d(shell.rainbowAmt, shell.rainbowT, 0, 0)
+                        // bracito hasta el asa de la taza
+                        property vector4d arm: Qt.vector4d(shell.cupGeom.hx - win.modelData.x - x, shell.cupGeom.hy - win.modelData.y - y, Math.max(0, shell.cupAmt), 6)
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
+                    }
+
+                    // La taza de café (con la misma sombra que el cuerpo)
+                    Canvas {
+                        id: cup
+
+                        readonly property real t: shell.cupT
+                        readonly property real steam: Math.max(0, 1 - 2.2 * shell.sip)
+                        readonly property real side: shell.cupSide
+                        readonly property color mug: "#d4704f"   // taza de barro
+                        readonly property color mugShade: "#a9543a"
+
+                        visible: mochi.visible && shell.cupAmt > 0.01
+                        width: 64
+                        height: 76
+                        x: shell.cupGeom.x - win.modelData.x - width / 2
+                        y: shell.cupGeom.y - win.modelData.y - height / 2
+                        rotation: shell.cupGeom.rot
+                        scale: Math.max(0, shell.cupAmt)
+                        onTChanged: requestPaint()
+                        onSideChanged: requestPaint()
+                        onMugChanged: requestPaint()
+
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            ctx.translate(32, 38);   // centro de la taza; arriba = -y
+                            const hs = -side;          // el asa, hacia Mochi
+                            // Asa
+                            ctx.strokeStyle = mugShade;
+                            ctx.lineWidth = 3.4;
+                            ctx.beginPath();
+                            ctx.arc(hs * 10.5, 0.5, 6.2, hs > 0 ? -Math.PI / 2 : Math.PI / 2, hs > 0 ? Math.PI / 2 : 3 * Math.PI / 2);
+                            ctx.stroke();
+                            // Cuerpo (algo más estrecho abajo)
+                            ctx.fillStyle = mug;
+                            ctx.beginPath();
+                            ctx.moveTo(-11.5, -11);
+                            ctx.lineTo(11.5, -11);
+                            ctx.lineTo(10, 9);
+                            ctx.quadraticCurveTo(9.6, 12.5, 6, 12.5);
+                            ctx.lineTo(-6, 12.5);
+                            ctx.quadraticCurveTo(-9.6, 12.5, -10, 9);
+                            ctx.closePath();
+                            ctx.fill();
+                            // Sombra de un lado, para que tenga volumen
+                            ctx.fillStyle = Qt.rgba(0, 0, 0, 0.13);
+                            ctx.beginPath();
+                            ctx.moveTo(4.5, -11);
+                            ctx.lineTo(11.5, -11);
+                            ctx.lineTo(10, 9);
+                            ctx.quadraticCurveTo(9.6, 12.5, 6, 12.5);
+                            ctx.lineTo(3.5, 12.5);
+                            ctx.closePath();
+                            ctx.fill();
+                            // Boca: el borde y el café
+                            ctx.fillStyle = mugShade;
+                            ctx.beginPath();
+                            ctx.ellipse(-11.5, -13.6, 23, 5.2);
+                            ctx.fill();
+                            ctx.fillStyle = "#4a2c1f";
+                            ctx.beginPath();
+                            ctx.ellipse(-9.6, -13, 19.2, 3.8);
+                            ctx.fill();
+                            ctx.fillStyle = Qt.rgba(1, 0.85, 0.7, 0.25);
+                            ctx.beginPath();
+                            ctx.ellipse(-4, -12.6, 6, 1.4);
+                            ctx.fill();
+                            // Vapor: dos hilos que suben ondulando (se va al beber)
+                            if (steam > 0) {
+                                ctx.lineCap = "round";
+                                for (let i = 0; i < 2; i++) {
+                                    const x0 = i ? 4 : -4;
+                                    ctx.beginPath();
+                                    for (let j = 0; j <= 12; j++) {
+                                        const f = j / 12, y = -17 - f * 20;
+                                        const x = x0 + 2.6 * Math.sin(f * 7 - t * 4 + i * 2.2) * (0.4 + f);
+                                        if (j)
+                                            ctx.lineTo(x, y);
+                                        else
+                                            ctx.moveTo(x, y);
+                                    }
+                                    const g = ctx.createLinearGradient(0, -17, 0, -37);
+                                    const rgb = "160,155,150";   // gris: se ve sobre fondo claro y oscuro
+                                    g.addColorStop(0, `rgba(${rgb},${(0.75 * steam).toFixed(3)})`);
+                                    g.addColorStop(1, `rgba(${rgb},0)`);
+                                    ctx.strokeStyle = g;
+                                    ctx.lineWidth = 2.2;
+                                    ctx.stroke();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1902,6 +2173,7 @@ ShellRoot {
                 property vector4d shape: bodyFx.shape
                 property vector4d shapeTint: bodyFx.shapeTint
                 property vector4d rainbow: bodyFx.rainbow
+                property vector4d arm: bodyFx.arm
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
