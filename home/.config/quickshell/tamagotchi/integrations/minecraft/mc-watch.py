@@ -6,7 +6,7 @@
 #   {"ev": tipo, "text": …, "cara": …, "ms": …, "hacer": […], "decir": …}
 # Los mensajes del log (muertes, logros) salen en inglés: los escribe el servidor.
 # Pruebas: mc-watch.py --test "línea del log" [--yo Nombre]
-import glob, json, os, re, sys, time
+import glob, json, os, re, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RULES = os.path.join(HERE, "reacciones.jsonc")
@@ -187,6 +187,16 @@ if __name__ == "__main__":
         for line in args:
             w.handle(line)
         sys.exit(0)
+    # (casi nunca escribe, así que no se entera de que Mochi se ha cerrado: si cambia de padre,
+    # es que lo han dejado huérfano, y se va; si no, se acumulaban uno por cada reinicio)
+    parent = os.getppid()
+
+    def orphan_guard():
+        while os.getppid() == parent:
+            time.sleep(3)
+        os._exit(0)
+
+    threading.Thread(target=orphan_guard, daemon=True).start()
     try:
         w.run()
     except KeyboardInterrupt:

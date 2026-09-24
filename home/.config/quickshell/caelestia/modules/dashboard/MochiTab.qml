@@ -528,6 +528,28 @@ Item {
                     anchors.margins: Tokens.padding.large
                     spacing: Tokens.spacing.small
 
+                    // la puerta: abierta (pueden venir de visita) o cerrada (rebotan)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Tokens.spacing.medium
+
+                        MaterialIcon {
+                            text: root.st.doorClosed ? "door_front" : "door_open"
+                            color: root.st.doorClosed ? Colours.palette.m3outline : Colours.palette.m3primary
+                        }
+                        StyledText {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            text: root.st.doorClosed ? "Puerta cerrada: si viene alguien, su Mochi vuelve a su casa" : "Puerta abierta: tus vecinos pueden mandarte a su Mochi"
+                            font: Tokens.font.body.small
+                            wrapMode: Text.WordWrap
+                        }
+                        StyledSwitch {
+                            checked: !root.st.doorClosed
+                            onToggled: root.ipc("vecDoor", checked ? "1" : "0")
+                        }
+                    }
+
                     // dónde está tu Mochi y quién te visita
                     StyledText {
                         visible: !!root.st.away
@@ -544,8 +566,11 @@ Item {
                             id: guestRow
 
                             required property string modelData
+                            required property int index
+                            readonly property int pets: root.st.guestPets?.[index] ?? 0
 
                             Layout.fillWidth: true
+                            spacing: Tokens.spacing.medium
 
                             MaterialIcon {
                                 text: "pets"
@@ -553,17 +578,27 @@ Item {
                             }
                             StyledText {
                                 Layout.fillWidth: true
-                                text: `Te visita el Mochi de ${guestRow.modelData}`
+                                Layout.preferredWidth: 1
+                                text: `Te visita el Mochi de ${guestRow.modelData}` + (guestRow.pets ? ` · ♥ ${guestRow.pets}` : "")
                                 font: Tokens.font.body.small
+                                elide: Text.ElideRight
                             }
                             IconTextButton {
                                 icon: "home"
-                                text: "Devolverlo"
+                                text: "A su casa"
                                 isRound: true
                                 type: IconTextButton.Tonal
                                 onClicked: root.ipc("vecGuestHome", guestRow.modelData)
                             }
                         }
+                    }
+                    StyledText {
+                        visible: (root.st.guests ?? []).length > 0
+                        Layout.fillWidth: true
+                        text: "Clic: caricia · arrástralo y lánzalo · lanzado fuerte hacia su lado, o con clic derecho, se vuelve a su casa"
+                        font: Tokens.font.body.small
+                        color: Colours.palette.m3onSurfaceVariant
+                        wrapMode: Text.WordWrap
                     }
 
                     // tus vecinos
@@ -583,15 +618,19 @@ Item {
 
                             required property var modelData
                             readonly property bool hereNow: root.st.away?.to === modelData.name
+                            readonly property bool pending: !!modelData.pending
+                            readonly property bool blocked: !!modelData.blocked
+                            property bool confirmRemove: false
 
                             Layout.fillWidth: true
                             spacing: Tokens.spacing.medium
 
                             MaterialIcon {
-                                text: nRow.modelData.side === "right" ? "arrow_forward" : "arrow_back"
-                                color: Colours.palette.m3secondary
+                                text: nRow.pending ? "hourglass_top" : nRow.blocked ? "block" : nRow.modelData.side === "right" ? "arrow_forward" : "arrow_back"
+                                color: nRow.blocked ? Colours.palette.m3error : Colours.palette.m3secondary
                             }
                             StyledRect {
+                                visible: !nRow.pending && !nRow.blocked
                                 implicitWidth: 8
                                 implicitHeight: 8
                                 radius: 4
@@ -599,11 +638,15 @@ Item {
                             }
                             StyledText {
                                 Layout.fillWidth: true
-                                text: `${nRow.modelData.name} · ${nRow.modelData.online ? "conectado" : "desconectado"} · a tu ${nRow.modelData.side === "right" ? "derecha" : "izquierda"}`
+                                Layout.preferredWidth: 1
+                                text: nRow.pending ? `Esperando a que alguien use tu código (a tu ${nRow.modelData.side === "right" ? "derecha" : "izquierda"})` : nRow.confirmRemove ? `¿Quitar a ${nRow.modelData.name}? Tendríais que volver a invitaros` : `${nRow.modelData.name} · ${nRow.blocked ? "bloqueado" : nRow.modelData.online ? "conectado" : "desconectado"} · a tu ${nRow.modelData.side === "right" ? "derecha" : "izquierda"}`
                                 font: Tokens.font.body.small
+                                color: nRow.confirmRemove ? Colours.palette.m3error : Colours.palette.m3onSurface
+                                elide: Text.ElideRight
                             }
                             IconTextButton {
-                                visible: !root.st.away
+                                visible: !root.st.away && !nRow.pending && !nRow.blocked && !nRow.confirmRemove
+                                disabled: !nRow.modelData.online
                                 icon: "send"
                                 text: "Mandarle a Mochi"
                                 isRound: true
@@ -611,12 +654,50 @@ Item {
                                 onClicked: root.ipc("vecSend", nRow.modelData.name)
                             }
                             IconTextButton {
-                                visible: nRow.hereNow
+                                visible: nRow.hereNow && !nRow.confirmRemove
                                 icon: "undo"
                                 text: "Llamarlo"
                                 isRound: true
                                 type: IconTextButton.Tonal
                                 onClicked: root.ipc("vecRecall")
+                            }
+                            // bloquear: sus visitas rebotan (él solo ve «puerta cerrada») y el tuyo no va
+                            IconButton {
+                                visible: !nRow.pending && !nRow.confirmRemove
+                                icon: nRow.blocked ? "lock_open" : "block"
+                                type: IconButton.Tonal
+                                isRound: true
+                                onClicked: root.ipc(nRow.blocked ? "vecUnblock" : "vecBlock", nRow.modelData.name)
+                            }
+                            IconButton {
+                                visible: !nRow.confirmRemove
+                                icon: nRow.pending ? "close" : "person_remove"
+                                type: IconButton.Tonal
+                                isRound: true
+                                onClicked: {
+                                    if (nRow.pending)
+                                        root.ipc("vecRemove", nRow.modelData.name);
+                                    else
+                                        nRow.confirmRemove = true;
+                                }
+                            }
+                            IconTextButton {
+                                visible: nRow.confirmRemove
+                                icon: "person_remove"
+                                text: "Quitar"
+                                isRound: true
+                                type: IconTextButton.Filled
+                                onClicked: {
+                                    nRow.confirmRemove = false;
+                                    root.ipc("vecRemove", nRow.modelData.name);
+                                }
+                            }
+                            IconButton {
+                                visible: nRow.confirmRemove
+                                icon: "close"
+                                type: IconButton.Tonal
+                                isRound: true
+                                onClicked: nRow.confirmRemove = false
                             }
                         }
                     }
@@ -625,6 +706,14 @@ Item {
                         visible: !!root.st.invite
                         Layout.fillWidth: true
                         text: "Código de invitación copiado: pégaselo a tu amigo (en WhatsApp, por ejemplo). Él lo copia y pulsa «Pegar código» en su dashboard."
+                        font: Tokens.font.body.small
+                        color: Colours.palette.m3tertiary
+                        wrapMode: Text.WordWrap
+                    }
+                    StyledText {
+                        visible: !!root.st.neighbourNote
+                        Layout.fillWidth: true
+                        text: root.st.neighbourNote ?? ""
                         font: Tokens.font.body.small
                         color: Colours.palette.m3tertiary
                         wrapMode: Text.WordWrap

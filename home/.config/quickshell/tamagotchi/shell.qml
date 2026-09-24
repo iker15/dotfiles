@@ -548,8 +548,11 @@ ShellRoot {
         neighbours: neighbours,
         away: away,
         guests: guests.map(g => g.from),
+        guestPets: guests.map(g => g.pets),
         invite: inviteCode,
-        neighbourMsg: neighbourMsg
+        doorClosed: doorClosed,
+        neighbourMsg: neighbourMsg,
+        neighbourNote: neighbourNote
     })
     // El próximo gorro (para el dashboard): cuál y cuándo
     readonly property string nextHat: {
@@ -1161,29 +1164,60 @@ ShellRoot {
 
     // ── Vecindario (integrations/vecinos.py): mandar TU Mochi de visita a la pantalla de un
     // vecino (lanzándolo MUY fuerte contra su lado, o con el botón del dashboard) y recibir el
-    // suyo. Mientras está fuera, aquí no está (phys "away"). Los Mochis que te visitan pasean por
-    // el suelo de tu pantalla: se les puede acariciar (clic), coger y lanzar de vuelta a su lado.
+    // suyo. Mientras está fuera, aquí no está (phys "away"). Los Mochis que te visitan son del
+    // mismo fluido que el tuyo (el shader, fundidos con el marco, con su color, su cara y su
+    // transformación): nadan por el marco a zancadas, saludan a tu Mochi, se les puede acariciar
+    // (clic), coger y lanzar, y lanzados fuerte hacia su lado (o con clic derecho) se van a casa.
+    // Puedes cerrar la puerta (no entra nadie) o bloquear a un vecino: sus visitas rebotan («la
+    // puerta está cerrada») y tu Mochi no va a su casa.
     readonly property string myName: {
         const u = Quickshell.env("USER") || "yo";
         return u.charAt(0).toUpperCase() + u.slice(1);
     }
-    property var neighbours: []     // [{name, side, online}]
-    property var away: null         // {to, side, since}: de visita en casa de alguien
+    property var neighbours: []     // [{name, side, online, blocked, pending}]
+    property bool doorClosed: false
+    property var away: null         // {to, side, since, vid}: de visita en casa de alguien
+    property bool awayLoaded: false
+    property var pendingReturn: null   // (llegó la vuelta antes de leer away.json)
     property string inviteCode: ""
     // (el código de invitación se copia solo al portapapeles, para pegárselo a tu amigo)
     onInviteCodeChanged: if (inviteCode) Quickshell.execDetached(["wl-copy", inviteCode])
-    property string neighbourMsg: ""
+    property string neighbourMsg: ""    // errores
+    onNeighbourMsgChanged: if (neighbourMsg) msgClear.restart()
+    Timer {
+        id: msgClear
+
+        interval: 60000
+        onTriggered: shell.neighbourMsg = ""
+    }
+    property string neighbourNote: ""   // avisos (ha llamado alguien, ha vuelto, no está…)
     property var guests: []         // Mochis que te visitan (ver guestStep)
+    property var recalledVids: []
     property int guestTick: 0
     property string launching: ""   // lanzado con el botón hacia este vecino
     signal heartPopAt(real x, real y)
+    signal guestReacted(int slot, string name, int ms)
+    signal guestKicked(int slot, real ax, real ay)
+    signal guestSplat(int slot, real strength, bool horizontal)
 
     function vecCmd(o: var): void {
         o.me = myName;
         vecProc.write(JSON.stringify(o) + "\n");
     }
+    function note(text: string): void {
+        neighbourNote = text;
+        noteClear.restart();
+    }
+    Timer {
+        id: noteClear
+
+        interval: 60000
+        onTriggered: shell.neighbourNote = ""
+    }
+    // Vecino de ese lado al que se puede ir (el conectado primero)
     function neighbourOn(side: string): var {
-        return neighbours.find(n => n.side === side) ?? null;
+        const ok = neighbours.filter(n => n.side === side && !n.pending && !n.blocked);
+        return ok.find(n => n.online) ?? ok[0] ?? null;
     }
     function myMochi(): var {
         return {
@@ -1194,25 +1228,35 @@ ShellRoot {
             hat: hat,
             bond: Math.round(Bond.bond),
             body: avatarBody,
-            ink: avatarInk
+            ink: avatarInk,
+            look: Look.data()         // (sus ojos, su forma y su carácter)
         };
     }
-    // Sale por un lado de la pantalla: si hay vecino ahí, se va a su casa
+    // Sale por un lado de la pantalla: si hay vecino ahí (y está en casa), se va a su casa
     function sendOut(dir: int): bool {
         const n = launching ? neighbours.find(x => x.name === launching) : neighbourOn(dir > 0 ? "right" : "left");
+        launching = "";
         if (!n)
             return false;
-        launching = "";
+        if (!n.online) {
+            note(`${n.name} no está conectado ahora: Mochi se queda en casa`);
+            return false;
+        }
+        const vid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const m = myMochi();
+        m.vid = vid;
         vecCmd({
             cmd: "send",
             to: n.name,
             type: "visit",
-            mochi: myMochi()
+            vid: vid,
+            mochi: m
         });
         away = {
             to: n.name,
             side: n.side,
-            since: Date.now()
+            since: Date.now(),
+            vid: vid
         };
         awayFile.setText(JSON.stringify(away));
         phys = "away";
@@ -1223,8 +1267,12 @@ ShellRoot {
     // Botón del dashboard: da un salto y sale disparado hacia el lado de ese vecino
     function launchTo(name: string): void {
         const n = neighbours.find(x => x.name === name);
-        if (!n || phys === "away" || locked)
+        if (!n || n.pending || n.blocked || phys === "away" || locked || !Look.born)
             return;
+        if (!n.online) {
+            note(`${n.name} no está conectado ahora`);
+            return;
+        }
         launching = name;
         if (!present || phys === "nest" || phys === "hidden" || phys === "dive" || inApp) {
             sendOut(n.side === "right" ? 1 : -1);
@@ -1236,13 +1284,21 @@ ShellRoot {
         thrown = true;
         phys = "air";
     }
-    // Vuelve (lo devuelve el vecino, o lo llamas tú): entra volando por el lado de ese vecino
-    function comeHome(m: var): void {
-        if (phys !== "away")
+    // Vuelve (lo devuelve el vecino, o lo llamas tú): entra volando por el lado de ese vecino.
+    // `refused`: no le han dejado entrar (puerta cerrada, No molestar, casa llena…)
+    function comeHome(m: var, refused: string): void {
+        if (phys !== "away") {
+            if (!awayLoaded)
+                pendingReturn = {
+                    m: m,
+                    refused: refused
+                };
             return;
-        const side = away?.side ?? "right";
+        }
+        const side = away?.side ?? "right", who = away?.to ?? "";
         away = null;
         awayFile.setText("");
+        recallFallback.stop();
         const s = screenOfMonitor(Hyprland.focusedMonitor);
         if (!s)
             return;
@@ -1255,18 +1311,32 @@ ShellRoot {
         thrown = false;
         phys = "air";
         homeHappy.pets = m?.pets ?? 0;
+        homeHappy.refused = refused || "";
         homeHappy.restart();
+        if (refused)
+            note(refused === "dnd" ? `${who} está en No molestar: Mochi ha vuelto a casa` : refused === "full" ? `En casa de ${who} ya hay mucha visita: Mochi ha vuelto` : refused === "late" ? `${who} no estaba: Mochi ha vuelto a casa` : `La puerta de ${who} está cerrada: Mochi ha vuelto a casa`);
+        else if ((m?.pets ?? 0) > 0)
+            note(`Mochi ha vuelto de casa de ${who}: le han hecho ${m.pets} ${m.pets === 1 ? "caricia" : "caricias"}`);
     }
     Timer {
         id: homeHappy
 
         property int pets: 0
+        property string refused: ""
 
         interval: 1300
         onTriggered: {
+            if (refused) {
+                shell.reacted("sad", 2600);   // (no le han abierto)
+                return;
+            }
             shell.reacted(pets > 0 ? "love" : "happy", 2600);   // (si allí le han mimado, vuelve encantado)
             shell.kicked(-1.6, 2.6);
         }
+    }
+    // ¿Es la vuelta de esta visita? (una vuelta vieja, de otra visita, no cuenta)
+    function isMyVisit(vid: string): bool {
+        return !vid || !away?.vid || vid === away.vid;
     }
     function recall(): void {
         if (!away)
@@ -1274,7 +1344,8 @@ ShellRoot {
         vecCmd({
             cmd: "send",
             to: away.to,
-            type: "recall"
+            type: "recall",
+            vid: away.vid ?? ""
         });
         recallFallback.restart();
     }
@@ -1283,7 +1354,7 @@ ShellRoot {
         id: recallFallback
 
         interval: 25000
-        onTriggered: shell.comeHome(null)
+        onTriggered: shell.comeHome(null, "")
     }
     FileView {
         id: awayFile
@@ -1298,54 +1369,210 @@ ShellRoot {
                     shell.phys = "away";
                 }
             } catch (e) {}
+            shell.awayLoaded = true;
+            if (shell.pendingReturn) {
+                const r = shell.pendingReturn;
+                shell.pendingReturn = null;
+                shell.comeHome(r.m, r.refused);
+            }
+        }
+        onLoadFailed: {
+            shell.awayLoaded = true;
+            shell.pendingReturn = null;
         }
     }
 
-    // Visitantes
-    function addGuest(ev: var): void {
-        const s = screenOfMonitor(Hyprland.focusedMonitor);
-        if (!s || guests.length >= 2 || guests.some(g => g.from === ev.from))
+    // ── Visitantes ──
+    // Cada uno: {slot, from, side, vid, m (lo que manda su casa), look, def (transformación),
+    // eyes, col (color del fluido), u, rx, ry, sname/sx/sy/sw/sh (su pantalla), phys "air"|"swim"|
+    // "held", x, y, vx, vy, d (punto del recorrido), nx, ny (normal), goal, stride, pets…}
+    function guestBySlot(i: int): var {
+        return guests.find(g => g.slot === i) ?? null;
+    }
+    // (para las vistas: una copia nueva cada vez que se mueven)
+    function guestSnap(i: int, tick: int): var {
+        const g = guestBySlot(i);
+        return g ? Object.assign({}, g) : null;
+    }
+    function guestScreen(g: var): var {
+        return Quickshell.screens.find(q => q.name === g.sname) ?? null;
+    }
+    // (si en su pantalla hay algo a pantalla completa, se apartan, como tu Mochi)
+    function guestHidden(g: var): bool {
+        return Hyprland.monitors.values.find(m => m.name === g.sname)?.activeWorkspace?.hasFullscreen ?? false;
+    }
+    function guestTrack(g: var): var {
+        const s = guestScreen(g);
+        return s ? trackR(s, g.rx, g.ry * 0.95) : null;
+    }
+    function guestEnergy(g: var): real {
+        const t = g.look?.traits ?? [];
+        return (t.includes("inquieto") ? 1.25 : 1) * (t.includes("dormilon") ? 0.8 : 1);
+    }
+    function guestFace(g: var, name: string, ms: int): void {
+        guestReacted(g.slot, name, ms);
+    }
+
+    // Ha llegado una visita: si no puede entrar, se le devuelve al momento
+    function addGuest(ev: var, restored: var): void {
+        const reply = reason => vecCmd({
+                cmd: "send",
+                to: ev.from,
+                type: "return",
+                vid: ev.vid ?? "",
+                refused: reason,
+                mochi: ev.mochi ?? {}
+            });
+        if (ev.vid && recalledVids.includes(ev.vid))
+            return;   // (se lo llevaron antes de que entrara)
+        if (guests.some(g => g.from === ev.from)) {
+            // (ya está aquí: será la misma visita repetida; si es otra, no caben dos suyos)
+            if (!guests.some(g => g.from === ev.from && g.vid === (ev.vid ?? "")))
+                reply("full");
             return;
+        }
+        if (!restored && dnd) {
+            reply("dnd");
+            note(`El Mochi de ${ev.from} ha venido, pero estabas en No molestar`);
+            return;
+        }
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s || guests.length >= 2) {
+            reply("full");
+            return;
+        }
+        const m = ev.mochi ?? {}, look = m.look ?? {}, def = Skins.byId(m.skin ?? "");
+        const u = shell.u * (m.stage === 0 ? 0.82 : 1), wide = look.wide ?? 1;
         const left = ev.side === "left";
-        guests = guests.concat([{
-                from: ev.from,
-                side: ev.side,
-                m: ev.mochi ?? {},
-                sx: s.x,
-                sw: s.width,
-                floor: s.y + s.height - frame,
-                x: left ? s.x - 60 : s.x + s.width + 60,
-                y: s.y + s.height * 0.4,
-                vx: left ? 1100 : -1100,
-                vy: -500,
-                entering: true,
-                leaving: false,
-                held: false,
-                face: "surprised",
-                faceUntil: Date.now() + 1500,
-                next: Date.now() + 3000,
-                target: NaN,
-                pets: 0,
-                since: Date.now(),
-                t: 0
-            }]);
-        if (present && phys === "swim") {
+        const g = {
+            slot: guestBySlot(0) ? 1 : 0,
+            from: ev.from,
+            side: ev.side,
+            vid: ev.vid ?? m.vid ?? "",
+            m: m,
+            look: look,
+            def: def,
+            eyes: def ? Skins.eyesOf(def, look) : null,
+            col: def ? def.color : (m.body || "#d0d3d6"),
+            u: u,
+            rx: 32 * u * wide,
+            ry: 29 * u / Math.sqrt(wide),
+            sname: s.name,
+            phys: "air",
+            x: left ? s.x - 80 : s.x + s.width + 80,
+            y: s.y + s.height * 0.42,
+            vx: left ? 1300 : -1300,
+            vy: -520,
+            entering: true,
+            leaving: false,
+            noReturn: !!ev.test,
+            d: 0,
+            nx: 0,
+            ny: 0,
+            goal: NaN,
+            stride: null,
+            pauseUntil: 0,
+            next: Date.now() + 1500,
+            onSideSince: 0,
+            greeted: !!restored,
+            lx: 0,
+            ly: 0,
+            lookUntil: 0,
+            pets: restored?.pets ?? 0,
+            since: restored?.since ?? Date.now(),
+            t: 0
+        };
+        guests = guests.concat([g]);
+        saveGuests();
+        guestFace(g, "surprised", 1500);
+        if (present && phys === "swim" && !restored) {
             reacted("curious", 1800);   // (tu Mochi mira quién ha venido)
             glanceX = left ? s.x : s.x + s.width;
             glanceY = s.y + s.height * 0.7;
             glanceUntil = Date.now() + 1800;
         }
+        if (!restored)
+            note(`Ha venido de visita el Mochi de ${ev.from}`);
     }
+    // Se despide: da un salto hacia su lado y sale por ahí
     function guestLeave(i: int): void {
         const g = guests[i];
         if (!g || g.leaving)
             return;
         g.leaving = true;
-        g.held = false;
-        g.face = "happy";
-        g.faceUntil = Date.now() + 3000;
-        g.vx = g.side === "left" ? -1500 : 1500;
-        g.vy = -800;
+        g.phys = "air";
+        g.stride = null;
+        guestFace(g, "happy", 3000);
+        guestKicked(g.slot, 0, -2.2);
+        // (sale disparado desde donde esté, hacia su lado: en el suelo coge impulso hacia arriba)
+        g.vx = g.side === "left" ? -1700 : 1700;
+        g.vy = g.ny > 0.5 ? -950 : g.ny < -0.5 ? 200 : -600;
+        g.x -= g.nx * 6;
+        g.y -= g.ny * 6;
+        guestTick++;
+    }
+    function guestGone(i: int): void {
+        const g = guests[i];
+        if (!g.noReturn)
+            // vuelve a su casa (con las caricias que le has hecho)
+            vecCmd({
+                cmd: "send",
+                to: g.from,
+                type: "return",
+                vid: g.vid,
+                mochi: Object.assign({}, g.m, {
+                    pets: g.pets
+                })
+            });
+        guests.splice(i, 1);
+        guests = guests.slice();
+        saveGuests();
+    }
+    // Se engancha al marco donde ha chocado (como el tuyo: sin rebotar, se chafa un poco)
+    function guestAttach(g: var, tr: var, speed: real): void {
+        g.d = nearestD(tr, Math.max(tr.L, Math.min(tr.R, g.x)), Math.max(tr.T, Math.min(tr.B, g.y)));
+        const p = pointAt(tr, g.d);
+        g.phys = "swim";
+        g.x = p.x;
+        g.y = p.y;
+        g.nx = p.nx;
+        g.ny = p.ny;
+        g.vx = g.vy = 0;
+        g.stride = null;
+        g.goal = NaN;
+        g.onSideSince = Date.now();
+        g.pauseUntil = Date.now() + 500;
+        g.next = Date.now() + 900 + Math.random() * 1500;
+        const k = Math.min(1, speed / 2200);
+        guestSplat(g.slot, 0.4 + 0.6 * k, Math.abs(p.nx) > 0.5);
+        if (k > 0.5)
+            guestFace(g, "dizzy", 900);
+    }
+    // Un sitio al que ir: casi siempre el suelo; a veces una pared o (poco) el techo; lejos
+    // del ratón y sin meterse encima de tu Mochi ni del otro visitante
+    function guestPickGoal(g: var, tr: var): real {
+        const timid = (g.look?.traits ?? []).includes("timido");
+        for (let k = 0; k < 14; k++) {
+            const r = Math.random();
+            let d;
+            if (r < 0.72)
+                d = Math.random() * tr.w;   // suelo
+            else if (r < 0.84)
+                d = tr.w + tr.q + Math.random() * tr.h * 0.55;   // pared derecha (mitad de abajo)
+            else if (r < 0.96)
+                d = 2 * tr.w + 3 * tr.q + tr.h + tr.h * (0.45 + Math.random() * 0.55);   // pared izquierda
+            else
+                d = tr.w + 2 * tr.q + tr.h + Math.random() * tr.w;   // techo
+            const p = pointAt(tr, d);
+            if (Math.hypot(p.x - cursorX, p.y - cursorY) < (timid ? 320 : 170))
+                continue;
+            if (present && phys !== "away" && Math.hypot(p.x - gx, p.y - gy) < 2.4 * (bodyRx + g.rx) / 2 + 20)
+                continue;
+            if (guests.some(o => o !== g && Math.hypot(p.x - o.x, p.y - o.y) < o.rx + g.rx + 16))
+                continue;
+            return d;
+        }
+        return NaN;
     }
     function guestStep(dt: real): void {
         if (!guests.length)
@@ -1353,87 +1580,280 @@ ShellRoot {
         dt = Math.min(dt, 1 / 30);
         const now = Date.now();
         for (let i = guests.length - 1; i >= 0; i--) {
-            const g = guests[i];
+            const g = guests[i], s = guestScreen(g), tr = s ? guestTrack(g) : null;
             g.t += dt;
-            if (g.held)
-                continue;
-            if (g.leaving && (g.x < g.sx - 90 || g.x > g.sx + g.sw + 90)) {
-                // se ha ido: vuelve a su casa (con las caricias que le has hecho)
-                vecCmd({
-                    cmd: "send",
-                    to: g.from,
-                    type: "return",
-                    mochi: Object.assign({}, g.m, {
-                        pets: g.pets
-                    })
-                });
-                guests.splice(i, 1);
+            if (!s || !tr) {
+                guestGone(i);
                 continue;
             }
             // de visita un buen rato: se despide solo
-            if (!g.leaving && now - g.since > 90 * 60000)
+            if (!g.leaving && g.phys !== "held" && now - g.since > 90 * 60000)
                 guestLeave(i);
-            g.vy += 2600 * dt;
-            g.x += g.vx * dt;
-            g.y += g.vy * dt;
-            const L = g.sx + barW + 40, R = g.sx + g.sw - frame - 40;
-            if (g.entering && g.x > L && g.x < R)
-                g.entering = false;
-            if (!g.entering && !g.leaving) {
-                if (g.x < L) {
-                    g.x = L;
-                    g.vx = Math.abs(g.vx) * 0.4;
-                } else if (g.x > R) {
-                    g.x = R;
-                    g.vx = -Math.abs(g.vx) * 0.4;
+
+            // hacia dónde mira: el ratón si anda cerca; si no, a tu Mochi o a su alrededor
+            if (now > g.lookUntil) {
+                const dc = Math.hypot(cursorX - g.x, cursorY - g.y);
+                let tx = NaN, ty = NaN;
+                if (dc < 420) {
+                    tx = cursorX;
+                    ty = cursorY;
+                } else if (present && phys !== "away" && Math.random() < 0.5 && Math.hypot(gx - g.x, gy - g.y) < 900) {
+                    tx = gx;
+                    ty = gy;
+                } else if (Math.random() < 0.02) {
+                    tx = g.x + (Math.random() - 0.5) * 600;
+                    ty = g.y - Math.random() * 300;
+                    g.lookUntil = now + 900 + Math.random() * 1200;
+                }
+                if (!isNaN(tx)) {
+                    const dx = tx - g.x, dy = ty - g.y, dd = Math.hypot(dx, dy);
+                    g.lx = dd < 20 ? 0 : dx / (dd + 60);
+                    g.ly = dd < 20 ? 0 : dy / (dd + 60);
                 }
             }
-            if (g.y >= g.floor) {
-                g.y = g.floor;
-                g.vy = Math.abs(g.vy) > 350 ? -Math.abs(g.vy) * 0.25 : 0;
-                // paseo: hacia un sitio (a saltitos), luego descansa
-                if (!g.leaving && !g.entering) {
-                    if (isNaN(g.target) && now > g.next) {
-                        let x = L + Math.random() * (R - L);
-                        if (Math.abs(x - cursorX) < 200)
-                            x = cursorX < (L + R) / 2 ? R - Math.random() * 200 : L + Math.random() * 200;
-                        g.target = x;
+
+            if (g.phys === "held")
+                continue;
+
+            if (g.phys === "air") {
+                g.vy += 2600 * dt;
+                g.vx *= 1 - 0.25 * dt;
+                g.x += g.vx * dt;
+                g.y += g.vy * dt;
+                if (g.leaving) {
+                    if (g.x < s.x - 120 || g.x > s.x + s.width + 120 || g.y > s.y + s.height + 150)
+                        guestGone(i);
+                    else if (g.y > tr.B && g.vy > 0) {
+                        g.y = tr.B;
+                        g.vy = -Math.abs(g.vy) * 0.5;   // (bota hacia su lado hasta salir)
                     }
-                    if (!isNaN(g.target)) {
-                        const d = g.target - g.x;
-                        if (Math.abs(d) < 12) {
-                            g.target = NaN;
-                            g.next = now + 3000 + Math.random() * 7000;
-                            g.vx = 0;
-                        } else {
-                            g.vx = Math.sign(d) * 90;
-                            if (g.vy === 0)
-                                g.vy = -260;   // saltito
+                    continue;
+                }
+                if (g.entering) {
+                    if (g.x >= tr.L && g.x <= tr.R)
+                        g.entering = false;
+                    g.y = Math.min(g.y, tr.B);
+                    continue;
+                }
+                const sp = Math.hypot(g.vx, g.vy);
+                if (g.x < tr.L || g.x > tr.R || g.y > tr.B || (g.y < tr.T && g.vy < 0))
+                    guestAttach(g, tr, sp);
+                continue;
+            }
+
+            // Nadando por el marco
+            const p0 = pointAt(tr, g.d);
+            // en el techo no aguanta mucho: se despega y cae; en una pared, al rato, también
+            const onCeil = p0.ny < -0.5, onWall = Math.abs(p0.nx) > 0.5;
+            if (!g.stride && isNaN(g.goal) && ((onCeil && now - g.onSideSince > 3000 + (g.slot * 1700)) || (onWall && now - g.onSideSince > 9000))) {
+                g.phys = "air";
+                g.vx = -p0.nx * 160;
+                g.vy = onCeil ? 60 : -120;
+                g.x -= p0.nx * 4;
+                g.y -= p0.ny * 4;
+                guestKicked(g.slot, 0, 1.4);
+                continue;
+            }
+            // saluda a tu Mochi al llegar: se pone a su lado
+            if (!g.greeted && isNaN(g.goal) && now > g.next) {
+                g.greeted = true;
+                const ms = screenAt(gx, gy);
+                if (present && phys === "swim" && ms && ms.name === g.sname && gy > s.y + s.height * 0.6) {
+                    const side = g.x < gx ? -1 : 1;
+                    g.goal = nearestD(tr, gx + side * (bodyRx + g.rx + 26), tr.B);
+                    g.greeting = true;
+                }
+            }
+            if (isNaN(g.goal) && !g.stride && now > g.next && !dnd) {   // (con No molestar, duermen)
+                g.goal = guestPickGoal(g, tr);
+                if (isNaN(g.goal))
+                    g.next = now + 2000;
+            }
+            // (si el ratón se le echa encima, se aparta; el tímido, antes)
+            const dc = Math.hypot(cursorX - g.x, cursorY - g.y);
+            if (!g.stride && dc < ((g.look?.traits ?? []).includes("timido") ? 130 : 60) && now > g.pauseUntil && isNaN(g.goal)) {
+                g.goal = guestPickGoal(g, tr);
+                guestFace(g, "surprised", 700);
+            }
+            if (!isNaN(g.goal)) {
+                if (!g.stride && now > g.pauseUntil) {
+                    const rem = trackDiff(tr, g.d, g.goal);
+                    if (Math.abs(rem) < 6) {
+                        g.goal = NaN;
+                        g.next = now + 2500 + Math.random() * 7500 / guestEnergy(g);
+                        if (g.greeting) {
+                            g.greeting = false;
+                            guestFace(g, "love", 2200);
+                            heartPopAt(g.x, g.y - g.ry - 20);
+                            if (present && phys === "swim") {
+                                reacted("happy", 2200);
+                                glanceX = g.x;
+                                glanceY = g.y;
+                                glanceUntil = now + 2200;
+                            }
+                        } else if (Math.random() < 0.3) {
+                            guestFace(g, Math.random() < 0.5 ? "happy" : "curious", 1400);
                         }
                     } else {
-                        g.vx *= 1 - Math.min(1, dt * 8);
+                        const e = guestEnergy(g), len = Math.min(Math.abs(rem), (60 + Math.random() * 100) * e);
+                        g.stride = {
+                            from: g.d,
+                            to: g.d + Math.sign(rem) * len,
+                            t0: now,
+                            dur: (420 + len * 2.6) / e
+                        };
+                        const horiz = Math.abs(p0.ny) > 0.5;
+                        const a = -Math.sign(rem) * 0.9 * (p0.ny > 0 || p0.nx > 0 ? 1 : -1);
+                        guestKicked(g.slot, horiz ? a : 0.9, horiz ? 0.9 : a);   // (coge impulso)
                     }
-                } else if (g.vy === 0) {
-                    g.vx *= 1 - Math.min(1, dt * 3);
                 }
+            }
+            if (g.stride) {
+                const u = (now - g.stride.t0) / g.stride.dur;
+                if (u >= 1) {
+                    g.d = g.stride.to;
+                    g.stride = null;
+                    g.pauseUntil = now + (Math.random() < 0.14 ? 900 + Math.random() * 900 : 90 + Math.random() * 300) / guestEnergy(g);
+                } else {
+                    g.d = g.stride.from + (g.stride.to - g.stride.from) * strideEase(u);
+                }
+            }
+            g.d = ((g.d % tr.len) + tr.len) % tr.len;
+            const p = pointAt(tr, g.d);
+            if (Math.abs(p.nx - g.nx) + Math.abs(p.ny - g.ny) > 0.5)
+                g.onSideSince = now;
+            g.x = p.x;
+            g.y = p.y;
+            g.nx = p.nx;
+            g.ny = p.ny;
+        }
+        // tu Mochi, de vez en cuando, mira a los visitantes
+        if (present && phys === "swim" && now > guestGlanceAt) {
+            guestGlanceAt = now + 9000 + Math.random() * 16000;
+            const g = guests[Math.floor(Math.random() * guests.length)];
+            if (g && !g.leaving && now > glanceUntil) {
+                glanceX = g.x;
+                glanceY = g.y;
+                glanceUntil = now + 1500;
             }
         }
         guests = guests.slice();
         guestTick++;
     }
+    property real guestGlanceAt: 0
     FrameAnimation {
         running: shell.guests.length > 0
         onTriggered: shell.guestStep(frameTime)
     }
-    function petGuest(i: int): void {
-        const g = guests[i];
+    function petGuest(g: var): void {
         if (!g)
             return;
         g.pets++;
-        g.face = "love";
-        g.faceUntil = Date.now() + 1600;
-        heartPopAt(g.x, g.y - 70);
+        guestFace(g, "love", 1600);
+        guestKicked(g.slot, 0, 1.2);
+        heartPopAt(g.x, g.y - g.ry - 20);
+        saveGuests();
         guestTick++;
+    }
+    function guestHome(name: string): void {
+        const i = guests.findIndex(g => g.from === name);
+        if (i >= 0)
+            guestLeave(i);
+    }
+    // Los visitantes se guardan: si se reinicia Mochi (o el ordenador) siguen de visita
+    function saveGuests(): void {
+        guestsFile.setText(JSON.stringify(guests.map(g => ({
+                        from: g.from,
+                        side: g.side,
+                        vid: g.vid,
+                        mochi: g.m,
+                        pets: g.pets,
+                        since: g.since
+                    }))));
+    }
+    FileView {
+        id: guestsFile
+
+        path: shell.stateDir + "/guests.json"
+        printErrors: false
+        onLoaded: {
+            let list = [];
+            try {
+                list = JSON.parse(text()) ?? [];
+            } catch (e) {}
+            restoreGuests.list = list;
+            restoreGuests.restart();
+        }
+    }
+    // (tras arrancar el relé, para poder devolver a los que ya llevaban mucho)
+    Timer {
+        id: restoreGuests
+
+        property var list: []
+
+        interval: 2500
+        onTriggered: {
+            for (const o of list) {
+                if (!o?.from || !shell.neighbours.some(n => n.name === o.from && !n.blocked))
+                    continue;
+                if (Date.now() - (o.since ?? 0) > 90 * 60000)
+                    shell.vecCmd({
+                        cmd: "send",
+                        to: o.from,
+                        type: "return",
+                        vid: o.vid ?? "",
+                        mochi: Object.assign({}, o.mochi ?? {}, {
+                            pets: o.pets ?? 0
+                        })
+                    });
+                else
+                    shell.addGuest({
+                        from: o.from,
+                        side: o.side,
+                        vid: o.vid,
+                        mochi: o.mochi
+                    }, o);
+            }
+            list = [];
+            shell.saveGuests();
+        }
+    }
+
+    // Bloquear: sus visitas rebotan y tu Mochi no va a su casa (si está allí, vuelve; si su
+    // Mochi está aquí, se va)
+    function blockNeighbour(name: string, on: bool): void {
+        vecCmd({
+            cmd: on ? "block" : "unblock",
+            name: name
+        });
+        if (!on)
+            return;
+        guestHome(name);
+        if (away?.to === name)
+            recall();
+    }
+    function removeNeighbour(name: string): void {
+        guestHome(name);
+        if (away?.to === name)
+            recall();
+        // (el recado de vuelta tiene que salir antes de quitarlo)
+        removeLater.names = removeLater.names.concat([name]);
+        removeLater.restart();
+    }
+    Timer {
+        id: removeLater
+
+        property var names: []
+
+        interval: 3500
+        onTriggered: {
+            for (const n of names)
+                shell.vecCmd({
+                    cmd: "remove",
+                    name: n
+                });
+            names = [];
+        }
     }
 
     Process {
@@ -1451,21 +1871,37 @@ ShellRoot {
                 } catch (e) {
                     return;
                 }
-                if (ev.ev === "neighbours")
+                if (ev.ev === "neighbours") {
                     shell.neighbours = ev.list ?? [];
-                else if (ev.ev === "invite")
+                    shell.doorClosed = !!ev.closed;
+                    if (!shell.neighbours.some(n => n.pending))
+                        shell.inviteCode = "";   // (ya se ha unido: el código no vale para más)
+                } else if (ev.ev === "invite")
                     shell.inviteCode = ev.code;
                 else if (ev.ev === "error")
                     shell.neighbourMsg = ev.text;
                 else if (ev.ev === "visit")
-                    shell.addGuest(ev);
+                    shell.addGuest(ev, null);
                 else if (ev.ev === "return") {
-                    recallFallback.stop();
-                    shell.comeHome(ev.mochi);
+                    if (shell.isMyVisit(ev.vid ?? ""))
+                        shell.comeHome(ev.mochi, ev.refused ?? "");
                 } else if (ev.ev === "recall") {
-                    const i = shell.guests.findIndex(g => g.from === ev.from);
+                    const i = shell.guests.findIndex(g => g.from === ev.from && (!ev.vid || !g.vid || g.vid === ev.vid));
                     if (i >= 0)
                         shell.guestLeave(i);
+                    else if (ev.vid)
+                        shell.recalledVids = shell.recalledVids.concat([ev.vid]).slice(-20);   // (aún no había entrado)
+                } else if (ev.ev === "knock")
+                    shell.note(`El Mochi de ${ev.from} ha llamado, pero tenías la puerta cerrada`);
+                else if (ev.ev === "gone") {
+                    shell.note(`${ev.name} te ha quitado de sus vecinos`);
+                    const i = shell.guests.findIndex(g => g.from === ev.name);
+                    if (i >= 0) {
+                        shell.guests[i].noReturn = true;
+                        shell.guestLeave(i);
+                    }
+                    if (shell.away?.to === ev.name)
+                        shell.comeHome(null, "");
                 }
             }
         }
@@ -1890,8 +2326,12 @@ ShellRoot {
     // El recorrido por el que nada: un rectángulo de esquinas redondeadas por dentro del marco
     // (los puntos son el centro de Mochi, que va algo hundido en el marco)
     function track(s: var): var {
-        const L = s.x + barW + bodyRx - embed, R = s.x + s.width - frame - bodyRx + embed;
-        const T = s.y + frame + bodyRy - embed, B = s.y + s.height - frame - bodyRy + embed;
+        return trackR(s, bodyRx, bodyRy);
+    }
+    // (el de otro tamaño de Mochi: los que vienen de visita)
+    function trackR(s: var, rx: real, ry: real): var {
+        const L = s.x + barW + rx - embed, R = s.x + s.width - frame - rx + embed;
+        const T = s.y + frame + ry - embed, B = s.y + s.height - frame - ry + embed;
         const c = 45, w = R - L - 2 * c, h = B - T - 2 * c, q = c * Math.PI / 2;
         return {
             L: L,
@@ -3879,29 +4319,61 @@ ShellRoot {
             shell.recall();
         }
         function vecGuestHome(name: string): void {
-            const i = shell.guests.findIndex(g => g.from === name);
-            if (i >= 0)
-                shell.guestLeave(i);
+            shell.guestHome(name);
         }
         function vecRemove(name: string): void {
+            shell.removeNeighbour(name);
+        }
+        // Bloquear / desbloquear a un vecino; abrir o cerrar la puerta (1 abierta, 0 cerrada)
+        function vecBlock(name: string): void {
+            shell.blockNeighbour(name, true);
+        }
+        function vecUnblock(name: string): void {
+            shell.blockNeighbour(name, false);
+        }
+        function vecDoor(open: string): void {
             shell.vecCmd({
-                cmd: "remove",
-                name: name
+                cmd: "door",
+                open: open !== "0" && open !== "false"
             });
         }
-        // Prueba: finge que llega de visita el Mochi de alguien
-        function vecTestGuest(side: string): void {
+        // Prueba: finge que llega de visita el Mochi de alguien (lado; transformación opcional)
+        function vecTestGuest(side: string, skin: string): void {
+            const n = shell.guests.length;
             shell.addGuest({
-                from: "Prueba",
+                from: n ? "Prueba 2" : "Prueba",
                 side: side || "left",
+                test: true,
                 mochi: {
                     name: "Prueba",
                     stage: 2,
-                    hat: "party",
-                    body: "#2b2b2f",
-                    ink: "#f4f1f0"
+                    hat: "",
+                    skin: skin || "",
+                    body: n ? "#c9a7e8" : "#2b2b2f",
+                    ink: n ? "#1c1b1b" : "#f4f1f0",
+                    look: {
+                        eyeSize: n ? 1.3 : 0.9,
+                        eyeGap: 1.1,
+                        eyeY: 0,
+                        eyeShape: n ? -0.3 : 0.5,
+                        wide: n ? 1.15 : 0.92,
+                        jelly: 1.3,
+                        traits: ["inquieto", "curioso", "mimoso"]
+                    }
                 }
-            });
+            }, null);
+        }
+        function vecGuests(): string {
+            return JSON.stringify(shell.guests.map(g => ({
+                            from: g.from,
+                            slot: g.slot,
+                            phys: g.phys,
+                            x: Math.round(g.x),
+                            y: Math.round(g.y),
+                            d: Math.round(g.d),
+                            goal: Math.round(g.goal),
+                            leaving: g.leaving
+                        })));
         }
         function heart(): void {
             shell.heartShown = true;
@@ -4485,6 +4957,8 @@ ShellRoot {
 
             readonly property bool here: shell.screenAt(shell.gx, shell.gy) === modelData
             readonly property bool hasEdge: shell.edgeScreen === modelData.name && edgeImg.status === Image.Ready
+            // hay algún visitante a la vista en esta pantalla
+            readonly property bool guestsHere: shell.guests.some(g => g.sname === modelData.name) && !(Hyprland.monitors.values.find(m => m.name === modelData.name)?.activeWorkspace?.hasFullscreen ?? false)
 
             screen: modelData
             visible: shell.shown
@@ -4535,13 +5009,74 @@ ShellRoot {
                 source: shell.edgeScreen === win.modelData.name && shell.edgeFile ? "file://" + shell.edgeFile : ""
             }
 
+            // Cuerpo de un visitante: el mismo fluido que el tuyo (mochi.frag), fundido con tu
+            // marco, con su color (el de su casa, o el de su transformación) y su silueta
+            component GuestBody: ShaderEffect {
+                id: gb
+
+                required property int index
+                property real band: 0
+                readonly property Item b: guestBlobs.count > index ? guestBlobs.itemAt(index) : null
+                readonly property var g: b?.g ?? null
+                readonly property var def: g?.def ?? null
+                readonly property var rgb: Skins.rgb(g?.col ?? "#d0d3d6")
+                readonly property real half: 140
+                readonly property real cx: half + (b?.shiftX ?? 0)
+                readonly property real cy: half + (b?.shiftY ?? 0)
+
+                function part(i: int): var {
+                    return def?.parts?.[i] ?? null;
+                }
+
+                visible: !!b && b.visible
+                x: b ? b.x + b.width / 2 - half : 0
+                y: b ? b.y + b.height / 2 - half : 0
+                width: 2 * half
+                height: 2 * half
+
+                property vector2d size: Qt.vector2d(width, height)
+                property vector4d body: b ? Qt.vector4d(cx, cy, b.bodyRx, b.bodyRy) : Qt.vector4d(0, 0, 1, 1)
+                property vector4d mass: b ? Qt.vector4d(cx + b.massX - b.width / 2, cy + b.massY - b.height / 2, b.massR, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d tail: b ? Qt.vector4d(cx + b.tailX - b.width / 2, cy + b.tailY - b.height / 2, b.tailR, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d wobA: b?.wobA ?? Qt.vector4d(0, 0, 0, 0)
+                property vector4d wobB: b?.wobB ?? Qt.vector4d(0, 0, 0, 0)
+                property vector4d frame: Qt.vector4d(shell.barW - x, shell.frame - y, win.width - shell.frame - x, win.height - shell.frame - y)
+                property color color: shell.frameColor
+                property vector4d view: Qt.vector4d(x, y, edgeImg.sourceSize.width, win.hasEdge ? 1 : 0)
+                property var edge: edgeImg
+                property real blobK: 26
+                property real frameK: shell.frameSmoothing
+                property real bandOnly: band
+                property vector4d shape: Qt.vector4d(0, 0, 0, 44)
+                property vector4d shapeTint: Qt.vector4d(0, 0, 0, 0)
+                property vector4d rainbow: Qt.vector4d(0, 0, 0, 0)
+                property vector4d arm: Qt.vector4d(0, 0, 0, 0)
+                property vector4d skinTint: Qt.vector4d(rgb[0], rgb[1], rgb[2], g ? 1 : 0)
+                property vector4d skinForm: Qt.vector4d(def?.form?.square ?? 0, def?.form?.flame ?? 0, def?.form?.skirt ?? 0, def?.form?.spikes ?? 0)
+                property vector4d skinMisc: Qt.vector4d(g?.t ?? 0, def ? 1 : 0, 0, 0)
+                property vector4d pa0: part(0) ? Qt.vector4d(part(0).a[0], part(0).a[1], part(0).b[0], part(0).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pa1: part(1) ? Qt.vector4d(part(1).a[0], part(1).a[1], part(1).b[0], part(1).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pa2: part(2) ? Qt.vector4d(part(2).a[0], part(2).a[1], part(2).b[0], part(2).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pa3: part(3) ? Qt.vector4d(part(3).a[0], part(3).a[1], part(3).b[0], part(3).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pa4: part(4) ? Qt.vector4d(part(4).a[0], part(4).a[1], part(4).b[0], part(4).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pa5: part(5) ? Qt.vector4d(part(5).a[0], part(5).a[1], part(5).b[0], part(5).b[1]) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr0: part(0) ? Qt.vector4d(part(0).ra, part(0).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr1: part(1) ? Qt.vector4d(part(1).ra, part(1).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr2: part(2) ? Qt.vector4d(part(2).ra, part(2).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr3: part(3) ? Qt.vector4d(part(3).ra, part(3).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr4: part(4) ? Qt.vector4d(part(4).ra, part(4).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d pr5: part(5) ? Qt.vector4d(part(5).ra, part(5).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+
+                fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
+            }
+
             // Cuerpo de Mochi: mismo color, transparencia y sombra que el marco de Caelestia.
             // Se recorta al interior del marco (el marco ya lo pinta Caelestia) y el shader lo
             // funde con él al tocarlo.
             Item {
                 id: interior
 
-                visible: mochi.visible
+                visible: mochi.visible || win.guestsHere
                 x: shell.barW
                 y: shell.frame
                 width: win.width - shell.barW - shell.frame
@@ -4560,12 +5095,21 @@ ShellRoot {
                         shadowColor: Qt.alpha(Theme.shadow, 0.7)
                     }
 
+                    // (los visitantes, debajo del tuyo)
+                    Repeater {
+                        model: 2
+
+                        GuestBody {}
+                    }
+
                     // El cuerpo: metaballs en un shader (mochi.frag). Solo se calcula en una caja
                     // alrededor de Mochi.
                     ShaderEffect {
                         id: bodyFx
 
                         readonly property real half: 140
+
+                        visible: mochi.visible
 
                         x: mochi.x + mochi.width / 2 - half + shell.bodyOffX
                         y: mochi.y + mochi.height / 2 - half + shell.bodyOffY
@@ -4929,6 +5473,15 @@ ShellRoot {
                 }
             }
 
+            // (y la de los visitantes)
+            Repeater {
+                model: 2
+
+                GuestBody {
+                    band: 1
+                }
+            }
+
             // Segunda pasada, sin sombra: solo la franja de 6 px que tapa el borde suavizado del
             // marco junto a Mochi (con la sombra, esa franja oscurecía el marco)
             ShaderEffect {
@@ -5094,114 +5647,157 @@ ShellRoot {
                 }
             }
 
-            // Mochis que te visitan (de tus vecinos): pasean por el suelo de esta pantalla
-            Canvas {
-                id: guestCanvas
+            // Mochis que te visitan: sus ojos y su simulación (Blob); el cuerpo lo pinta GuestBody
+            Repeater {
+                id: guestBlobs
 
-                readonly property int tick: shell.guestTick
+                model: 2
 
-                anchors.fill: parent
-                visible: shell.guests.some(g => g.sx === win.modelData.x)
-                onTickChanged: if (visible) requestPaint()
+                Blob {
+                    id: gbl
 
-                onPaint: {
-                    const ctx = getContext("2d");
-                    ctx.reset();
-                    const now = Date.now();
-                    for (const g of shell.guests) {
-                        if (g.sx !== win.modelData.x)
-                            continue;
-                        const m = g.m ?? {}, x = g.x - win.modelData.x, y = g.y - win.modelData.y;
-                        const d = Math.hypot(shell.cursorX - g.x, shell.cursorY - g.y + 40);
-                        const face = now < g.faceUntil ? g.face : g.held ? "surprised" : "normal";
-                        ctx.save();
-                        // (en el aire se estira un poco)
-                        const st = g.y < g.floor - 2 ? 1 + Math.min(0.15, Math.abs(g.vy) / 4000) : 1;
-                        ctx.translate(x, y);
-                        ctx.scale(1 / st, st);
-                        ctx.translate(-x, -y);
-                        Draw.avatar(ctx, {
-                            look: m.look ?? null,
-                            x: x,
-                            y: y,
-                            s: 36,
-                            body: m.body ?? "#d0d3d6",
-                            ink: m.ink ?? "#1c1b1b",
-                            face: face,
-                            hat: m.hat ?? "",
-                            stage: m.stage ?? 1,
-                            skin: m.skin ?? "",
-                            lx: d < 20 ? 0 : (shell.cursorX - g.x) / (d + 60),
-                            ly: d < 20 ? 0 : (shell.cursorY - g.y + 40) / (d + 60),
-                            blink: (g.t % 4) < 0.12 ? 1 : 0,
-                            breath: 0.5 + 0.5 * Math.sin(g.t * 2.6),
-                            outline: "rgba(0,0,0,0.18)",
-                            shadow: g.y >= g.floor - 2 ? 1 : 0.4,
-                            t: g.t
-                        });
-                        ctx.restore();
+                    required property int index
+                    // (una copia por fotograma: el objeto de verdad es siempre el mismo y, si no,
+                    // QML no se entera de que se ha movido)
+                    readonly property var g: shell.guestSnap(index, shell.guestTick)
+                    readonly property var gl: g?.look ?? ({})
+                    readonly property var se: g?.eyes ?? null
+
+                    visible: !!g && g.sname === win.modelData.name && !shell.guestHidden(g)
+                    u: g?.u ?? shell.u
+                    x: (g?.x ?? 0) - win.modelData.x - width / 2
+                    y: (g?.y ?? 0) - win.modelData.y - height / 2
+                    worldX: g?.x ?? 0
+                    worldY: g?.y ?? 0
+                    eyeSize: se ? se.eyeSize : gl.eyeSize ?? 1
+                    eyeGap: se ? se.eyeGap : gl.eyeGap ?? 1
+                    eyeY: se ? se.eyeY : gl.eyeY ?? 0
+                    eyeShape: se ? se.eyeShape : gl.eyeShape ?? 0
+                    eyeRound: se ? se.round : 1
+                    eyeWhite: se?.white || "transparent"
+                    eyeWhiteScale: se?.whiteScale ?? 1.9
+                    eyeShine: se?.shine ?? false
+                    baseLid: se?.lid ?? 0
+                    baseTilt: se?.tilt ?? 0
+                    skin: g?.def ? g.m.skin : ""
+                    skinAmt: g?.def ? 1 : 0
+                    skinT: g?.t ?? 0
+                    wide: gl.wide ?? 1
+                    jelly: gl.jelly ?? 1
+                    traits: gl.traits ?? []
+                    bodyColor: g?.col ?? "#d0d3d6"
+                    inkOverride: se?.ink || "transparent"
+                    dragging: g?.phys === "held"
+                    falling: g?.phys === "air" && !g.leaving && !g.entering && g.vy > 900
+                    anchorNx: g?.phys === "swim" ? g.nx : 0
+                    anchorNy: g?.phys === "swim" ? g.ny : 0
+                    hat: g?.m?.hat ?? ""
+                    affection: 0.6
+                    sleepy: shell.dnd
+                    music: Mind.musicPlaying
+                    lookX: g && g.phys !== "held" ? g.lx : 0
+                    lookY: g && g.phys !== "held" ? g.ly : 0
+                    // (los ojos, como el cuerpo, solo dentro del marco: entran y salen por él)
+                    clipRect: Qt.rect(shell.barW - x, shell.frame - y, win.width - shell.frame - shell.barW, win.height - 2 * shell.frame)
+
+                    Connections {
+                        target: shell
+
+                        function onGuestReacted(slot: int, name: string, ms: int): void {
+                            if (slot === gbl.index)
+                                gbl.react(name, ms);
+                        }
+                        function onGuestKicked(slot: int, ax: real, ay: real): void {
+                            if (slot === gbl.index)
+                                gbl.kick(ax, ay);
+                        }
+                        function onGuestSplat(slot: int, strength: real, horizontal: bool): void {
+                            if (slot === gbl.index)
+                                gbl.splat(strength, horizontal);
+                        }
                     }
                 }
             }
-            // Zonas para tocarlos (clic: caricia · arrastrar y lanzar hacia su lado: vuelve a su casa)
+            // Zonas para tocarlos (clic: caricia · arrastrar y lanzar · lanzado fuerte hacia su
+            // lado o clic derecho: vuelve a su casa)
             component GuestHit: MouseArea {
                 id: gh
 
                 required property int slot
-                readonly property var g: shell.guestTick >= 0 ? shell.guests[slot] ?? null : null
+                readonly property var g: shell.guestSnap(slot, shell.guestTick)
                 property real px
                 property real py
-                property real lastX
+                property real gx0
+                property real gy0
                 property real lastT
                 property real velX
                 property real velY
                 property bool moved
 
-                visible: !!g && g.sx === win.modelData.x && !g.leaving
-                x: g ? g.x - win.modelData.x - 42 : 0
-                y: g ? g.y - win.modelData.y - 84 : 0
-                width: 84
-                height: 86
+                visible: !!g && g.sname === win.modelData.name && !g.leaving && !shell.guestHidden(g)
+                x: g ? g.x - win.modelData.x - g.rx - 6 : 0
+                y: g ? g.y - win.modelData.y - g.ry - 6 : 0
+                width: g ? 2 * g.rx + 12 : 0
+                height: g ? 2 * g.ry + 12 : 0
                 hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
                 cursorShape: pressed ? Qt.ClosedHandCursor : Qt.PointingHandCursor
                 onPressed: mouse => {
-                    px = mouse.x;
-                    py = mouse.y;
+                    const g = shell.guestBySlot(slot);
+                    if (!g)
+                        return;
+                    if (mouse.button === Qt.RightButton) {
+                        shell.guestHome(g.from);
+                        return;
+                    }
+                    // (coordenadas globales: el MouseArea se mueve con él)
+                    px = mouse.x + x;
+                    py = mouse.y + y;
+                    gx0 = g.x;
+                    gy0 = g.y;
                     moved = false;
                     velX = velY = 0;
                     lastT = Date.now();
                 }
                 onPositionChanged: mouse => {
-                    if (!pressed || !g)
+                    const g = shell.guestBySlot(slot);
+                    if (!pressed || !g || !(pressedButtons & Qt.LeftButton))
                         return;
-                    if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
+                    const mx = mouse.x + x, my = mouse.y + y;
+                    if (!moved && Math.hypot(mx - px, my - py) < 4)
                         return;
-                    moved = true;
-                    g.held = true;
+                    if (!moved) {
+                        moved = true;
+                        g.phys = "held";
+                        g.stride = null;
+                        g.goal = NaN;
+                        g.entering = false;
+                    }
                     const now = Date.now(), dt = Math.max(1, now - lastT) / 1000;
-                    const nx = g.x + mouse.x - px, ny = g.y + mouse.y - py;
+                    const s = shell.guestScreen(g);
+                    const nx = gx0 + mx - px, ny = Math.max(s.y + g.ry, Math.min(s.y + s.height - g.ry, gy0 + my - py));
                     velX = velX * 0.6 + (nx - g.x) / dt * 0.4;
                     velY = velY * 0.6 + (ny - g.y) / dt * 0.4;
                     lastT = now;
                     g.x = nx;
-                    g.y = Math.min(ny, g.floor);
+                    g.y = ny;
                     shell.guestTick++;
                 }
-                onReleased: {
-                    if (!g)
+                onReleased: mouse => {
+                    const g = shell.guestBySlot(slot);
+                    if (!g || mouse.button !== Qt.LeftButton)
                         return;
                     if (!moved) {
-                        shell.petGuest(slot);
+                        shell.petGuest(g);
                         return;
                     }
-                    g.held = false;
+                    g.phys = "air";
                     g.vx = Math.max(-4500, Math.min(4500, velX));
                     g.vy = Math.max(-2600, Math.min(2600, velY));
-                    // lanzado hacia su lado: vuelve a su casa
+                    // lanzado fuerte hacia su lado: vuelve a su casa
                     if ((g.side === "left" && g.vx < -1500) || (g.side === "right" && g.vx > 1500)) {
                         g.leaving = true;
-                        g.face = "happy";
-                        g.faceUntil = Date.now() + 3000;
+                        shell.guestFace(g, "happy", 3000);
                     }
                 }
                 // nombre al pasar por encima
@@ -5209,7 +5805,8 @@ ShellRoot {
                     visible: gh.containsMouse && !gh.pressed
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.top
-                    text: `Mochi de ${gh.g?.from ?? ""}`
+                    anchors.bottomMargin: 4
+                    text: gh.g ? `Mochi de ${gh.g.from}` + (gh.g.look?.nick ? ` («${gh.g.look.nick}»)` : "") + (gh.g.pets ? ` · ♥ ${gh.g.pets}` : "") : ""
                     color: "#ffffff"
                     style: Text.Outline
                     styleColor: "#1c1b1b"
