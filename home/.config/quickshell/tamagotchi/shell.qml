@@ -691,15 +691,17 @@ ShellRoot {
     property bool inApp: false
     property var appSpot: null        // punto del marco por el que se ha metido
     property bool appOptOut: false    // lo has sacado tú (le has hablado…): no vuelve a entrar hasta que salgas del editor
-    onCodeActiveChanged: {
-        if (codeActive) {
+    // Ventana en la que está metido (el editor, o la kitty cuyo cuadrado ha rellenado): sale en
+    // cuanto dejas de usarla
+    property string appHost: ""
+    readonly property string activeAddr: Hyprland.activeToplevel?.address ?? ""
+    onActiveAddrChanged: {
+        if (inApp && activeAddr !== appHost)
+            appLeave.restart();
+        else
             appLeave.stop();
-        } else {
-            appOptOut = false;
-            if (inApp)
-                appLeave.restart();
-        }
     }
+    onCodeActiveChanged: if (!codeActive) appOptOut = false
     // (lo va intentando: si acaba de llegar buceando, o estaba haciendo otra cosa, entra luego)
     Timer {
         running: shell.codeActive && !shell.inApp && !shell.appOptOut
@@ -714,7 +716,7 @@ ShellRoot {
         id: appLeave
 
         interval: 700
-        onTriggered: shell.leaveApp()
+        onTriggered: shell.leaveApp(false)
     }
     function enterApp(): void {
         if (inApp || !codeActive || locked || dnd || !present || asking || Brain.busy || (phys !== "swim" && phys !== "nest"))
@@ -730,14 +732,15 @@ ShellRoot {
         }
         const target = nearestD(tr, o.at[0] + 40, o.at[1] + o.size[1]);
         appSpot = pointAt(tr, target);
+        appHost = Hyprland.activeToplevel?.address ?? "";
         inApp = true;
         reacted("curious", 900);
         dive(trackDiff(tr, swimD, target), "hidden", false, 1.8);
         diveToNest = false;
         diveStay = true;   // se queda dentro
     }
-    function leaveApp(): void {
-        if (!inApp)
+    function leaveApp(force: bool): void {
+        if (!inApp || (!force && activeAddr === appHost && appHost !== ""))
             return;
         inApp = false;
         diveStay = false;
@@ -751,6 +754,69 @@ ShellRoot {
         dive(0, "hidden", true, 1.8);
         reacted("happy", 1200);
     }
+    // Abres kitty: su fluido rellena el cuadrado del saludo (fastfetch). Bucea por el marco hasta
+    // la barra de la izquierda, a la altura del cuadrado, y se queda dentro mientras uses esa
+    // kitty (la animación del cuadrado espera ~0,9 s a que llegue). Lo llama
+    // ~/.config/fastfetch/mochi.sh con cuántos px por debajo del borde de arriba está el cuadrado.
+    property real termOffY: 0
+    property int termTries: 0
+    function enterTerm(offY: real): void {
+        if (locked || dnd || asking || dragging || !shown)
+            return;
+        termOffY = offY;
+        termTries = 0;
+        Hyprland.refreshToplevels();
+        termTimer.restart();
+    }
+    Timer {
+        id: termTimer
+
+        interval: 120
+        onTriggered: {
+            if (!shell.doEnterTerm() && ++shell.termTries < 6) {
+                Hyprland.refreshToplevels();
+                restart();
+            }
+        }
+    }
+    function doEnterTerm(): bool {
+        const tl = Hyprland.activeToplevel, o = tl?.lastIpcObject;
+        if (!o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
+            return false;
+        const s = nearestScreen(o.at[0] + 20, o.at[1] + termOffY), tr = track(s);
+        const target = nearestD(tr, tr.L, o.at[1] + termOffY);
+        appLeave.stop();
+        appHost = tl.address;
+        appSpot = pointAt(tr, target);
+        const wasIn = inApp;
+        inApp = true;
+        diveToNest = false;
+        if (!present || phys === "hidden") {
+            // no estaba a la vista: aparece ya dentro
+            mochiWs = tl.workspace?.id ?? Hyprland.focusedWorkspace?.id ?? mochiWs;
+            swimD = target;
+            const p = appSpot, rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
+            gx = p.x + p.nx * deep;
+            gy = p.y + p.ny * deep;
+            dive(0, "hidden", true, 3);
+            diveStay = true;
+            return true;
+        }
+        if (phys === "nest") {
+            phys = "swim";
+            bodyOffX = 0;
+            swimD = nearestD(tr, tr.L, gy);
+        }
+        if (phys !== "swim" && phys !== "dive")
+            return false;
+        // que llegue en ~0,85 s (lo que tarda en empezar a caer el fluido en el cuadrado)
+        const dist = trackDiff(tr, swimD, target);
+        dive(dist, "hidden", wasIn || phys === "dive", (1 + Math.abs(dist) / 620) / 0.85);
+        diveStay = true;
+        reacted("excited", 700);
+        return true;
+    }
+
     // Sube de nivel: lo celebra (si está en el editor, lo celebra el del panel)
     Connections {
         target: Bond
@@ -1828,7 +1894,7 @@ ShellRoot {
         woke();
         if (inApp) {
             appOptOut = true;
-            leaveApp();   // le hablas o lo llamas: sale del editor
+            leaveApp(true);   // lo llamas o lo tocas: sale del editor / la terminal
             return;
         }
         if (!present) {
@@ -2404,6 +2470,9 @@ ShellRoot {
         }
         function pop(): void {
             shell.heartPop();
+        }
+        function enterTerm(offY: real): void {
+            shell.enterTerm(offY);
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3649,7 +3718,7 @@ ShellRoot {
             Canvas {
                 id: fetchCanvas
 
-                readonly property int count: 80
+                readonly property int count: 100
                 property int frame: -1
                 property var frames: []
                 property string face: "happy"
@@ -3702,35 +3771,54 @@ ShellRoot {
                     ctx.reset();
                     if (frame < 0)
                         return;
-                    const f = frame, cx = sx + sw / 2;
+                    // Línea de tiempo (25 fps): 0-21 espera a que llegue buceando por la barra ·
+                    // 22-31 entra por el borde izquierdo y cae · 31-62 llena · 62+ gelatina ·
+                    // 66 abre los ojos · 71 mira a la izquierda · 78 a la derecha · 85 parpadea ·
+                    // 89 cara (con saltito)
+                    const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 31, T2 = 62;
                     const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
-                    const fill = f < 9 ? 0 : ease((f - 9) / 31);   // lo lleno que está (0-1)
-                    // gelatina al llenarse del todo
-                    const k = f - 40, jel = f >= 40 ? 0.07 * Math.exp(-k / 4) * Math.cos(k * 0.95) : 0;
-                    // saltito al poner la cara
-                    const hop = f >= 67 && f < 73 ? Math.sin((f - 67) / 6 * Math.PI) : 0;
-                    const hopSq = f >= 73 && f < 80 ? 0.05 * Math.exp(-(f - 73) / 2.5) * Math.cos((f - 73) * 1.1) : 0;
+                    const fill = f < T1 ? 0 : ease((f - T1) / (T2 - T1));
+                    const k = f - T2, jel = f >= T2 ? 0.07 * Math.exp(-k / 4) * Math.cos(k * 0.95) : 0;
+                    const hop = f >= 89 && f < 95 ? Math.sin((f - 89) / 6 * Math.PI) : 0;
+                    const hopSq = f >= 95 ? 0.05 * Math.exp(-(f - 95) / 2.5) * Math.cos((f - 95) * 1.1) : 0;
+                    const inY = sy + 58;   // altura por la que entra
 
                     ctx.save();
                     const base = sy + sh;
                     ctx.translate(cx, base - hop * 10);
                     ctx.scale(1 + (jel + hopSq) * 0.8, 1 - jel - hopSq);
                     ctx.translate(-cx, -base);
-
-                    // Chorro que cae desde arriba (se va afinando) y la gota que va delante
+                    ctx.fillStyle = body;
                     const surfY = sy + sh * (1 - fill);
-                    if (f >= 3 && f < 34) {
-                        const w = 26 * (1 - Math.pow((f - 3) / 31, 1.5));
-                        const headY = Math.min(surfY, -20 + (f - 3) * 34);
-                        ctx.fillStyle = body;
+
+                    // Entra: una gota que asoma por la izquierda, se estira hacia dentro y cae
+                    if (f >= T0 && f < T1 + 2) {
+                        const p = Math.min(1, (f - T0) / 5);                    // se asoma
+                        const q = Math.max(0, Math.min(1, (f - T0 - 5) / 5));   // cae
+                        const hx = -30 + cx * ease(p), hy = inY + (surfY - 30 - inY) * q * q;
+                        const r = 20 + 6 * q;
+                        // cola que la une al borde (cada vez más fina)
+                        ctx.lineCap = "round";
+                        ctx.strokeStyle = body;
+                        ctx.lineWidth = 26 * (1 - q * 0.6);
                         ctx.beginPath();
-                        Hats.RR(ctx, cx - w / 2, f < 9 ? headY - 60 : -10, w, (f < 9 ? 60 : headY + 10) + 8, w / 2);
+                        ctx.moveTo(-10, inY);
+                        ctx.quadraticCurveTo(hx * 0.6, inY, hx, hy);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        Hats.E(ctx, hx - r, hy - r, 2 * r, 2 * r * (1 + 0.3 * q));
                         ctx.fill();
-                        if (f < 9) {
-                            ctx.beginPath();
-                            Hats.E(ctx, cx - 17, headY - 14, 34, 36);
-                            ctx.fill();
-                        }
+                    }
+                    // Y sigue entrando fluido por el borde (un chorro que se va afinando)
+                    if (f >= T1 && f < T2 - 6) {
+                        const w = 18 * (1 - (f - T1) / (T2 - 6 - T1));
+                        ctx.lineCap = "round";
+                        ctx.strokeStyle = body;
+                        ctx.lineWidth = w;
+                        ctx.beginPath();
+                        ctx.moveTo(-10, inY);
+                        ctx.quadraticCurveTo(sx + 50, inY, sx + 58, surfY + 6);
+                        ctx.stroke();
                     }
 
                     // El fluido dentro del cuadrado, con la superficie ondulando
@@ -3738,19 +3826,17 @@ ShellRoot {
                         ctx.save();
                         squarePath(ctx);
                         ctx.clip();
-                        const amp = 12 * (1 - fill) + (f >= 40 ? 0 : 3);
-                        ctx.fillStyle = body;
+                        const amp = 12 * (1 - fill) + (f >= T2 ? 0 : 3);
                         ctx.beginPath();
                         ctx.moveTo(sx - 2, sy + sh + 2);
                         for (let x = sx - 2; x <= sx + sw + 2; x += 6) {
                             const y = surfY + amp * Math.sin(x * 0.045 + f * 0.55) + amp * 0.5 * Math.sin(x * 0.11 - f * 0.35)
-                                    - (f < 34 ? 16 * (1 - fill) * Math.exp(-Math.pow((x - cx) / 26, 2)) : 0);   // bulto donde cae el chorro
+                                    - (f < T2 - 6 ? 14 * (1 - fill) * Math.exp(-Math.pow((x - sx - 58) / 26, 2)) : 0);   // bulto donde cae el chorro
                             ctx.lineTo(x, y);
                         }
                         ctx.lineTo(sx + sw + 2, sy + sh + 2);
                         ctx.closePath();
                         ctx.fill();
-                        // brillo arriba a la izquierda, cuando ya está casi lleno
                         if (fill > 0.8) {
                             ctx.fillStyle = `rgba(255,255,255,${(0.1 * (fill - 0.8) / 0.2).toFixed(3)})`;
                             ctx.beginPath();
@@ -3759,18 +3845,17 @@ ShellRoot {
                         }
                         ctx.restore();
                     }
-                    // Salpicaduras al llegar el chorro abajo
-                    if (f >= 9 && f < 18) {
-                        const t = (f - 9) / 9;
+                    // Salpicaduras al caer la gota
+                    if (f >= T1 && f < T1 + 9) {
+                        const t = (f - T1) / 9;
                         ctx.fillStyle = body;
                         for (const [dx, v] of [[-1, 1], [1, 0.8], [-0.5, 1.3], [0.6, 1.2]]) {
-                            const px = cx + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
+                            const px = cx - 30 + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
                             ctx.beginPath();
                             Hats.E(ctx, px - r, py - r, 2 * r, 2 * r);
                             ctx.fill();
                         }
                     }
-                    // Contorno suave (por si el fondo es casi del mismo color)
                     if (fill >= 1) {
                         squarePath(ctx);
                         ctx.strokeStyle = "rgba(0,0,0,0.13)";
@@ -3779,16 +3864,16 @@ ShellRoot {
                     }
 
                     // Ojos: se abren, mira a un lado y a otro, parpadea y pone la cara
-                    if (f >= 43) {
+                    if (f >= 66) {
                         let fc = "normal", lx = 0, blink = 0;
-                        if (f < 48)
-                            blink = 1 - (f - 43) / 5;
-                        else if (f < 55)
+                        if (f < 71)
+                            blink = 1 - (f - 66) / 5;
+                        else if (f < 78)
                             lx = -0.75;
-                        else if (f < 62)
+                        else if (f < 85)
                             lx = 0.75;
-                        else if (f < 66)
-                            blink = [0.5, 1, 1, 0.4][f - 62];
+                        else if (f < 89)
+                            blink = [0.5, 1, 1, 0.4][f - 85];
                         else
                             fc = this.face;
                         Draw.avatar(ctx, {
@@ -3797,11 +3882,10 @@ ShellRoot {
                             y: sy + sh * 0.5,
                             s: 76,
                             ink: ink,
-                            face: fc === "asleep" && f < 66 ? "normal" : fc,
+                            face: fc === "asleep" && f < 89 ? "normal" : fc,
                             lx: lx,
                             blink: blink
                         });
-                        // el gorro de temporada, en lo alto del cuadrado
                         if (shell.hat) {
                             ctx.save();
                             ctx.translate(cx, sy + 12);
