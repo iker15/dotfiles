@@ -1,4 +1,5 @@
 import QtQuick
+import "Hats.js" as Hats
 
 // Mochi: gota blanda con forma de daifuku (cúpula arriba, base plana) y solo dos ojos.
 // El cuerpo NO se dibuja aquí: lo dibuja shell.qml con los blobs de Caelestia (mismo material
@@ -49,6 +50,31 @@ Item {
     property bool eyesOff: false   // buceando: los ojos se quedan bajo el marco
     // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
     property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
+
+    // Lo que le pasa por fuera: calor (se derrite: más ancho y aplastado, ojos caídos y sudor),
+    // una ventana que lo aplasta (press, en el eje de la normal del marco), nieve que se le
+    // acumula en la cabeza (snow 0-1) y el gorro de temporada (Hats.js)
+    property real melt: 0
+    property real press: 0
+    property bool pressVertical: true   // apoyado en suelo/techo (si no, en una pared)
+    property real snow: 0
+    property string hat: ""
+    // Normal del marco donde está apoyado (hacia el marco; 0,0 = en el aire): al aplastarse o
+    // derretirse se queda pegado a él en vez de despegarse
+    property real anchorNx: 0
+    property real anchorNy: 0
+    Behavior on anchorNx {
+        NumberAnimation {
+            duration: 200
+        }
+    }
+    Behavior on anchorNy {
+        NumberAnimation {
+            duration: 200
+        }
+    }
+    readonly property real shiftX: anchorNx * (rx - bodyRx)
+    readonly property real shiftY: anchorNy * (0.95 * ry - bodyRy)
 
     property real u: 1.45                          // escala respecto al Mochi original (la ficha del bloqueo lo sube: ojos nítidos)
     readonly property real rx: 32 * u              // semiejes del cuerpo en reposo
@@ -126,10 +152,20 @@ Item {
         nodAnim.restart();
     }
 
+    // Quedarse dormido del todo (tras una última cabezada): antes de que se apague la pantalla
+    property bool mustDoze: false
+    function dozeOff(): void {
+        if (dozing)
+            return;
+        mustDoze = true;
+        startNod();
+    }
+
     function nodEnd(): void {
         nods++;
         // Tras unas cuantas, de madrugada, se queda frito
-        if (nods >= 3 && drowsy > 0.6 && Math.random() < 0.6) {
+        if (mustDoze || (nods >= 3 && drowsy > 0.6 && Math.random() < 0.6)) {
+            mustDoze = false;
             dozing = true;
             settleNod.restart();
             return;
@@ -151,6 +187,7 @@ Item {
         nodAnim.stop();
         nodAgain.stop();
         settleNod.stop();
+        mustDoze = false;
         nod = 0;
         nods = 0;
         if (!dozing)
@@ -208,6 +245,13 @@ Item {
         property real rot: 0
         property real rotV: 0
         property int lastBeat: 0
+        // El gorro se balancea un poco al moverse
+        property real hatRot: 0
+        property real hatRotV: 0
+        // Gota de sudor: posición (0 arriba → 1 abajo; −1 = ninguna) y de qué lado
+        property real sweat: -1
+        property real sweatSide: 1
+        property real sweatWait: 2
 
         function newEye(): var {
             return {
@@ -440,6 +484,12 @@ Item {
                 e.lt = Math.max(e.lt, 0.34 * root.drowsy);
                 ly += 0.12 * root.drowsy;
             }
+            // Con calor: párpados pesados y caídos hacia fuera, mirada algo baja
+            if (root.melt > 0.01) {
+                e.lt = Math.max(e.lt, 0.3 * root.melt);
+                e.tilt -= 0.3 * root.melt;
+                ly += 0.14 * root.melt;
+            }
             // Mientras escribe la respuesta, los ojos botan un poco
             if (root.talking) {
                 e.h *= 1 + 0.07 * Math.sin(t * 11);
@@ -525,14 +575,35 @@ Item {
             root.wobA = Qt.vector4d(hc[0], hc[1], hc[2], hc[3]);
             root.wobB = Qt.vector4d(hc[4], hc[5], hc[6], hc[7]);
 
-            // Escala: aplastarse al respirar, estirarse al cogerlo
-            const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05;
-            const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07;
+            // Escala: aplastarse al respirar, estirarse al cogerlo; con calor se desparrama y si le
+            // aplasta una ventana se chafa en ese eje (y se ensancha en el otro)
+            // (los dos, contra el marco: en el suelo se chafa hacia abajo, en una pared contra ella)
+            const sq = root.press + 0.68 * root.melt, pv = root.pressVertical ? sq : 0, ph = root.pressVertical ? 0 : sq;
+            const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05 - 0.5 * ph + 0.45 * pv;
+            const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07 - 0.5 * pv + 0.45 * ph;
             const ks = 320, cs = 13;
             svx += (-ks * (root.sx - tsx) - cs * svx) * dt;
             svy += (-ks * (root.sy - tsy) - cs * svy) * dt;
-            root.sx = Math.max(0.55, Math.min(1.5, root.sx + svx * dt));
-            root.sy = Math.max(0.55, Math.min(1.5, root.sy + svy * dt));
+            root.sx = Math.max(0.45, Math.min(1.6, root.sx + svx * dt));
+            root.sy = Math.max(0.45, Math.min(1.6, root.sy + svy * dt));
+
+            hatRotV += (-90 * hatRot - 5 * hatRotV + mx * 60 - rotV * 0.3) * dt;
+            hatRot = Math.max(-25, Math.min(25, hatRot + hatRotV * dt));
+
+            if (root.melt > 0.3) {
+                if (sweat >= 0) {
+                    sweat += dt / 1.6;
+                    if (sweat >= 1) {
+                        sweat = -1;
+                        sweatWait = (2.5 + Math.random() * 4) / (0.5 + root.melt);
+                    }
+                } else if ((sweatWait -= dt) <= 0) {
+                    sweat = 0;
+                    sweatSide = Math.random() < 0.5 ? -1 : 1;
+                }
+            } else {
+                sweat = -1;
+            }
 
             // Ojos: muelle algo bailón hacia la forma de la expresión
             const ke = 340, ce = 20;
@@ -615,8 +686,12 @@ Item {
     Canvas {
         id: canvas
 
+        // (arriba, sitio para el gorro)
+        readonly property real padTop: 2.3 * root.rx
+
         anchors.fill: parent
         anchors.margins: -root.rx
+        anchors.topMargin: -padTop
         opacity: root.eyesOff ? 0 : 1
 
         Behavior on opacity {
@@ -701,17 +776,71 @@ Item {
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            const cx = width / 2, cy = root.centerY + root.rx;   // + margen del lienzo
+            const cx = width / 2 + root.shiftX, cy = root.centerY + padTop + root.shiftY;   // + margen del lienzo
             const cr = root.clipRect;
             ctx.save();
             ctx.beginPath();
-            ctx.rect(cr.x + root.rx, cr.y + root.rx, cr.width, cr.height);
+            ctx.rect(cr.x + root.rx, cr.y + padTop, cr.width, cr.height);
             ctx.clip();
+            ctx.save();
             ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.oy * 0.5);
             ctx.rotate(sim.rot * Math.PI / 180);
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                drawEye(ctx, side * 11.5 * root.u * root.sx + e.x, e.y, e, side);
+                drawEye(ctx, side * 11.5 * root.u * Math.max(0.78, root.sx) + e.x, e.y, e, side);   // (aplastado de lado, que no se junten)
+            }
+            // Sudor: una gotita que le resbala por la frente
+            if (root.melt > 0.3 && sim.sweat >= 0) {
+                const k = sim.sweat, x = sim.sweatSide * 17 * root.u * root.sx, y = -root.bodyRy * 0.62 + k * root.bodyRy * 0.55;
+                const r = 3.2 * root.u;
+                ctx.globalAlpha = Math.min(1, (1 - k) * 3) * Math.min(1, (root.melt - 0.3) * 5);
+                ctx.fillStyle = "#8fd0f5";
+                ctx.beginPath();
+                ctx.moveTo(x, y - r * 2.2);
+                ctx.quadraticCurveTo(x + r * 1.1, y - r * 0.4, x + r, y + r * 0.2);
+                ctx.arc(x, y + r * 0.2, r, 0, Math.PI);
+                ctx.quadraticCurveTo(x - r * 1.1, y - r * 0.4, x, y - r * 2.2);
+                ctx.fill();
+                ctx.fillStyle = "rgba(255,255,255,0.8)";
+                ctx.beginPath();
+                ctx.ellipse(x - r * 0.55, y - r * 0.2, r * 0.45, r * 0.7);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+            ctx.restore();
+
+            // Cabeza: lo más alto del cuerpo (la elipse con sus ondas, o la masa si sobresale)
+            const wa = root.wobA, wb = root.wobB;
+            const wobTop = -wa.x + wa.w + wb.x - wb.w;
+            const headY = Math.min(-root.bodyRy * (1 + wobTop), root.oy - root.massR);
+            ctx.translate(cx + root.ox * 0.3, cy + headY);
+            ctx.rotate((sim.rot * 0.6 + sim.hatRot) * Math.PI / 180);
+            // Nieve acumulada en la cabeza (un montoncito blanco que crece)
+            if (root.snow > 0.02) {
+                const w = root.bodyRx * (0.5 + 0.45 * root.snow), h = 3 * root.u + 7 * root.u * root.snow;
+                ctx.fillStyle = "#f6f9ff";
+                ctx.beginPath();
+                ctx.moveTo(-w, h * 0.55);
+                ctx.bezierCurveTo(-w * 0.8, -h * 0.7, w * 0.8, -h * 0.7, w, h * 0.55);
+                ctx.bezierCurveTo(w * 0.4, h * 0.2, -w * 0.4, h * 0.2, -w, h * 0.55);
+                ctx.fill();
+                ctx.strokeStyle = "rgba(110,130,165,0.55)";
+                ctx.lineWidth = 1.1;
+                ctx.beginPath();
+                ctx.moveTo(-w, h * 0.55);
+                ctx.bezierCurveTo(-w * 0.8, -h * 0.7, w * 0.8, -h * 0.7, w, h * 0.55);
+                ctx.stroke();
+                ctx.fillStyle = "rgba(150,180,220,0.35)";
+                ctx.beginPath();
+                ctx.moveTo(-w * 0.9, h * 0.5);
+                ctx.bezierCurveTo(-w * 0.4, h * 0.05, w * 0.4, h * 0.05, w * 0.9, h * 0.5);
+                ctx.bezierCurveTo(w * 0.4, h * 0.25, -w * 0.4, h * 0.25, -w * 0.9, h * 0.5);
+                ctx.fill();
+                ctx.translate(0, -h * 0.35);
+            }
+            if (root.hat) {
+                ctx.translate(0, 0.16 * root.rx);   // encajado en la cabeza
+                Hats.draw(ctx, root.hat, 0.75 * root.rx, sim.t, Math.max(-1, Math.min(1, sim.hatRot / 18)));
             }
             ctx.restore();
         }

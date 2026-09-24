@@ -8,8 +8,9 @@ import qs.services
 // pantalla (para que se aparte y no se quede debajo de ellos), la notificación nueva (para ir a
 // mirarla) y si están activos No molestar y la cafeína. Escribe
 // $XDG_RUNTIME_DIR/caelestia-panels-<pantalla>.json = {"rects": [[x, y, w, h], ...], "notif": {id,
-// urgent, rect} | null, "dnd": bool, "caffeine": bool} (coordenadas de la pantalla, tamaño final
-// del panel), solo cuando algo cambia.
+// urgent, rect} | null, "dnd": bool, "caffeine": bool, "weather": {code, tempC, isDay} | null}
+// (coordenadas de la pantalla, tamaño final del panel; weather = el tiempo de ahora, código WMO
+// de open-meteo), solo cuando algo cambia.
 Item {
     id: root
 
@@ -55,7 +56,12 @@ Item {
             rects: rects,
             notif: notif,
             dnd: Notifs.dnd,
-            caffeine: IdleInhibitor.enabled
+            caffeine: IdleInhibitor.enabled,
+            weather: Weather.cc ? {
+                code: Weather.cc.weatherCode,
+                tempC: Weather.cc.tempC,
+                isDay: Weather.cc.isDay
+            } : null
         });
     }
 

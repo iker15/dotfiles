@@ -6,6 +6,7 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import Quickshell.Wayland
 import Caelestia.Config
+import "Hats.js" as Hats
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
@@ -199,6 +200,192 @@ ShellRoot {
         coffeeSeq.stop();
         cupAway.restart();
     }
+
+    // ── El mundo de fuera ──
+    // Normal del marco donde nada (hacia el marco; 0,0 fuera del marco): el cuerpo se queda
+    // pegado a él aunque se aplaste o se derrita
+    property real nX: 0
+    property real nY: 0
+
+    // Calor del portátil (CPU, y la GPU solo si ya está despierta): se va derritiendo. La media
+    // es lenta (~20 s) para que un pico corto no lo derrita. También si fuera hace mucho calor.
+    property real cpuTemp: 0
+    property real gpuTemp: 0
+    property real heatT: 50
+    property real heatTest: NaN      // (IPC `pet heat <grados>`, 0 = quitar)
+    readonly property real heatNow: isNaN(heatTest) ? Math.max(cpuTemp, gpuTemp) : heatTest
+    property real melt: Math.max(Math.max(0, Math.min(1, (heatT - 72) / 20)), (isNaN(weatherTemp) ? 0 : 0.5 * Math.max(0, Math.min(1, (weatherTemp - 30) / 10))))
+    Behavior on melt {
+        NumberAnimation {
+            duration: 2500
+            easing.type: Easing.InOutSine
+        }
+    }
+
+    // El tiempo de verdad (Caelestia → MochiBridge; código WMO de open-meteo)
+    property int weatherCode: -1
+    property real weatherTemp: NaN
+    readonly property bool raining: (weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 82) || weatherCode >= 95
+    readonly property bool snowing: (weatherCode >= 71 && weatherCode <= 77) || weatherCode === 85 || weatherCode === 86
+    readonly property bool storm: weatherCode >= 95
+    readonly property bool cold: weatherTemp < 6
+    property var weatherTest: null   // (IPC `pet weather <código> <grados>`; código −2 = quitar)
+    function setWeather(w: var): void {
+        const v = weatherTest ?? w;
+        weatherCode = v?.code ?? -1;
+        weatherTemp = v?.tempC ?? NaN;
+    }
+    property var lastWeather: null
+
+    // Lloviendo saca un paraguas (con el bracito); con el café en la mano, no
+    readonly property bool umbrellaOn: raining && present && !fsHide && !locked && (phys === "swim" || phys === "air" || phys === "held") && nY > -0.5 && cupAmt < 0.01
+    property real umbAmt: umbrellaOn ? 1 : 0
+    Behavior on umbAmt {
+        NumberAnimation {
+            duration: 550
+            easing.type: Easing.OutBack
+        }
+    }
+    // (en una pared lo sujeta del lado de fuera; en el suelo, hacia el centro de la pantalla)
+    readonly property real umbSide: Math.abs(nX) > 0.5 ? -Math.sign(nX) : (gx < (nearestScreen(gx, gy)?.x ?? 0) + (nearestScreen(gx, gy)?.width ?? 0) / 2 ? 1 : -1)
+    readonly property var umbGeom: {
+        const hx = gx + umbSide * (bodyRx + 22), hy = gy - bodyRy * 0.62;
+        const k = 0.3 + 0.7 * Math.max(0, umbAmt);
+        const tx = gx + umbSide * 2, ty = gy - bodyRy - 42 * k;   // centro de la tela
+        return {
+            hx: gx + (hx - gx) * k,
+            hy: gy + (hy - gy) * k,
+            tx: tx,
+            ty: ty,
+            ang: Math.atan2(tx - hx, hy - ty)   // inclinación del mango (rad)
+        };
+    }
+    // Punta del bracito: la taza, o el paraguas
+    readonly property var armTip: cupAmt > 0.01 ? Qt.vector3d(cupGeom.hx, cupGeom.hy, cupAmt) : Qt.vector3d(umbGeom.hx, umbGeom.hy, umbAmt)
+    property real rainT: 0
+    readonly property bool snowFx: snowing && present && !fsHide && !locked && (phys === "swim" || phys === "air" || phys === "held") && nY > -0.5
+    NumberAnimation on rainT {
+        running: shell.umbAmt > 0 || shell.snowFx
+        from: 0
+        to: 1000
+        duration: 1000000
+        loops: Animation.Infinite
+    }
+
+    // Nevando se le acumula la nieve en la cabeza; de vez en cuando se sacude
+    property real snowAmt: 0
+
+    // Ventanas flotantes que se le ponen encima: se chafa y se escurre por un lado
+    property real press: 0
+    property real underSince: 0
+    property bool squeezing: false
+    property var winTest: null       // (IPC `pet window x y w h ms`)
+    function checkWindow(r: var): void {
+        let p = 0;
+        if (r && present && phys === "swim" && !dnd && !locked) {
+            const x1 = r[0], y1 = r[1], x2 = x1 + r[2], y2 = y1 + r[3];
+            const L = gx - bodyRx, R = gx + bodyRx, T = gy - bodyRy, B = gy + bodyRy;
+            if (Math.min(R, x2) - Math.max(L, x1) > 6 && Math.min(B, y2) - Math.max(T, y1) > 6) {
+                // cuánto ha entrado, en la dirección de la normal (desde dentro de la pantalla)
+                const pen = Math.abs(nY) >= Math.abs(nX) ? (nY >= 0 ? y2 - T : B - y1) : (nX > 0 ? x2 - L : R - x1);
+                const vis = 2 * normalRadius({
+                    nx: nX,
+                    ny: nY
+                }) - embed;
+                p = Math.max(0, Math.min(1, pen / vis));
+            }
+        }
+        press = p;
+        if (p > 0) {
+            const now = Date.now();
+            if (!underSince) {
+                underSince = now;
+                reacted("squint", 900);
+            }
+            if (!squeezing && (p > 0.45 || now - underSince > 1400))
+                squeezeOut(r);
+        } else {
+            underSince = 0;
+        }
+    }
+    function squeezeOut(r: var): void {
+        const s = nearestScreen(gx, gy), tr = track(s), m = bodyRx + 24;
+        const x1 = r[0] - m, y1 = r[1] - m, x2 = r[0] + r[2] + m, y2 = r[1] + r[3] + m;
+        let best = NaN, bestD = Infinity;
+        for (let i = 0; i < 96; i++) {
+            const d = tr.len * i / 96, p = pointAt(tr, d);
+            if (p.ny < -0.9 || inPanel(p.x, p.y, bodyRx + 40) || (p.x > x1 && p.x < x2 && p.y > y1 && p.y < y2))
+                continue;
+            const dist = Math.abs(trackDiff(tr, swimD, d));
+            if (dist < bestD) {
+                bestD = dist;
+                best = d;
+            }
+        }
+        squeezing = true;
+        squeezeDone.restart();
+        reacted("surprised", 600);
+        kicked(-1.8, 2.4);   // ¡plop! sale disparado como pasta de dientes
+        if (isNaN(best)) {
+            goNest();
+            return;
+        }
+        if (bestD > 450) {
+            dive(trackDiff(tr, swimD, best), "hidden", false, 2.2);
+        } else {
+            energy = 2.6;
+            swimTarget = best;
+        }
+        // …y luego mira mal a la ventana
+        glanceX = r[0] + r[2] / 2;
+        glanceY = r[1] + r[3] / 2;
+        afterSqueeze.restart();
+    }
+
+    // Gorro de temporada (Hats.js) o el que le pongas por IPC (`pet hat witch|santa|party|crown|none|auto`)
+    property var today: new Date()
+    property string hatChoice: "auto"
+    readonly property string hat: hatChoice === "auto" ? Hats.seasonal(today) : hatChoice === "none" ? "" : hatChoice
+
+    // Se duerme antes de que se apague/bloquee la pantalla por inactividad (el primer aviso de
+    // Caelestia: general.idle.timeouts en shell.json; por defecto, bloquear a los 180 s)
+    property int idleFirst: 180
+    FileView {
+        path: `${Quickshell.env("HOME")}/.config/caelestia/shell.json`
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                const t = (JSON.parse(text()).general?.idle?.timeouts ?? []).filter(x => x.enabled ?? true).map(x => x.timeout);
+                shell.idleFirst = t.length ? Math.min(...t) : 180;
+            } catch (e) {
+                shell.idleFirst = 180;
+            }
+        }
+    }
+    // (con música no se duerme: Caelestia tampoco apaga la pantalla)
+    IdleMonitor {
+        enabled: !Mind.player && !shell.locked
+        respectInhibitors: true
+        timeout: Math.max(30, shell.idleFirst - 60)
+        onIsIdleChanged: {
+            if (isIdle) {
+                shell.idleDrowsy = true;
+                shell.sleepTest("yawn");
+            } else {
+                shell.idleDrowsy = false;
+                shell.woke();
+            }
+        }
+    }
+    IdleMonitor {
+        enabled: !Mind.player && !shell.locked
+        respectInhibitors: true
+        timeout: Math.max(40, shell.idleFirst - 25)
+        onIsIdleChanged: if (isIdle) shell.sleepTest("doze")
+    }
+    property bool idleDrowsy: false
 
     function shapeShift(name: string, ms: int): void {
         tempShape = name;
@@ -711,6 +898,10 @@ ShellRoot {
             dnd = data.dnd;
         if (data.caffeine !== undefined)
             caffeine = data.caffeine;
+        if (data.weather !== undefined) {
+            lastWeather = data.weather;
+            setWeather(data.weather);
+        }
         // Notificación nueva (la primera lectura no cuenta: puede ser de antes)
         const id = data.notif?.id ?? "";
         const seen = name in notifSeen;
@@ -1113,9 +1304,13 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
+        if (phys !== "swim" && (nX || nY)) {
+            nX = 0;
+            nY = 0;
+        }
         // el engranaje gira; Clawd usa esto como el tiempo de su animación (patas y brazos)
         if (morph > 0.01)
-            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 || lastShape === 6 ? 1 : 0);
+            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 1 : 0);
         else
             shapeRot = 0;
         if (phys !== "nest" && (bodyOffX || bodyOffY)) {
@@ -1217,6 +1412,8 @@ ShellRoot {
             // Sigue el recorrido con suavidad (al salir del marco, al pegarse…); con forma, se
             // separa del marco lo justo para que se vea entera
             const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
+            nX = p.nx;
+            nY = p.ny;
             const lift = Math.max(0, morph) * Math.max(0, (lastShape === 2 ? 66 : 54) - normalRadius(p) + embed);   // (Clawd, con las patas enteras)
             gx += (p.x - p.nx * lift - gx) * k;
             gy += (p.y - p.ny * lift - gy) * k;
@@ -1512,6 +1709,30 @@ ShellRoot {
             const p = Mind.player;
             return p ? `${Mind.musicPlaying ? "música" : "no música"}: ${p.identity} «${p.trackTitle}» de ${p.trackArtist} ${p.metadata?.["xesam:url"] ?? ""}` : "nada";
         }
+        // Pruebas del mundo de fuera: calor (grados; 0 = el real), tiempo (código WMO y grados;
+        // código −2 = el real), una ventana encima durante ms, y el gorro
+        function heat(c: real): void {
+            shell.heatTest = c > 0 ? c : NaN;
+            shell.heatT = c > 0 ? c : Math.max(shell.cpuTemp, shell.gpuTemp);
+        }
+        function weather(code: int, c: real): void {
+            shell.weatherTest = code === -2 ? null : {
+                code: code,
+                tempC: c
+            };
+            shell.setWeather(shell.lastWeather);
+        }
+        function window(x: int, y: int, w: int, h: int, ms: int): void {
+            shell.winTest = [x, y, w, h];
+            winTestEnd.interval = ms > 0 ? ms : 2000;
+            winTestEnd.restart();
+        }
+        function hat(name: string): void {
+            shell.hatChoice = name || "auto";
+        }
+        function world(): string {
+            return `cpu ${shell.cpuTemp}° gpu ${shell.gpuTemp}° media ${shell.heatT.toFixed(1)}° derretido ${shell.melt.toFixed(2)} · tiempo ${shell.weatherCode} ${shell.weatherTemp}° lluvia ${shell.raining} nieve ${shell.snowing} (${shell.snowAmt.toFixed(2)}) frío ${shell.cold} · aplastado ${shell.press.toFixed(2)} · gorro «${shell.hat}» · reposo ${shell.idleFirst} s · ventana activa ${JSON.stringify(Hyprland.activeToplevel?.lastIpcObject?.at)} ${JSON.stringify(Hyprland.activeToplevel?.lastIpcObject?.size)} flotante ${Hyprland.activeToplevel?.lastIpcObject?.floating}`;
+        }
         // Se toma un café (lo que hace al activar la cafeína)
         function coffee(): void {
             shell.coffee();
@@ -1642,7 +1863,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && shell.melt < 0.6 && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -1688,6 +1909,119 @@ ShellRoot {
             const d = new Date();
             const e = shell.energyAt(d.getHours() + d.getMinutes() / 60);
             shell.dayEnergy = shell.caffeine ? Math.max(1.2, e) : e;
+            shell.today = d;
+        }
+    }
+
+    // Temperaturas (cada 4 s): coretemp, y la NVIDIA solo si no está dormida (no despertarla)
+    Process {
+        id: heatProc
+
+        command: ["sh", "-c", 'for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name)" = coretemp ] && echo "cpu $(cat $h/temp1_input)"; done; for d in /sys/bus/pci/devices/*; do [ "$(cat $d/vendor)" = 0x10de ] && [ "$(cat $d/class)" = 0x030000 ] && [ "$(cat $d/power/runtime_status)" = active ] && echo "gpu $(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null)000"; done']
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let cpu = 0, gpu = 0;
+                for (const l of text.split("\n")) {
+                    const [k, v] = l.split(" ");
+                    if (k === "cpu")
+                        cpu = Number(v) / 1000 || 0;
+                    else if (k === "gpu")
+                        gpu = Number(v) / 1000 || 0;
+                }
+                shell.cpuTemp = cpu;
+                shell.gpuTemp = gpu;
+                shell.heatT += (shell.heatNow - shell.heatT) * (1 - Math.exp(-4 / 20));
+            }
+        }
+    }
+    Timer {
+        running: shell.shown
+        repeat: true
+        triggeredOnStart: true
+        interval: 4000
+        onTriggered: heatProc.running = true
+    }
+
+    // Ventana activa (si es flotante) por si se le pone encima
+    Timer {
+        running: (shell.present && shell.phys === "swim" && !shell.locked) || shell.press > 0
+        repeat: true
+        interval: 140
+        onTriggered: {
+            if (shell.winTest) {
+                shell.checkWindow(shell.winTest);
+                return;
+            }
+            Hyprland.refreshToplevels();
+            const o = Hyprland.activeToplevel?.lastIpcObject;
+            shell.checkWindow(o?.floating && !o?.fullscreen && o?.at && o?.size ? [o.at[0], o.at[1], o.size[0], o.size[1]] : null);
+        }
+    }
+    Timer {
+        id: squeezeDone
+
+        interval: 1600
+        onTriggered: shell.squeezing = false
+    }
+    Timer {
+        id: afterSqueeze
+
+        interval: 900
+        onTriggered: {
+            shell.glanceUntil = Date.now() + 1600;
+            shell.reacted("confused", 1500);
+        }
+    }
+    Timer {
+        id: winTestEnd
+
+        onTriggered: shell.winTest = null
+    }
+
+    // Nieve: se le va acumulando en la cabeza (≈2 min); se sacude de vez en cuando. Si se
+    // zambulle o se esconde, se le va.
+    Timer {
+        running: shell.present || shell.snowAmt > 0
+        repeat: true
+        interval: 1000
+        onTriggered: {
+            const out = shell.phys === "swim" || shell.phys === "air" || shell.phys === "held";
+            if (shell.snowing && out && !shell.fsHide && !shell.locked && shell.nY > -0.5) {
+                shell.snowAmt = Math.min(1, shell.snowAmt + 1 / 120);
+                if (shell.snowAmt > 0.55 && shell.phys === "swim" && !shell.sipping && Math.random() < 0.025) {
+                    shell.reacted("squint", 700);
+                    jitter.restart();
+                    shell.snowAmt = 0;
+                }
+            } else if (!out) {
+                shell.snowAmt = 0;
+            } else if (!shell.snowing && shell.snowAmt > 0) {
+                shell.snowAmt = Math.max(0, shell.snowAmt - 1 / 40);   // se derrite
+            }
+        }
+    }
+
+    // Frío fuera: tirita de vez en cuando
+    Timer {
+        running: shell.cold && shell.present && !shell.dnd && !shell.locked && shell.phys === "swim" && !shell.sipping && !shell.dozing
+        repeat: true
+        interval: 8000
+        onTriggered: {
+            interval = 5000 + Math.random() * 9000;
+            shell.reacted("squint", 650);
+            jitter.restart();
+        }
+    }
+
+    // Tormenta: algún trueno le da un susto
+    Timer {
+        running: shell.storm && shell.present && !shell.dnd && !shell.locked && !shell.dozing
+        repeat: true
+        interval: 40000
+        onTriggered: {
+            interval = 25000 + Math.random() * 50000;
+            shell.reacted("surprised", 900);
+            shell.kicked(1.6, -2);
         }
     }
 
@@ -2037,9 +2371,12 @@ ShellRoot {
                         height: 2 * half
 
                         property vector2d size: Qt.vector2d(width, height)
-                        property vector4d body: Qt.vector4d(half, half, mochi.bodyRx, mochi.bodyRy)
-                        property vector4d mass: Qt.vector4d(half + mochi.massX - mochi.width / 2, half + mochi.massY - mochi.height / 2, mochi.massR, 0)
-                        property vector4d tail: Qt.vector4d(half + mochi.tailX - mochi.width / 2, half + mochi.tailY - mochi.height / 2, mochi.tailR, 0)
+                        // (desplazado hacia el marco lo que encoge al aplastarse/derretirse: sigue pegado)
+                        readonly property real cx: half + mochi.shiftX
+                        readonly property real cy: half + mochi.shiftY
+                        property vector4d body: Qt.vector4d(cx, cy, mochi.bodyRx, mochi.bodyRy)
+                        property vector4d mass: Qt.vector4d(cx + mochi.massX - mochi.width / 2, cy + mochi.massY - mochi.height / 2, mochi.massR, 0)
+                        property vector4d tail: Qt.vector4d(cx + mochi.tailX - mochi.width / 2, cy + mochi.tailY - mochi.height / 2, mochi.tailR, 0)
                         property vector4d wobA: mochi.wobA
                         property vector4d wobB: mochi.wobB
                         property vector4d frame: Qt.vector4d(shell.barW - x, shell.frame - y, win.width - shell.frame - x, win.height - shell.frame - y)
@@ -2053,10 +2390,109 @@ ShellRoot {
                         // Clawd es naranja (el de Claude)
                         property vector4d shapeTint: shell.lastShape === 2 ? Qt.vector4d(0.851, 0.467, 0.341, 1) : Qt.vector4d(0, 0, 0, 0)
                         property vector4d rainbow: Qt.vector4d(shell.rainbowAmt, shell.rainbowT, 0, 0)
-                        // bracito hasta el asa de la taza
-                        property vector4d arm: Qt.vector4d(shell.cupGeom.hx - win.modelData.x - x, shell.cupGeom.hy - win.modelData.y - y, Math.max(0, shell.cupAmt), 6)
+                        // bracito hasta el asa de la taza (o el mango del paraguas)
+                        property vector4d arm: Qt.vector4d(shell.armTip.x - win.modelData.x - x, shell.armTip.y - win.modelData.y - y, Math.max(0, shell.armTip.z), 6)
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
+                    }
+
+                    // El paraguas (lloviendo de verdad) y la lluvia a su alrededor; o copos si nieva
+                    Canvas {
+                        id: umbrella
+
+                        readonly property real t: shell.rainT
+                        readonly property var g: shell.umbGeom
+                        readonly property real amt: Math.max(0, shell.umbAmt)
+                        readonly property bool snow: shell.snowFx
+
+                        visible: mochi.visible && (amt > 0.01 || snow)
+                        width: 300
+                        height: 300
+                        x: shell.gx - win.modelData.x - width / 2
+                        y: shell.gy - win.modelData.y - 190
+                        onTChanged: requestPaint()
+                        onGChanged: requestPaint()
+
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            const ox = shell.gx - win.modelData.x - x, oy = shell.gy - win.modelData.y - y;   // Mochi en el lienzo
+                            const hx = g.hx - shell.gx + ox, hy = g.hy - shell.gy + oy, tx = g.tx - shell.gx + ox, ty = g.ty - shell.gy + oy;
+                            // Copos: bajan despacio haciendo eses (con un borde para que se vean sobre claro)
+                            if (snow) {
+                                for (let i = 0; i < 16; i++) {
+                                    const fx = (i * 0.6180339) % 1, sp = 38 + (i * 13) % 30, r = 2 + (i % 3) * 0.8;
+                                    const py = ((t * sp + i * 71) % (oy + 60)) - 20;
+                                    const px = 20 + fx * (width - 40) + 7 * Math.sin(t * 1.3 + i * 1.7);
+                                    if (Math.abs(px - ox) < shell.bodyRx * 0.85 && py > oy - shell.bodyRy)
+                                        continue;
+                                    ctx.fillStyle = "#ffffff";
+                                    ctx.strokeStyle = "rgba(110,130,165,0.55)";
+                                    ctx.lineWidth = 0.9;
+                                    ctx.beginPath();
+                                    ctx.ellipse(px - r, py - r, 2 * r, 2 * r);
+                                    ctx.fill();
+                                    ctx.stroke();
+                                }
+                            }
+                            if (amt <= 0.01)
+                                return;
+                            const W = 62 * amt, H = 30 * amt;   // semiancho y alto de la tela (se abre)
+                            // Lluvia: rayitas que caen; las que dan en la tela se quedan ahí
+                            ctx.lineCap = "round";
+                            ctx.lineWidth = 1.4;
+                            ctx.strokeStyle = `rgba(150,185,230,${(0.6 * amt).toFixed(3)})`;
+                            ctx.beginPath();
+                            for (let i = 0; i < 26; i++) {
+                                const fx = ((i * 0.6180339) % 1), sp = 520 + (i * 37) % 140;
+                                const px = 20 + fx * (width - 40), py = ((t * sp + i * 97) % (oy + 70)) - 30;
+                                const under = Math.abs(px - tx) < W && py > ty - H * (1 - Math.pow((px - tx) / W, 2)) - 4;
+                                const onBody = Math.abs(px - ox) < shell.bodyRx * 0.9 && py > oy - shell.bodyRy;
+                                if (under || onBody)
+                                    continue;
+                                ctx.moveTo(px - 1.5, py - 9);
+                                ctx.lineTo(px, py);
+                            }
+                            ctx.stroke();
+                            // Mango (de la mano a la tela) y el gancho
+                            ctx.strokeStyle = "#3b3b44";
+                            ctx.lineWidth = 2.6;
+                            ctx.beginPath();
+                            ctx.moveTo(hx, hy + 6);
+                            ctx.lineTo(tx, ty - H * 0.9);
+                            ctx.stroke();
+                            ctx.beginPath();
+                            ctx.arc(hx - shell.umbSide * 4, hy + 6, 4, 0, Math.PI, shell.umbSide < 0);
+                            ctx.stroke();
+                            // Tela: gajos azules alternos, festoneada por abajo, un poco inclinada
+                            ctx.save();
+                            ctx.translate(tx, ty);
+                            ctx.rotate(g.ang * 0.4);
+                            const n = 4;
+                            for (let i = 0; i < n; i++) {
+                                const a0 = -W + 2 * W * i / n, a1 = -W + 2 * W * (i + 1) / n;
+                                ctx.fillStyle = i % 2 ? "#4f8fe0" : "#3572c4";
+                                ctx.beginPath();
+                                ctx.moveTo(0, -H);
+                                ctx.quadraticCurveTo(a0 * 0.9, -H * 0.95, a0, 0);
+                                ctx.quadraticCurveTo((a0 + a1) / 2, -H * 0.28, a1, 0);
+                                ctx.quadraticCurveTo(a1 * 0.9, -H * 0.95, 0, -H);
+                                ctx.fill();
+                            }
+                            ctx.fillStyle = "#3b3b44";
+                            ctx.beginPath();
+                            ctx.ellipse(-2.2, -H - 5, 4.4, 6);
+                            ctx.fill();
+                            // gotas que resbalan por las puntas
+                            ctx.fillStyle = `rgba(150,185,230,${(0.8 * amt).toFixed(3)})`;
+                            for (const sgn of [-1, 1]) {
+                                const k = (t * 1.3 + (sgn > 0 ? 0.5 : 0)) % 1;
+                                ctx.beginPath();
+                                ctx.ellipse(sgn * W - 1.6, k * 40 - 1.6, 3.2, 3.8);
+                                ctx.fill();
+                            }
+                            ctx.restore();
+                        }
                     }
 
                     // La taza de café (con la misma sombra que el cuerpo)
@@ -2202,10 +2638,14 @@ ShellRoot {
 
                 visible: mochi.visible && shell.phys === "nest" && opacity > 0
                 opacity: Math.max(0, 1 - shell.nestPeek * 2.5)
+                readonly property real hatRoom: 14   // sitio para el gorro
+                readonly property string hat: shell.hat
+                onHatChanged: requestPaint()
+
                 width: 30
-                height: 28
+                height: 28 + hatRoom
                 x: shell.barW / 2 - width / 2
-                y: shell.gy - win.modelData.y - height / 2 - 2
+                y: shell.gy - win.modelData.y - (height - hatRoom) / 2 - 2 - hatRoom
 
                 onBlinkChanged: requestPaint()
                 onLxChanged: requestPaint()
@@ -2233,6 +2673,7 @@ ShellRoot {
                 onPaint: {
                     const ctx = getContext("2d");
                     ctx.reset();
+                    ctx.translate(0, hatRoom);
                     // Respira: un pelín más ancho y bajo, apoyado en la base
                     const b = breath, sx = 1 + 0.035 * b, sy = 1 - 0.045 * b;
                     ctx.save();
@@ -2280,6 +2721,12 @@ ShellRoot {
                         }
                     }
                     ctx.globalCompositeOperation = "source-over";
+                    // Gorro de temporada, en pequeñito
+                    if (hat) {
+                        ctx.translate(15, 5.2 + 1.3 * b + 1.5 * nod);
+                        ctx.rotate(nod * 0.13 * mochi.nodDir);
+                        Hats.draw(ctx, hat, 9, 0, 0);
+                    }
                 }
             }
 
@@ -2299,7 +2746,14 @@ ShellRoot {
                 hidden: shell.phys === "hidden"
                 // (en el nido, en reposo, lo que se ve es su icono en la barra; los ojos de
                 // verdad salen al asomarse)
-                drowsy: shell.caffeine ? 0 : shell.drowsy
+                drowsy: shell.caffeine ? 0 : Math.max(shell.drowsy, shell.idleDrowsy ? 0.8 : 0)
+                melt: shell.melt
+                press: shell.press
+                pressVertical: Math.abs(shell.nY) >= Math.abs(shell.nX)
+                snow: shell.snowAmt
+                hat: shell.phys === "nest" && shell.nestPeek < 0.4 ? "" : shell.hat
+                anchorNx: shell.nX
+                anchorNy: shell.nY
                 onDozingChanged: if (visible) shell.dozing = dozing
                 inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : "transparent"   // Clawd: ojos oscuros
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
@@ -2333,10 +2787,9 @@ ShellRoot {
                             mochi.startNod();
                         else if (what === "yawn")
                             mochi.yawn();
-                        else if (what === "doze") {
-                            mochi.nods = 3;
-                            mochi.startNod();
-                        } else if (what === "wake")
+                        else if (what === "doze")
+                            mochi.dozeOff();
+                        else if (what === "wake")
                             mochi.wake();
                     }
                 }
