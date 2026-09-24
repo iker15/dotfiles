@@ -520,6 +520,7 @@ Item {
             property real cardR: 0
             property real cardOn: 0
             property real baseAlpha: 1
+    property vector4d shapeTint: Qt.vector4d(0, 0, 0, 0)
 
             fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
         }

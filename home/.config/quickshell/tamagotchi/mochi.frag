@@ -4,8 +4,8 @@
 // se quedan atrás al moverlo; y todo se funde con el marco de Caelestia (barra y bordes).
 // El color sale de `edge`: el marco visto justo en la unión, a lo largo de cada lado (bg.py),
 // así que en la unión Mochi es del mismo color que el marco, píxel a píxel.
-// Puede imitar formas (engranaje, el destello de Claude, corazón, estrella, flecha): `shape`
-// mezcla el cuerpo con la silueta. En la pantalla de bloqueo se funde con la tarjeta (`card`),
+// Puede imitar formas (engranaje, Clawd —el bichito naranja de Claude Code—, corazón,
+// estrella, flecha): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da su color. En la pantalla de bloqueo se funde con la tarjeta (`card`),
 // que es translúcida: ahí solo pinta fuera de ella, repartiendo el borde para que no se note.
 // Compilar: /usr/lib/qt6/bin/qsb --glsl "100 es,120,150" --hlsl 50 --msl 12 -o mochi.frag.qsb mochi.frag
 
@@ -27,13 +27,14 @@ layout(std140, binding = 0) uniform buf {
     float blobK;     // suavizado entre las partes de Mochi
     float frameK;    // suavizado con el marco (el de Caelestia)
     float bandOnly;  // 1 = pintar solo la franja sobre el borde del marco (pasada sin sombra)
-    vec4 shape;      // forma: id (0 ninguna, 1 engranaje, 2 Claude, 3 corazón, 4 estrella, 5 flecha),
-                     //        mezcla 0-1, giro (rad), tamaño (px)
+    vec4 shape;      // forma: id (0 ninguna, 1 engranaje, 2 Clawd, 3 corazón, 4 estrella, 5 flecha),
+                     //        mezcla 0-1, giro (rad; en Clawd, el tiempo de su animación), tamaño (px)
     vec4 card;       // tarjeta del bloqueo (x, y, ancho, alto en este item)
     float cardR;     // su radio de esquina
     float cardOn;    // 1 = hay tarjeta (Mochi en otra capa: solo pinta fuera de ella)
                      // 2 = Mochi va dentro de la capa de la tarjeta: se pinta la unión entera
     float baseAlpha; // opacidad del material (la tarjeta y Mochi)
+    vec4 shapeTint;  // color de la forma (rgb) y cuánto (a); junto al marco sigue siendo marco
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
@@ -82,38 +83,26 @@ float gearR(float a) {
     return 0.76 + 0.24 * smoothstep(0.3, 0.7, 0.5 + 0.5 * cos(8.0 * a));
 }
 
-float claudeR(float a) {
-    const float n = 11.0;
-    float k = floor(a * n / 6.2831853 + 0.5);
-    float len = 0.8 + 0.2 * fract(sin(k * 12.9898 + 4.1) * 43758.5453);
-    float spike = pow(0.5 + 0.5 * cos(n * a), 7.0);
-    return 0.36 + 0.64 * spike * len;
-}
-
-// El destello de Claude: un núcleo redondo y 11 rayos gruesos de punta redondeada, de largos
-// algo distintos
-float claudeSd(vec2 p) {
-    const float n = 11.0, tau = 6.2831853;
-    float r = length(p), a = atan(p.y, p.x);
-    float k = floor(a * n / tau + 0.5);
-    float da = a - k * tau / n;                 // ángulo al rayo más cercano
-    float len = 0.92 + 0.2 * fract(sin(k * 12.9898 + 4.1) * 43758.5453);
-    vec2 q = vec2(r * cos(da), abs(r * sin(da)));
-    float ray = (q.x > len ? length(q - vec2(len, 0.0)) : q.y) - 0.13;
-    float core = r - 0.64;   // (que quepan los ojos)
-    // (con el rayo vecino, por si está más cerca)
-    float k2 = k + (da > 0.0 ? 1.0 : -1.0);
-    float da2 = a - k2 * tau / n;
-    float len2 = 0.92 + 0.2 * fract(sin(k2 * 12.9898 + 4.1) * 43758.5453);
-    vec2 q2 = vec2(r * cos(da2), abs(r * sin(da2)));
-    float ray2 = (q2.x > len2 ? length(q2 - vec2(len2, 0.0)) : q2.y) - 0.13;
-    return min(core, min(ray, ray2));
+// Clawd, el bichito de Claude Code (▐▛███▜▌ / ▝▜█████▛▘ / ▘▘ ▝▝): un bloque con los ojos,
+// una franja más ancha que son los brazos y cuatro patitas. `t` anima: patas alternas (camina
+// en el sitio) y brazos que se balancean.
+float clawdSd(vec2 p, float t) {
+    p.y += 0.16;   // (los ojos de Mochi quedan en medio de la cabeza)
+    float body = sdBox(p - vec2(0.0, 0.2), vec2(0.8, 0.36));
+    float arms = sdBox(p - vec2(0.0, -0.26 + 0.035 * sin(t * 4.0)), vec2(1.08, 0.16));
+    float d = min(body, arms);
+    for (int i = 0; i < 4; i++) {
+        float x = (i < 2 ? -1.0 : 1.0) * (i == 0 || i == 3 ? 0.58 : 0.3);
+        float lift = 0.09 * max(0.0, sin(t * 8.0 + (i == 0 || i == 2 ? 0.0 : 3.1416)));
+        d = min(d, sdBox(p - vec2(x, -0.55 + lift), vec2(0.075, 0.15)));
+    }
+    return d - 0.035;
 }
 
 float polarSd(vec2 p, float id) {
     float r = length(p), a = atan(p.y, p.x), e = 0.004;
-    float f = id < 1.5 ? gearR(a) : claudeR(a);
-    float df = ((id < 1.5 ? gearR(a + e) : claudeR(a + e)) - (id < 1.5 ? gearR(a - e) : claudeR(a - e))) / (2.0 * e);
+    float f = gearR(a);
+    float df = (gearR(a + e) - gearR(a - e)) / (2.0 * e);
     return (r - f) / sqrt(1.0 + (df / max(r, 0.05)) * (df / max(r, 0.05)));
 }
 
@@ -135,7 +124,7 @@ float shapeSd(vec2 q) {
     if (id < 1.5)
         d = polarSd(p, id);
     else if (id < 2.5)
-        d = claudeSd(p);
+        d = clawdSd(vec2(q.x, -q.y) / shape.w, shape.z);   // (sin girar: z es su tiempo)
     else if (id < 3.5)
         d = sdHeart(p * 0.84 + vec2(0.0, 0.72)) / 0.84;   // (los ojos, en los lóbulos)
     else if (id < 4.5)
@@ -209,5 +198,9 @@ void main() {
         col = (edgeAt(s.x, 0.0) * w.x + edgeAt(s.y, 1.0) * w.y + edgeAt(s.x, 2.0) * w.z + edgeAt(s.y, 3.0) * w.w)
             / (w.x + w.y + w.z + w.w);
     }
+    // Color de la forma (p. ej. el naranja de Clawd), salvo junto al marco: ahí sigue siendo
+    // marco, como si el material se transformara en él
+    if (shapeTint.a > 0.0 && shape.y > 0.0)
+        col = mix(col, shapeTint.rgb, shapeTint.a * clamp(shape.y, 0.0, 1.0) * smoothstep(4.0, 22.0, inside));
     fragColor = vec4(col, 1.0) * alpha * qt_Opacity;
 }

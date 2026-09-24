@@ -19,7 +19,6 @@ Singleton {
     signal glance(real x, real y)           // mirar hacia un punto de la pantalla
     signal dance(int ms)
     signal shape(string name, int ms)       // imitar una forma con el cuerpo
-    signal youtube()                        // empiezas a ver un vídeo de YouTube
     signal coding()                         // estás escribiendo código en VSCodium
 
     // Música
@@ -44,7 +43,6 @@ Singleton {
     // vez, para reaccionar solo al pasar de una cosa a otra
     property var wasClaude: ({})     // dirección → la terminal tenía Claude Code
     property var wasDirty: ({})      // dirección → VSCodium con cambios sin guardar
-    property string lastVideo: ""
     property real codingUntil: 0     // (para no repetirlo a cada rato)
 
     // Claude Code pone en la terminal su símbolo delante del título (✳, ◑, ⠂…)
@@ -54,11 +52,6 @@ Singleton {
     function isCodium(t: string): bool {
         return /(VSCodium|Visual Studio Code)$/.test(t);
     }
-    // "(3) Título del vídeo - YouTube — Zen Browser" → "Título del vídeo" (la portada no cuenta)
-    function youtubeVideo(t: string): string {
-        const m = t.match(/^(?:\(\d+\)\s*)?(.+?) - YouTube(?: — .*)?$/);
-        return m ? m[1] : "";
-    }
 
     function onTitle(addr: string, title: string): void {
         // Abres Claude en una terminal: se convierte en su destello un momento
@@ -66,12 +59,6 @@ Singleton {
         if (addr in wasClaude && claude && !wasClaude[addr])
             shape("claude", 3200);
         wasClaude[addr] = claude;
-        // YouTube: vídeo nuevo → ojos de YouTube un momento
-        const video = youtubeVideo(title);
-        if (video && video !== lastVideo) {
-            lastVideo = video;
-            youtube();
-        }
         // VSCodium: pasa a tener cambios sin guardar (estás escribiendo)
         if (isCodium(title)) {
             const dirty = title.startsWith("●");
@@ -90,9 +77,6 @@ Singleton {
             wasClaude[addr] = isClaudeTitle(title);
             if (isCodium(title))
                 wasDirty[addr] = title.startsWith("●");
-            const v = youtubeVideo(title);
-            if (v)
-                lastVideo = v;
         }
     }
 

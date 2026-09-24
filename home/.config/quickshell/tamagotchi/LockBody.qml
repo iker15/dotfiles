@@ -36,6 +36,7 @@ ShaderEffect {
     property real cardR: cardItem.radius
     property real cardOn: 2      // se pinta la unión entera (misma capa)
     property real baseAlpha: 1
+    property vector4d shapeTint: Qt.vector4d(0, 0, 0, 0)
 
     fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
 }

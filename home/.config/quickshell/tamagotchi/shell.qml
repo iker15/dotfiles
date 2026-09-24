@@ -96,7 +96,7 @@ ShellRoot {
     property real bodyOffY: 0
 
     // Formas que imita con el cuerpo (ver mochi.frag): un rato (tempShape) o mientras Claude
-    // trabaja (su destello, girando). Al tomar forma se separa del marco lo justo para verse entera.
+    // trabaja ("claude" = Clawd, el bichito naranja de Claude Code, caminando en el sitio). Al tomar forma se separa del marco lo justo para verse entera.
     property string tempShape: ""
     readonly property string shapeName: (phys === "swim" || phys === "air" || phys === "held") && present ? (tempShape || (Brain.busy ? "claude" : "")) : ""
     readonly property int shapeId: ({
@@ -187,7 +187,6 @@ ShellRoot {
     signal kicked(real ax, real ay)
     signal woke()                     // cualquier uso: se le quita el sueño
     signal sleepTest(string what)
-    signal ytEyes()                   // ojos de YouTube un momento
 
     // Escribiendo código en VSCodium: la forma que imita (la está pensando Iker; mientras
     // tanto, solo pone ojos de concentrado)
@@ -952,9 +951,9 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
-        // el engranaje gira; el destello de Claude, despacio
+        // el engranaje gira; Clawd usa esto como el tiempo de su animación (patas y brazos)
         if (morph > 0.01)
-            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 0.45 : 0);
+            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 1 : 0);
         else
             shapeRot = 0;
         if (phys !== "nest" && (bodyOffX || bodyOffY)) {
@@ -1056,7 +1055,7 @@ ShellRoot {
             // Sigue el recorrido con suavidad (al salir del marco, al pegarse…); con forma, se
             // separa del marco lo justo para que se vea entera
             const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
-            const lift = Math.max(0, morph) * Math.max(0, 50 - normalRadius(p) + embed);
+            const lift = Math.max(0, morph) * Math.max(0, (lastShape === 2 ? 66 : 54) - normalRadius(p) + embed);   // (Clawd, con las patas enteras)
             gx += (p.x - p.nx * lift - gx) * k;
             gy += (p.y - p.ny * lift - gy) * k;
             return;
@@ -1198,10 +1197,6 @@ ShellRoot {
         function onShape(name: string, ms: int): void {
             if (shell.present && !shell.asking && !shell.dragging && shell.phys === "swim")
                 shell.shapeShift(name, ms);
-        }
-        function onYoutube(): void {
-            if (shell.present && !shell.asking && !shell.dragging && !Brain.busy && shell.phys !== "dive" && shell.phys !== "hidden")
-                shell.ytEyes();
         }
         function onCoding(): void {
             if (!shell.present || shell.asking || shell.dragging || Brain.busy)
@@ -1345,10 +1340,6 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
-        }
-        // Probar los ojos de YouTube
-        function youtube(): void {
-            shell.ytEyes();
         }
         // Imitar una forma: gear | claude | heart | star | arrow (ms, 0 = 2,5 s)
         function shape(name: string, ms: int): void {
@@ -1703,6 +1694,8 @@ ShellRoot {
                         property real frameK: shell.frameSmoothing
                         property real bandOnly: 0
                         property vector4d shape: Qt.vector4d(shell.lastShape, Math.max(0, shell.morph), shell.shapeRot, 44)
+                        // Clawd es naranja (el de Claude)
+                        property vector4d shapeTint: shell.lastShape === 2 ? Qt.vector4d(0.851, 0.467, 0.341, 1) : Qt.vector4d(0, 0, 0, 0)
                         property vector4d card: Qt.vector4d(0, 0, 0, 0)
                         property real cardR: 0
                         property real cardOn: 0
@@ -1736,6 +1729,7 @@ ShellRoot {
                 property real frameK: bodyFx.frameK
                 property real bandOnly: 1
                 property vector4d shape: bodyFx.shape
+                property vector4d shapeTint: bodyFx.shapeTint
                 property vector4d card: bodyFx.card
                 property real cardR: 0
                 property real cardOn: 0
@@ -1757,8 +1751,6 @@ ShellRoot {
                 readonly property bool asleep: mochi.dozing || (shell.drowsy > 0.8 && !shell.cursorNear)
                 readonly property real nod: mochi.nod
                 onNodChanged: requestPaint()
-                readonly property real yt: mochi.yt
-                onYtChanged: requestPaint()
                 onAsleepChanged: requestPaint()
                 readonly property color ink: Theme.secondary
                 property real breath: 0
@@ -1820,23 +1812,7 @@ ShellRoot {
                     const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
                     for (const cx of [11, 19]) {
                         const x = cx + ex, y = 14 + ey;
-                        if (yt > 0.01) {
-                            // ojos de YouTube: rojos con su "play"
-                            ctx.globalCompositeOperation = "source-over";
-                            const w = 3.5 + 2.6 * yt, h = 4.7 + 0.3 * yt;
-                            ctx.fillStyle = Qt.rgba(1, 0, 0.2, Math.min(1, yt * 1.4));
-                            ctx.beginPath();
-                            ctx.roundedRect(x - w / 2, y - h / 2, w, h, 1.3, 1.3);
-                            ctx.fill();
-                            ctx.fillStyle = Qt.rgba(1, 1, 1, yt);
-                            ctx.beginPath();
-                            ctx.moveTo(x - 0.9, y - 1.3);
-                            ctx.lineTo(x + 1.4, y);
-                            ctx.lineTo(x - 0.9, y + 1.3);
-                            ctx.closePath();
-                            ctx.fill();
-                            ctx.globalCompositeOperation = "destination-out";
-                        } else if (asleep) {
+                        if (asleep) {
                             // dormido: rayitas
                             ctx.fillStyle = "black";
                             ctx.beginPath();
@@ -1880,6 +1856,7 @@ ShellRoot {
                 // verdad salen al asomarse)
                 drowsy: shell.drowsy
                 onDozingChanged: if (visible) shell.dozing = dozing
+                inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : "transparent"   // Clawd: ojos oscuros
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
@@ -1905,9 +1882,6 @@ ShellRoot {
                     }
                     function onWoke(): void {
                         mochi.wake();
-                    }
-                    function onYtEyes(): void {
-                        mochi.youtube();
                     }
                     function onSleepTest(what: string): void {
                         if (what === "nod")

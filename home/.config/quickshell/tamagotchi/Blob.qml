@@ -26,7 +26,8 @@ Item {
     // Color del cuerpo (el del marco) y ojos que contrasten con él
     property color bodyColor: "#1c1b1b"   // (sin singletons: también lo usa LockPet.qml)
     readonly property real bodyLum: 0.299 * bodyColor.r + 0.587 * bodyColor.g + 0.114 * bodyColor.b
-    property color ink: bodyLum > 0.55 ? "#1c1b1b" : "#f4f1f0"
+    property color inkOverride: "transparent"   // p. ej. imitando a Clawd: ojos oscuros siempre
+    property color ink: inkOverride.a > 0 ? inkOverride : bodyLum > 0.55 ? "#1c1b1b" : "#f4f1f0"
 
     Behavior on ink {
         ColorAnimation {
@@ -45,9 +46,6 @@ Item {
     property real nodDir: 1
     property int nods: 0             // cabezadas seguidas
     property bool dozing: false
-    // Ojos de YouTube (0 = normales, 1 = cada ojo es el logo) y el latido del "play"
-    property real yt: 0
-    property real ytBeat: 0
     property bool eyesOff: false   // buceando: los ojos se quedan bajo el marco
     // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
     property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
@@ -162,14 +160,6 @@ Item {
         sim.svy += 2.8;
         sim.svx -= 1.2;
         wakeYawn.restart();
-    }
-
-    // Empiezas a ver YouTube: los ojos se le vuelven el logo un momento
-    function youtube(): void {
-        wake();
-        ytAnim.restart();
-        sim.svy += 2.6;   // respingo
-        sim.svx -= 1.2;
     }
 
     function yawn(): void {
@@ -635,51 +625,7 @@ Item {
             }
         }
 
-        // Un ojo convertido en el logo de YouTube: rectángulo rojo redondeado y "play" blanco
-        function drawYt(ctx: var, x: real, y: real, e: var): void {
-            const d = 9.5 * root.u, k = root.yt;
-            const ew = d * e.w, eh = d * e.h;
-            const w = ew + (d * 1.55 - ew) * k, h = eh + (d * 1.1 - eh) * k;
-            const r = Math.min(w, h) * (0.5 - 0.22 * k);
-            ctx.fillStyle = Qt.tint(root.ink, Qt.rgba(1, 0, 0.2, Math.min(1, k * 1.4)));
-            ctx.beginPath();
-            ctx.roundedRect(x - w / 2, y - h / 2, w, h, r, r);
-            ctx.fill();
-            // triángulo del play, latiendo
-            const beat = 1 + 0.16 * Math.max(0, Math.sin(root.ytBeat * Math.PI * 2));
-            const ts = h * 0.24 * beat * Math.min(1, k * 1.3);
-            ctx.fillStyle = Qt.rgba(1, 1, 1, Math.min(1, k * 1.5));
-            ctx.beginPath();
-            ctx.moveTo(x - ts * 0.75, y - ts);
-            ctx.lineTo(x + ts * 1.05, y);
-            ctx.lineTo(x - ts * 0.75, y + ts);
-            ctx.closePath();
-            ctx.fill();
-            // brillo que cruza (una vez)
-            const sweep = root.ytBeat - 1.2;
-            if (sweep > 0 && sweep < 1) {
-                const sx = x - w / 2 + (w + h) * sweep - h / 2;
-                ctx.save();
-                ctx.beginPath();
-                ctx.roundedRect(x - w / 2, y - h / 2, w, h, r, r);
-                ctx.clip();
-                ctx.fillStyle = Qt.rgba(1, 1, 1, 0.35);
-                ctx.beginPath();
-                ctx.moveTo(sx, y + h / 2);
-                ctx.lineTo(sx + h * 0.35, y + h / 2);
-                ctx.lineTo(sx + h * 0.35 + h * 0.5, y - h / 2);
-                ctx.lineTo(sx + h * 0.5, y - h / 2);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
-            }
-        }
-
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
-            if (root.yt > 0.01) {
-                drawYt(ctx, x, y, e);
-                return;
-            }
             const d = 9.5 * root.u;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
@@ -803,39 +749,6 @@ Item {
                 clearIdle.interval = pick === "wink" ? 500 : pick === "roll" ? 1250 : pick === "lookaround" ? 1500 : pick === "dance" ? 4000 : 1700;
                 clearIdle.restart();
             }
-        }
-    }
-
-    SequentialAnimation {
-        id: ytAnim
-
-        NumberAnimation {
-            target: root
-            property: "yt"
-            to: 1
-            duration: 320
-            easing.type: Easing.OutBack
-            easing.overshoot: 2.2
-        }
-        // le da al play: el triángulo late y pasa un brillo
-        NumberAnimation {
-            target: root
-            property: "ytBeat"
-            from: 0
-            to: 3
-            duration: 1500
-        }
-        NumberAnimation {
-            target: root
-            property: "yt"
-            to: 0
-            duration: 260
-            easing.type: Easing.InBack
-        }
-        PropertyAction {
-            target: root
-            property: "ytBeat"
-            value: 0
         }
     }
 
