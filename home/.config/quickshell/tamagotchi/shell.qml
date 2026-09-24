@@ -215,7 +215,7 @@ ShellRoot {
     property real heatT: 50
     property real heatTest: NaN      // (IPC `pet heat <grados>`, 0 = quitar)
     readonly property real heatNow: isNaN(heatTest) ? Math.max(cpuTemp, gpuTemp) : heatTest
-    property real melt: Math.max(Math.max(0, Math.min(1, (heatT - 72) / 20)), (isNaN(weatherTemp) ? 0 : 0.5 * Math.max(0, Math.min(1, (weatherTemp - 30) / 10))))
+    property real melt: Math.max(meltExtra, Math.max(0, Math.min(1, (heatT - 72) / 20)), (isNaN(weatherTemp) ? 0 : 0.5 * Math.max(0, Math.min(1, (weatherTemp - 30) / 10))))
     Behavior on melt {
         NumberAnimation {
             duration: 2500
@@ -462,7 +462,7 @@ ShellRoot {
             sulky: "enfurruñado contigo",
             hot: "derritiéndose de calor",
             sleepy: "con sueño",
-            curious: "viendo un vídeo contigo",
+            curious: watchingGame ? "viéndote jugar" : "viendo un vídeo contigo",
             excited: "a tope de café",
             happy: "bailando",
             love: "muy contento contigo",
@@ -543,9 +543,10 @@ ShellRoot {
     Component.onDestruction: {}
 
     // ── Minecraft (integrations/minecraft/mc-watch.py sigue el log mientras juegas) ──
-    // Mueres → susto y pena; logro → se emociona y da un salto; matas a alguien → orgulloso; te
-    // nombran en el chat → curioso. Si el juego está a pantalla completa (Mochi escondido),
-    // asoma un momento por la esquina de abajo con esa cara.
+    // Qué hace con cada cosa (muertes según cómo, logros, chat, jugadores…) lo dicen las reglas
+    // de integrations/minecraft/reacciones.jsonc. Si el juego está a pantalla completa (Mochi
+    // escondido), asoma un momento por la esquina de abajo con esa cara. Y mientras juegas en
+    // ventana, se pone debajo a verte jugar (como con los vídeos).
     property string peekFace: ""
     property real peekAmt: 0
     Behavior on peekAmt {
@@ -554,51 +555,90 @@ ShellRoot {
             easing.type: Easing.OutBack
         }
     }
+    // Una reacción (de integrations/minecraft/reacciones.jsonc): cara, cosas que hace y, si la
+    // regla lo pide, una frase
     function gameEvent(ev: var, forcePeek: bool): void {
         if (locked || dnd)
             return;
-        const faces = {
-            join: ["happy", 1400],
-            death: ["sad", 2600],
-            advancement: ["excited", 2400],
-            kill: ["proud", 2000],
-            mention: ["curious", 1800]
-        };
-        const f = faces[ev.ev];
-        if (!f)
+        if (ev.ev === "error") {
+            console.warn("mochi minecraft:", ev.text);
             return;
+        }
+        const face = ev.cara || "", ms = ev.ms || 2000, todo = ev.hacer ?? [];
         if (fsHide || !present || forcePeek) {
-            peekFace = f[0];
+            if (!face)
+                return;
+            peekFace = face;
             peekAmt = 1;
-            peekHide.interval = f[1] + 400;
+            peekHide.interval = ms + 400;
             peekHide.restart();
             return;
         }
-        if (ev.ev === "death") {
+        // un susto primero (y luego la cara)
+        if (todo.includes("susto")) {
             reacted("surprised", 450);
-            deathSad.restart();
             kicked(1.8, -2.2);
-        } else {
-            reacted(f[0], f[1]);
-            kicked(-1.4, 2.4);
-            if (ev.ev === "advancement" && phys === "swim") {
-                hopsLeft = 1;
-                hop();
+            if (face) {
+                laterFace.face = face;
+                laterFace.ms = ms;
+                laterFace.restart();
+            }
+        } else if (face) {
+            reacted(face, ms);
+        }
+        for (const a of todo) {
+            if (a === "salto" || a === "saltos") {
+                if (phys === "swim") {
+                    hopsLeft = a === "saltos" ? 3 : 1;
+                    hop();
+                } else {
+                    kicked(-1.4, 2.4);
+                }
+            } else if (a === "aplastar") {
+                kicked(2.4, -2.8);
+                splatted(900, false);
+            } else if (a === "estirar") {
+                kicked(-1.8, 2.8);
+            } else if (a === "arcoiris") {
+                rainbow(Math.max(ms, 3000));
+            } else if (a === "baile") {
+                reacted("dance", Math.max(ms, 3000));
+            } else if (a === "derretir") {
+                meltExtra = 0.75;
+                meltExtraEnd.interval = Math.max(ms, 4000);
+                meltExtraEnd.restart();
+            } else if (a === "tiritar") {
+                jitter.restart();
+            } else if (a === "corazon" || a === "estrella") {
+                if (phys === "swim")
+                    shapeShift(a === "corazon" ? "heart" : "star", Math.max(ms, 2000));
+            } else if (a === "mirar") {
+                const o = Hyprland.activeToplevel?.lastIpcObject;
+                if (o?.at) {
+                    glanceX = o.at[0] + o.size[0] / 2;
+                    glanceY = o.at[1] + o.size[1] / 2;
+                    glanceUntil = Date.now() + 1600;
+                }
             }
         }
-        // mira hacia el juego
-        const o = Hyprland.activeToplevel?.lastIpcObject;
-        if (o?.at) {
-            glanceX = o.at[0] + o.size[0] / 2;
-            glanceY = o.at[1] + o.size[1] / 2;
-            glanceUntil = Date.now() + 1500;
-        }
+        if (ev.decir)
+            Mind.say(ev.decir, face || "happy");
+    }
+    // Derretirse un rato (morir en lava, entrar al Nether…), aparte del calor de verdad
+    property real meltExtra: 0
+    Timer {
+        id: meltExtraEnd
+
+        onTriggered: shell.meltExtra = 0
     }
     Timer {
-        id: deathSad
+        id: laterFace
+
+        property string face
+        property int ms
 
         interval: 450
-        onTriggered: shell.reacted("sad", 2400)
+        onTriggered: shell.reacted(face, ms)
     }
     Timer {
         id: peekHide
@@ -643,6 +683,8 @@ ShellRoot {
     }
     // La ventana del navegador con esa pestaña delante (su título lleva el del vídeo)
     property var videoTest: null   // (IPC `pet watchTest <ms>`: finge un vídeo en la ventana activa)
+    property bool watchingGame: false
+    readonly property bool gameActive: /minecraft/i.test(Hyprland.activeToplevel?.lastIpcObject?.class ?? "")
     // Lo que cuenta la extensión de Zen (integrations/zen): dónde está el vídeo de verdad, si va,
     // si es un anuncio y los momentos más vistos (YouTube)
     property var browserVideo: null
@@ -678,6 +720,13 @@ ShellRoot {
         videoExact = br !== null;
         if (br)
             return br;
+        // jugando a Minecraft (ventana activa en su workspace, sin pantalla completa): te mira jugar
+        const g = Hyprland.activeToplevel, go = g?.lastIpcObject;
+        watchingGame = !!go?.at && /minecraft/i.test(go.class ?? "") && g.workspace?.id === mochiWs && !go.fullscreen;
+        if (watchingGame) {
+            videoExact = true;
+            return [go.at[0], go.at[1], go.size[0], go.size[1]];
+        }
         const p = Mind.player;
         if (!p || Mind.musicPlaying || !isVideo(p) || !p.trackTitle)
             return null;
@@ -779,7 +828,9 @@ ShellRoot {
         if (!watching || !videoRect || phys !== "swim")
             return;
         const c = videoCenter(videoRect), s = nearestScreen(c.x, c.y), tr = track(s);
-        const x = Math.max(tr.L + tr.c, Math.min(tr.R - tr.c, c.x + (c.x > s.x + s.width / 2 ? -1 : 1) * 60));
+        // (en un juego, bien a un lado: en el centro de abajo está la barra de objetos)
+        const aside = watchingGame ? videoRect[2] * 0.36 : 60;
+        const x = Math.max(tr.L + tr.c, Math.min(tr.R - tr.c, c.x + (c.x > s.x + s.width / 2 ? -1 : 1) * aside));
         const d = nearestD(tr, x, tr.B);
         const dist = trackDiff(tr, swimD, d);
         if (Math.abs(dist) > 900)
@@ -813,7 +864,7 @@ ShellRoot {
         onTriggered: shell.goWatch()
     }
     Timer {
-        running: Mind.player !== null || shell.watching || shell.videoTest !== null || shell.browserVideo?.type === "video"
+        running: Mind.player !== null || shell.watching || shell.videoTest !== null || shell.browserVideo?.type === "video" || shell.gameActive
         repeat: true
         interval: 700
         onTriggered: shell.watchStep()
@@ -831,7 +882,7 @@ ShellRoot {
                 shell.focusUntil = 0;
                 shell.reacted(Bond.level > 0.6 ? "happy" : "curious", 1400);
             } else {
-                const faces = ["surprised", "happy", "curious", "excited", "confused"];
+                const faces = shell.watchingGame ? ["focused", "curious", "happy", "surprised"] : ["surprised", "happy", "curious", "excited", "confused"];
                 if (Bond.level > 0.6)
                     faces.push("love");
                 shell.reacted(faces[Math.floor(Math.random() * faces.length)], 1300);
@@ -2207,8 +2258,21 @@ ShellRoot {
         }
         // Prueba de un evento de juego: join | death | advancement | kill | mention
         function game(ev: string, peek: bool): void {
+            const faces = {
+                entrar: ["happy", ["salto", "mirar"]],
+                muerte: ["sad", ["susto"]],
+                lava: ["sad", ["susto", "derretir"]],
+                logro: ["excited", ["salto"]],
+                diamantes: ["excited", ["saltos", "estrella"]],
+                reto: ["love", ["saltos", "arcoiris"]],
+                matar: ["proud", ["estirar"]],
+                mencion: ["curious", ["mirar"]]
+            }[ev] ?? ["happy", []];
             shell.gameEvent({
-                ev: ev
+                ev: ev,
+                cara: faces[0],
+                ms: 2400,
+                hacer: faces[1]
             }, peek);
         }
         function heart(): void {

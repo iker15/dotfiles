@@ -1,0 +1,75 @@
+// Reacciones de Mochi a lo que pasa en Minecraft (lo lee mc-watch.py del log del juego).
+// Edítalo cuando quieras: los cambios se aplican solos, sin reiniciar nada.
+//
+// Cada regla:
+//   "si":        qué tipo de cosa pasa (ver abajo)
+//   "texto":     (opcional) expresión regular que tiene que aparecer en el texto del evento
+//                (sin distinguir mayúsculas; {yo} = tu nombre en el juego; {jugador} = cualquier
+//                otro jugador que haya visto en el servidor)
+//   "cara":      cómo pone los ojos: happy, love, excited, proud, curious, surprised, sad,
+//                sorry, confused, dizzy, squint, sleepy, playful, calm, dance, roll, focused
+//   "ms":        cuánto dura la cara (milisegundos)
+//   "hacer":     (opcional) lista de cosas que hace:
+//                  salto, saltos (tres), aplastar, estirar, arcoiris, baile, mirar (al juego),
+//                  derretir (como con calor), tiritar, susto, corazon, estrella
+//   "decir":     (opcional) frase en su bocadillo (ojo: Mochi normalmente no habla solo)
+//   "seguir":    (opcional) true = mirar también las reglas de después
+// Se usa la PRIMERA regla que encaja con cada evento.
+//
+// Tipos de "si":
+//   entrar        entras en un mundo o servidor
+//   salir         cierras el juego
+//   muerte        te mueres (texto = el mensaje de muerte, en inglés: "was blown up by Creeper"…)
+//   matar         matas a otro jugador (texto = el mensaje)
+//   logro         consigues un logro normal (texto = su nombre en inglés: "Diamonds!", …)
+//   reto          completas un reto (logro morado)
+//   objetivo      alcanzas un objetivo
+//   mencion       alguien te nombra en el chat (texto = su mensaje)
+//   chat          alguien escribe en el chat (texto = su mensaje)
+//   mio           escribes tú en el chat (texto = tu mensaje)
+//   conecta       otro jugador entra al servidor (texto = su nombre)
+//   desconecta    otro jugador se va (texto = su nombre)
+//   otro-muere    muere otro jugador (texto = el mensaje)
+//   linea         cualquier línea del log (texto = la línea entera): para lo que no está arriba
+{
+    "reglas": [
+        // ── Muertes, según cómo ──
+        { "si": "muerte", "texto": "blew up|blown up|explosion|fireballed|went off with a bang", "cara": "dizzy", "ms": 2600, "hacer": ["susto", "aplastar"] },
+        { "si": "muerte", "texto": "lava|burn|flames|fire|to a crisp|fireball|magma|floor was lava", "cara": "sad", "ms": 3000, "hacer": ["susto", "derretir"] },
+        { "si": "muerte", "texto": "drown", "cara": "sorry", "ms": 2600, "hacer": ["susto"] },
+        { "si": "muerte", "texto": "fell|hit the ground|doomed to fall|squashed|squished", "cara": "squint", "ms": 1600, "hacer": ["aplastar"] },
+        { "si": "muerte", "texto": "froze", "cara": "sad", "ms": 2600, "hacer": ["tiritar"] },
+        { "si": "muerte", "texto": "starved", "cara": "sorry", "ms": 2600 },
+        { "si": "muerte", "texto": "by {jugador}", "cara": "confused", "ms": 2400, "hacer": ["susto", "mirar"] },
+        { "si": "muerte", "cara": "sad", "ms": 2600, "hacer": ["susto"] },
+
+        // ── Logros especiales ──
+        { "si": "logro", "texto": "^Diamonds!$", "cara": "excited", "ms": 2600, "hacer": ["saltos", "estrella"] },
+        { "si": "logro", "texto": "We Need to Go Deeper", "cara": "surprised", "ms": 2000, "hacer": ["derretir"] },
+        { "si": "logro", "texto": "^The End\\?$|Into the End", "cara": "curious", "ms": 2600, "hacer": ["mirar"] },
+        { "si": "logro", "texto": "Free the End", "cara": "love", "ms": 4000, "hacer": ["saltos", "arcoiris"] },
+        { "si": "logro", "texto": "Acquire Hardware|Suit Up|Hot Stuff", "cara": "proud", "ms": 2200, "hacer": ["estirar"] },
+        { "si": "logro", "texto": "Sweet Dreams", "cara": "sleepy", "ms": 2600 },
+        { "si": "logro", "texto": "Best Friends Forever|The Parrots and the Bats|Two by Two", "cara": "love", "ms": 2600, "hacer": ["corazon"] },
+        { "si": "logro", "cara": "excited", "ms": 2200, "hacer": ["salto"] },
+        { "si": "reto", "cara": "love", "ms": 3500, "hacer": ["saltos", "arcoiris"] },
+        { "si": "objetivo", "cara": "proud", "ms": 3000, "hacer": ["saltos", "estrella"] },
+
+        // ── Otros jugadores ──
+        { "si": "matar", "cara": "proud", "ms": 2200, "hacer": ["estirar"] },
+        { "si": "otro-muere", "cara": "surprised", "ms": 1200 },
+        { "si": "conecta", "cara": "happy", "ms": 1600, "hacer": ["mirar"] },
+        { "si": "desconecta", "cara": "sorry", "ms": 1600 },
+
+        // ── Chat ──
+        { "si": "mencion", "cara": "curious", "ms": 2000, "hacer": ["mirar"] },
+        { "si": "chat", "texto": "\\bgg\\b|\\bggs\\b", "cara": "happy", "ms": 1800, "hacer": ["salto"] },
+        { "si": "chat", "texto": "jaja|jeje|\\bxd+\\b|\\blol\\b|\\blmao\\b|😂", "cara": "happy", "ms": 1400 },
+        { "si": "chat", "texto": "mochi", "cara": "love", "ms": 2200, "hacer": ["corazon"] },
+        { "si": "mio", "texto": "mochi", "cara": "love", "ms": 2200, "hacer": ["estirar"] },
+
+        // ── Entrar y salir ──
+        { "si": "entrar", "cara": "happy", "ms": 1800, "hacer": ["salto", "mirar"] },
+        { "si": "salir", "cara": "calm", "ms": 1500 }
+    ]
+}
