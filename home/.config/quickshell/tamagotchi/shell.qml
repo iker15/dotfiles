@@ -7,6 +7,7 @@ import Quickshell.Hyprland
 import Quickshell.Wayland
 import Caelestia.Config
 import "Hats.js" as Hats
+import "Draw.js" as Draw
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
@@ -450,6 +451,186 @@ ShellRoot {
         onTriggered: if (!awayMonitor.isIdle && shell.present && !shell.dnd) Bond.gain("presence")
     }
 
+    // ── Para las integraciones (fastfetch, dashboard, Zen, VSCodium) ──
+    // Cómo está, en resumen: una cara y una frase. Se publica en $XDG_RUNTIME_DIR/mochi-state.json
+    // y su retrato en ~/.cache/mochi/avatar.png (solo cuando cambia).
+    readonly property string feeling: dnd || dozing ? "asleep" : Bond.sulky ? "sulky" : melt > 0.4 ? "hot" : (drowsy > 0.6 || idleDrowsy) && !caffeine ? "sleepy" : watching ? "curious" : caffeine ? "excited" : Mind.musicPlaying ? "happy" : Bond.level > 0.75 ? "love" : "normal"
+    readonly property string feelingText: {
+        const parts = [];
+        parts.push({
+            asleep: "durmiendo",
+            sulky: "enfurruñado contigo",
+            hot: "derritiéndose de calor",
+            sleepy: "con sueño",
+            curious: "viendo un vídeo contigo",
+            excited: "a tope de café",
+            happy: "bailando",
+            love: "muy contento contigo",
+            normal: "tranquilo"
+        }[feeling]);
+        if (raining)
+            parts.push("con paraguas");
+        else if (snowing)
+            parts.push("cogiendo nieve");
+        else if (cold)
+            parts.push("tiritando");
+        return parts.join(", ");
+    }
+    function hex(c: color): string {
+        const h = v => Math.round(v * 255).toString(16).padStart(2, "0");
+        return "#" + h(c.r) + h(c.g) + h(c.b);
+    }
+    readonly property string avatarBody: hex(frameColor)
+    readonly property string avatarInk: 0.299 * frameColor.r + 0.587 * frameColor.g + 0.114 * frameColor.b > 0.55 ? "#1c1b1b" : "#f4f1f0"
+    readonly property string stateJson: JSON.stringify({
+        feeling: feeling,
+        text: feelingText,
+        bond: Math.round(Bond.bond),
+        sulky: Bond.sulky,
+        hat: hat,
+        body: avatarBody,
+        ink: avatarInk,
+        melt: Math.round(melt * 100) / 100,
+        snow: Math.round(snowAmt * 10) / 10,
+        raining: raining,
+        caffeine: caffeine,
+        watching: watching,
+        music: Mind.musicPlaying,
+        dnd: dnd,
+        cpu: Math.round(heatT),
+        outside: isNaN(weatherTemp) ? null : Math.round(weatherTemp),
+        energy: Math.round(dayEnergy * 100) / 100,
+        drowsy: Math.round(drowsy * 100) / 100,
+        where: phys,
+        nextHat: nextHat
+    })
+    // El próximo gorro (para el dashboard): cuál y cuándo
+    readonly property string nextHat: {
+        const d = new Date(today);
+        for (let i = 1; i < 400; i++) {
+            d.setDate(d.getDate() + 1);
+            const h = Hats.seasonal(d);
+            if (h && h !== hat)
+                return `${h}|${d.toISOString().slice(0, 10)}`;
+        }
+        return "";
+    }
+    onStateJsonChanged: stateSave.restart()
+    Timer {
+        id: stateSave
+
+        interval: 400
+        onTriggered: stateFile.setText(shell.stateJson)
+    }
+    FileView {
+        id: stateFile
+
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-state.json`
+        atomicWrites: true
+        printErrors: false
+    }
+    // El retrato: se repinta si cambia la cara, el gorro o el color (con calma: el color del
+    // marco va variando)
+    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3)].join("|")
+    onAvatarKeyChanged: avatarRedraw.restart()
+    Timer {
+        id: avatarRedraw
+
+        interval: 2500
+        onTriggered: shell.avatarPaint()
+    }
+    signal avatarPaint()
+    Component.onDestruction: {}
+
+    // ── Minecraft (integrations/minecraft/mc-watch.py sigue el log mientras juegas) ──
+    // Mueres → susto y pena; logro → se emociona y da un salto; matas a alguien → orgulloso; te
+    // nombran en el chat → curioso. Si el juego está a pantalla completa (Mochi escondido),
+    // asoma un momento por la esquina de abajo con esa cara.
+    property string peekFace: ""
+    property real peekAmt: 0
+    Behavior on peekAmt {
+        NumberAnimation {
+            duration: 380
+            easing.type: Easing.OutBack
+        }
+    }
+    function gameEvent(ev: var, forcePeek: bool): void {
+        if (locked || dnd)
+            return;
+        const faces = {
+            join: ["happy", 1400],
+            death: ["sad", 2600],
+            advancement: ["excited", 2400],
+            kill: ["proud", 2000],
+            mention: ["curious", 1800]
+        };
+        const f = faces[ev.ev];
+        if (!f)
+            return;
+        if (fsHide || !present || forcePeek) {
+            peekFace = f[0];
+            peekAmt = 1;
+            peekHide.interval = f[1] + 400;
+            peekHide.restart();
+            return;
+        }
+        if (ev.ev === "death") {
+            reacted("surprised", 450);
+            deathSad.restart();
+            kicked(1.8, -2.2);
+        } else {
+            reacted(f[0], f[1]);
+            kicked(-1.4, 2.4);
+            if (ev.ev === "advancement" && phys === "swim") {
+                hopsLeft = 1;
+                hop();
+            }
+        }
+        // mira hacia el juego
+        const o = Hyprland.activeToplevel?.lastIpcObject;
+        if (o?.at) {
+            glanceX = o.at[0] + o.size[0] / 2;
+            glanceY = o.at[1] + o.size[1] / 2;
+            glanceUntil = Date.now() + 1500;
+        }
+    }
+    Timer {
+        id: deathSad
+
+        interval: 450
+        onTriggered: shell.reacted("sad", 2400)
+    }
+    Timer {
+        id: peekHide
+
+        onTriggered: shell.peekAmt = 0
+    }
+    Process {
+        running: shell.shown
+        command: ["python3", Quickshell.shellDir + "/integrations/minecraft/mc-watch.py"]
+        stdout: SplitParser {
+            onRead: data => {
+                try {
+                    shell.gameEvent(JSON.parse(data), false);
+                } catch (e) {}
+            }
+        }
+    }
+
+    // ── Ritmo de la música (integrations/beats.py): solo con música de verdad sonando ──
+    signal beatHit(real period)
+    Process {
+        running: Mind.musicPlaying && shell.present && !shell.fsHide && !shell.dnd && !shell.locked && shell.phys !== "nest"
+        command: [Quickshell.env("HOME") + "/.local/share/mochi/venv/bin/python", Quickshell.shellDir + "/integrations/beats.py"]
+        stdout: SplitParser {
+            onRead: data => {
+                const p = Number(data.split(" ")[1]);
+                if (p > 0)
+                    shell.beatHit(p);
+            }
+        }
+    }
+
     // ── Ver vídeos contigo ──
     // Si estás viendo un vídeo (YouTube, Twitch…; no música) en la pestaña visible, le pica la
     // curiosidad: se acerca por el borde de abajo, se queda debajo mirándolo y reacciona de vez
@@ -462,9 +643,41 @@ ShellRoot {
     }
     // La ventana del navegador con esa pestaña delante (su título lleva el del vídeo)
     property var videoTest: null   // (IPC `pet watchTest <ms>`: finge un vídeo en la ventana activa)
+    // Lo que cuenta la extensión de Zen (integrations/zen): dónde está el vídeo de verdad, si va,
+    // si es un anuncio y los momentos más vistos (YouTube)
+    property var browserVideo: null
+    property bool videoExact: false
+    readonly property bool browserFresh: browserVideo?.type === "video" && Date.now() - (browserVideo?.ts ?? 0) < 3000
+    FileView {
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-browser.json`
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                shell.browserVideo = JSON.parse(text());
+            } catch (e) {}
+        }
+    }
+    function browserRect(): var {
+        const b = browserVideo;
+        if (!b || b.type !== "video" || Date.now() - b.ts > 3000 || !b.visible || b.fullscreen || (!b.playing && !b.ad))
+            return null;
+        const key = (b.title ?? "").slice(0, 40);
+        const tl = Hyprland.toplevels.values.find(w => key && (w.title ?? "").includes(key));
+        const o = tl?.lastIpcObject;
+        if (!o?.at || !o?.size || tl.workspace?.id !== mochiWs || o.fullscreen)
+            return null;
+        const k = o.size[0] / (b.outer?.[0] || o.size[0]);
+        return [o.at[0] + (b.inner[0] + b.rect[0]) * k, o.at[1] + (b.inner[1] + b.rect[1]) * k, b.rect[2] * k, b.rect[3] * k];
+    }
     function findVideo(): var {
         if (videoTest)
             return videoTest;
+        const br = browserRect();
+        videoExact = br !== null;
+        if (br)
+            return br;
         const p = Mind.player;
         if (!p || Mind.musicPlaying || !isVideo(p) || !p.trackTitle)
             return null;
@@ -478,6 +691,11 @@ ShellRoot {
     // Dónde estará el vídeo en la página (aprox.: arriba a la izquierda en YouTube, o
     // centrado si la ventana es estrecha/shorts)
     function videoCenter(r: var): var {
+        if (videoExact)
+            return {
+                x: r[0] + r[2] / 2,
+                y: r[1] + r[3] / 2
+            };
         const shorts = /shorts/.test(String(Mind.player?.metadata?.["xesam:url"] ?? ""));
         const wide = r[2] > 1100 && !shorts;
         const vw = wide ? r[2] * 0.64 : r[2] * 0.9;
@@ -513,6 +731,47 @@ ShellRoot {
         focusY = c.y;
         if (Date.now() > lookAtYouUntil)
             focusUntil = Date.now() + 2500;
+        videoMoments();
+    }
+    // Anuncios (se aburre) y momentos más vistos (se inclina hacia delante antes, y ¡oh!)
+    property bool inAd: false
+    property var peaksSeen: ({})
+    function videoMoments(): void {
+        const b = browserVideo;
+        if (!browserFresh || !videoExact)
+            return;
+        if (b.ad !== inAd) {
+            inAd = b.ad;
+            if (inAd) {
+                reacted("roll", 1300);   // pff, un anuncio
+                adBored.restart();
+            } else {
+                adBored.stop();
+                reacted("happy", 900);   // ¡por fin!
+            }
+        }
+        if (inAd || !b.playing)
+            return;
+        for (const p of b.peaks ?? []) {
+            const key = `${b.url}|${p}`, dt = p - b.time;
+            if (dt > 0 && dt < 3 && peaksSeen[key] !== 1) {
+                peaksSeen[key] = 1;
+                reacted("curious", 2400);   // algo va a pasar…
+                leaned(-60);
+                kicked(0.8, -0.8);
+            } else if (dt <= 0 && dt > -2 && peaksSeen[key] !== 2) {
+                peaksSeen[key] = 2;
+                reacted(Math.random() < 0.5 ? "surprised" : "excited", 1600);
+                kicked(-1.6, 2.4);
+            }
+        }
+    }
+    Timer {
+        id: adBored
+
+        interval: 3500
+        repeat: true
+        onTriggered: shell.reacted(Math.random() < 0.5 ? "sleepy" : "roll", 1800)
     }
     property real lookAtYouUntil: 0
     // Se pone debajo del vídeo (en el suelo), un poco a un lado para no tapar los controles
@@ -554,7 +813,7 @@ ShellRoot {
         onTriggered: shell.goWatch()
     }
     Timer {
-        running: Mind.player !== null || shell.watching || shell.videoTest !== null
+        running: Mind.player !== null || shell.watching || shell.videoTest !== null || shell.browserVideo?.type === "video"
         repeat: true
         interval: 700
         onTriggered: shell.watchStep()
@@ -1946,6 +2205,12 @@ ShellRoot {
         function greet(): void {
             shell.greet();
         }
+        // Prueba de un evento de juego: join | death | advancement | kill | mention
+        function game(ev: string, peek: bool): void {
+            shell.gameEvent({
+                ev: ev
+            }, peek);
+        }
         function heart(): void {
             shell.heartShown = true;
             heartHide.restart();
@@ -3017,6 +3282,104 @@ ShellRoot {
                 }
             }
 
+            // Asomándose por la esquina de abajo (juego a pantalla completa): solo en la pantalla
+            // con el foco
+            Canvas {
+                id: cornerPeek
+
+                readonly property real amt: Math.max(0, shell.peekAmt)
+                property real t: 0
+
+                visible: amt > 0.01 && win.modelData.name === Hyprland.focusedMonitor?.name
+                width: 170
+                height: 150
+                x: win.modelData.width - width - 40
+                y: win.modelData.height - 122 * amt   // (asoma hasta un poco por debajo de los ojos)
+                onTChanged: requestPaint()
+
+                FrameAnimation {
+                    running: cornerPeek.visible
+                    onTriggered: cornerPeek.t += frameTime
+                }
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    Draw.avatar(ctx, {
+                        x: 85,
+                        y: 150,
+                        s: 58,
+                        body: shell.avatarBody,
+                        ink: shell.avatarInk,
+                        face: shell.peekFace,
+                        hat: shell.hat,
+                        breath: 0.5 + 0.5 * Math.sin(t * 3),
+                        ly: -0.4,
+                        t: t
+                    });
+                }
+            }
+
+            // Retrato para las integraciones (solo en la primera pantalla; fuera de la vista)
+            Canvas {
+                id: avatarCanvas
+
+                visible: win.modelData === Quickshell.screens[0]
+                x: -300
+                y: 0
+                width: 256
+                height: 256
+
+                Connections {
+                    target: shell
+
+                    function onAvatarPaint(): void {
+                        if (avatarCanvas.visible)
+                            avatarCanvas.requestPaint();
+                    }
+                }
+                Component.onCompleted: {
+                    Quickshell.execDetached(["mkdir", "-p", `${Quickshell.env("HOME")}/.cache/mochi`]);
+                    shell.avatarPaint();
+                }
+                // (toDataURL vuelve a emitir painted: se exporta una sola vez por repintado)
+                property bool pending: false
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    Draw.avatar(ctx, {
+                        x: 128,
+                        y: 240,
+                        s: 78,
+                        body: shell.avatarBody,
+                        ink: shell.avatarInk,
+                        face: shell.feeling,
+                        hat: shell.hat,
+                        melt: shell.melt,
+                        snow: shell.snowAmt,
+                        t: 0.3
+                    });
+                    pending = true;
+                }
+                onPainted: {
+                    if (!pending)
+                        return;
+                    pending = false;
+                    // (Canvas.save() no funciona aquí: se pasa como PNG en base64)
+                    const url = toDataURL("image/png"), b64 = url.slice(url.indexOf(",") + 1);
+                    if (b64.length > 100)
+                        avatarB64.setText(b64);   // (y al guardarse, se decodifica a PNG)
+                }
+                onAvailableChanged: if (available) requestPaint()
+
+                FileView {
+                    id: avatarB64
+
+                    path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-avatar.b64`
+                    printErrors: false
+                    onSaved: Quickshell.execDetached(["sh", "-c", 'base64 -d "$1" > "$2.$$" && mv "$2.$$" "$2"', "sh", path, `${Quickshell.env("HOME")}/.cache/mochi/avatar.png`])
+                }
+            }
+
             Blob {
                 id: mochi
 
@@ -3070,6 +3433,9 @@ ShellRoot {
                     }
                     function onWoke(): void {
                         mochi.wake();
+                    }
+                    function onBeatHit(period: real): void {
+                        mochi.beat(period);
                     }
                     function onSleepTest(what: string): void {
                         if (what === "nod")

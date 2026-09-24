@@ -41,6 +41,13 @@ Item {
                 iconName: "cloud",
                 text: Tr.tr("Weather"),
                 enabled: Config.dashboard.showWeather
+            },
+            {
+                // Mochi (~/.config/quickshell/tamagotchi): su ficha
+                component: mochiComponent,
+                iconName: "pets",
+                text: "Mochi",
+                enabled: true
             }
         ];
         return allTabs.filter(tab => tab.enabled);
@@ -180,6 +187,12 @@ Item {
                 id: weatherComponent
 
                 WeatherTab {}
+            }
+
+            Component {
+                id: mochiComponent
+
+                MochiTab {}
             }
 
             Behavior on contentX {

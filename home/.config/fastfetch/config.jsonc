@@ -58,6 +58,13 @@
             "format": "github.com/iker15"
         },
         {
+            // Cómo está Mochi ahora (lo publica él en $XDG_RUNTIME_DIR/mochi-state.json)
+            "type": "command",
+            "key": " ",
+            "text": "jq -r '\"Mochi · ❤ \\(.bond) · \\(.text)\"' \"$XDG_RUNTIME_DIR/mochi-state.json\" 2>/dev/null",
+            "format": "{#35}{}"
+        },
+        {
             // Rayas de colores en vez de círculos
             "type": "custom",
             "key": " ",

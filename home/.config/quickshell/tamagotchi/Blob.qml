@@ -207,6 +207,18 @@ Item {
         sim.svx -= 0.9;
     }
 
+    // Golpe de la música de verdad (integrations/beats.py): bailando, bota y se ladea a compás
+    property real lastBeatAt: -10
+    property real danceSide: 1
+    function beat(period: real): void {
+        lastBeatAt = sim.t;
+        if (face !== "dance")
+            return;
+        danceSide = -danceSide;
+        sim.svy -= 1.7;
+        sim.svx += 1.1;
+    }
+
     function react(name: string, ms: int): void {
         reaction = name;
         reactionTimer.interval = ms;
@@ -617,9 +629,10 @@ Item {
                 }
             }
             const f = root.face;
-            const trot = (f === "curious" ? 9 : f === "confused" ? -8 : f === "dance" ? 8 * Math.sin(t * 7.5) : 0) + root.nod * 8 * root.nodDir;
-            // Bailando: un botecito en cada golpe
-            if (f === "dance") {
+            const synced = t - root.lastBeatAt < 2;   // hay ritmo de verdad
+            const trot = (f === "curious" ? 9 : f === "confused" ? -8 : f === "dance" ? (synced ? 8 * root.danceSide : 8 * Math.sin(t * 7.5)) : 0) + root.nod * 8 * root.nodDir;
+            // Bailando sin ritmo detectado: un botecito cada 0,42 s
+            if (f === "dance" && !synced) {
                 const beat = Math.floor(t / 0.42);
                 if (beat !== lastBeat) {
                     lastBeat = beat;

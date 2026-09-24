@@ -1,0 +1,30 @@
+{
+    "manifest_version": 2,
+    "name": "Mochi",
+    "version": "1.0",
+    "description": "Mochi ve los vídeos contigo (sabe dónde está el vídeo, si va, si es un anuncio y los momentos más vistos) y vive en la nueva pestaña.",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "mochi@iker",
+            "strict_min_version": "115.0"
+        }
+    },
+    "permissions": ["nativeMessaging", "search", "tabs"],
+    "background": {
+        "scripts": ["background.js"],
+        "persistent": true
+    },
+    "content_scripts": [
+        {
+            "matches": ["*://*.youtube.com/*", "*://*.twitch.tv/*", "*://*.vimeo.com/*", "*://*.netflix.com/*", "*://*.primevideo.com/*", "*://*.disneyplus.com/*", "*://*.max.com/*", "*://*.crunchyroll.com/*", "*://*.dailymotion.com/*"],
+            "js": ["content.js"],
+            "run_at": "document_idle"
+        }
+    ],
+    "chrome_url_overrides": {
+        "newtab": "newtab.html"
+    },
+    "icons": {
+        "96": "icon.png"
+    }
+}

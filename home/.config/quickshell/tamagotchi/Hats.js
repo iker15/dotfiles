@@ -1,6 +1,8 @@
 .pragma library
 
 // Accesorios de temporada (los lleva Mochi en la cabeza, y su icono en el nido).
+// Portátil: sirve con el Canvas de QML y con el de HTML (la extensión de Zen y la de VSCodium
+// usan una copia sin la línea .pragma; ver integrations/build-web.sh).
 // Se dibujan con la base en (0, 0) y hacia arriba = -y; s = medio ancho de la cabeza (px),
 // sway = cuánto se le balancea la punta (−1…1), t = tiempo (s).
 
@@ -18,6 +20,23 @@ function seasonal(d) {
     if ((m === 12 && day >= 1) || (m === 1 && day <= 7))
         return "santa";
     return "";
+}
+
+// Elipse por su caja (x, y, ancho, alto) y rectángulo redondeado, en QML y en HTML
+function E(ctx, x, y, w, h) {
+    if (ctx.roundedRect) {
+        ctx.ellipse(x, y, w, h);
+    } else {
+        ctx.moveTo(x + w, y + h / 2);
+        ctx.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, 2 * Math.PI);
+    }
+}
+
+function RR(ctx, x, y, w, h, r) {
+    if (ctx.roundedRect)
+        ctx.roundedRect(x, y, w, h, r, r);
+    else
+        ctx.roundRect(x, y, w, h, r);
 }
 
 function draw(ctx, name, s, t, sway) {
@@ -55,7 +74,7 @@ function witch(ctx, s, sway) {
     // ala
     ctx.fillStyle = "#3a1f55";
     ctx.beginPath();
-    ctx.ellipse(-s * 0.78, -s * 0.13, s * 1.56, s * 0.24);
+    E(ctx, -s * 0.78, -s * 0.13, s * 1.56, s * 0.24);
     ctx.fill();
     // brillo en el cono
     ctx.fillStyle = "rgba(255,255,255,0.12)";
@@ -87,10 +106,10 @@ function santa(ctx, s, sway) {
     ctx.fill();
     ctx.fillStyle = "#f4f1ec";
     ctx.beginPath();
-    ctx.roundedRect(-s * 0.7, -s * 0.28, s * 1.4, s * 0.3, s * 0.15, s * 0.15);
+    RR(ctx, -s * 0.7, -s * 0.28, s * 1.4, s * 0.3, s * 0.15);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(px - s * 0.15, py - s * 0.15, s * 0.3, s * 0.3);
+    E(ctx, px - s * 0.15, py - s * 0.15, s * 0.3, s * 0.3);
     ctx.fill();
 }
 
@@ -120,7 +139,7 @@ function party(ctx, s, sway) {
     ctx.restore();
     ctx.fillStyle = "#ff6f91";
     ctx.beginPath();
-    ctx.ellipse(-s * 0.14, -s * 1.08, s * 0.28, s * 0.28);
+    E(ctx, -s * 0.14, -s * 1.08, s * 0.28, s * 0.28);
     ctx.fill();
     ctx.restore();
 }
@@ -143,14 +162,14 @@ function crown(ctx, s, t) {
     ctx.fillStyle = "#fff4cf";
     for (const [x, y] of [[-s * 0.55, -s * 0.55], [0, -s * 0.7], [s * 0.55, -s * 0.55]]) {
         ctx.beginPath();
-        ctx.ellipse(x - s * 0.08, y - s * 0.08, s * 0.16, s * 0.16);
+        E(ctx, x - s * 0.08, y - s * 0.08, s * 0.16, s * 0.16);
         ctx.fill();
     }
     const gems = ["#e0434b", "#3f7de0", "#e0434b"];
     for (let i = 0; i < 3; i++) {
         ctx.fillStyle = gems[i];
         ctx.beginPath();
-        ctx.ellipse(-s * 0.3 + i * s * 0.3 - s * 0.06, -s * 0.15, s * 0.12, s * 0.12);
+        E(ctx, -s * 0.3 + i * s * 0.3 - s * 0.06, -s * 0.15, s * 0.12, s * 0.12);
         ctx.fill();
     }
     // destello que va pasando
@@ -158,7 +177,7 @@ function crown(ctx, s, t) {
     if (k < 0.3) {
         ctx.fillStyle = `rgba(255,255,255,${(0.5 * Math.sin(k / 0.3 * Math.PI)).toFixed(3)})`;
         ctx.beginPath();
-        ctx.ellipse(-s * 0.5 + k / 0.3 * s - s * 0.06, -s * 0.5, s * 0.12, s * 0.4);
+        E(ctx, -s * 0.5 + k / 0.3 * s - s * 0.06, -s * 0.5, s * 0.12, s * 0.4);
         ctx.fill();
     }
 }

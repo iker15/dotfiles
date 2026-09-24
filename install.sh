@@ -69,6 +69,11 @@ log "Preparando el oído de Mochi"
 # --- 4b. Mochi: pantalla de arranque (Plymouth) -----------------------------
 log "Poniendo a Mochi en el arranque"
 "$HOME/dotfiles/system/plymouth/mochi/install.sh" || echo "  (sin tema de arranque: ejecuta system/plymouth/mochi/install.sh más tarde)"
+"$HOME/dotfiles/system/limine/install.sh" || echo "  (sin fondo de Limine: ejecuta system/limine/install.sh más tarde)"
+
+# --- 4c. Mochi en las apps (Zen, VSCodium, Minecraft) ------------------------
+log "Integrando a Mochi en las apps"
+"$HOME/.config/quickshell/tamagotchi/integrations/install-all.sh" || echo "  (ejecuta ~/.config/quickshell/tamagotchi/integrations/install-all.sh más tarde)"
 
 # --- 5. Shell ----------------------------------------------------------------
 if [ "$(getent passwd "$USER" | cut -d: -f7)" != "/bin/fish" ]; then

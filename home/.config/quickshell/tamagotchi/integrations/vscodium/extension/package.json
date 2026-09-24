@@ -1,0 +1,32 @@
+{
+    "name": "mochi-companion",
+    "displayName": "Mochi",
+    "description": "Mochi (tu mascota de Quickshell) en el editor: se preocupa con los errores y se alegra cuando los arreglas.",
+    "version": "1.0.0",
+    "publisher": "iker",
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": ["Other"],
+    "activationEvents": ["onStartupFinished"],
+    "main": "./extension.js",
+    "icon": "media/icon.png",
+    "contributes": {
+        "views": {
+            "explorer": [
+                {
+                    "type": "webview",
+                    "id": "mochi.view",
+                    "name": "Mochi"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "mochi.show",
+                "title": "Mochi: mostrar"
+            }
+        ]
+    }
+}
