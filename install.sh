@@ -16,8 +16,24 @@ sudo pacman -Syu --needed --noconfirm base-devel git
 # de hardware (drivers NVIDIA/Intel, microcódigo, kernels): esos ya los pone el instalador de
 # CachyOS según el PC de cada uno
 HW='^(nvidia.*|lib32-nvidia.*|opencl-nvidia|lib32-opencl-nvidia|libva-nvidia-driver|linux-cachyos.*|linux-.*-headers|intel-ucode|amd-ucode|intel-lpmd|intel-media-driver|vulkan-intel|lib32-vulkan-intel|vulkan-radeon|lib32-vulkan-radeon|xf86-video-.*)$'
+# Tampoco lo que depende de cómo se instaló cada CachyOS (gestor de arranque, copias de
+# seguridad, escritorio elegido en el instalador): eso se queda como lo tenga cada uno
+SYS='^(limine.*|grub.*|refind.*|os-prober|efibootmgr|mkinitcpio.*|dracut|chwd.*|cachyos-.*-settings|cachyos-snapper-support|snapper|snap-pac|btrfs-assistant|timeshift.*|sddm.*|plasma.*|kate|kwrite|dolphin|konsole|spectacle|ark|gwenview|okular|phonon-.*)$'
 comm -12 <(sort "$DOTS/pkglist.txt") <(pacman -Slq | sort -u) \
-    | grep -vE "$HW" \
+    | grep -vE "$HW" | grep -vE "$SYS" > /tmp/dotfiles-pkgs.txt
+# Y fuera los que chocan con algo que ya tiene instalado (se queda con lo suyo): con
+# --noconfirm pacman no puede preguntar qué quitar y se para con "conflictos sin resolver"
+pacman -Qq | sort -u > /tmp/dotfiles-have.txt
+LC_ALL=C pacman -Si $(cat /tmp/dotfiles-pkgs.txt) 2>/dev/null | awk -F' *: ' '
+    /^Name/ { n = $2 }
+    /^Conflicts With/ && $2 != "None" { split($2, c, / +/); for (i in c) { sub(/[<>=].*/, "", c[i]); print n, c[i] } }' \
+    | while read -r pkg other; do
+        if [[ "$pkg" != "$other" ]] && grep -qx "$other" /tmp/dotfiles-have.txt; then
+            echo "$pkg"
+            echo "  (me salto $pkg: choca con $other, que ya tienes)" >&2
+        fi
+    done | sort -u > /tmp/dotfiles-skip.txt
+grep -vxF -f /tmp/dotfiles-skip.txt /tmp/dotfiles-pkgs.txt \
     | sudo pacman -S --needed --noconfirm -
 
 if ! command -v paru >/dev/null; then
@@ -30,7 +46,12 @@ if ! command -v paru >/dev/null; then
 fi
 
 log "Instalando paquetes del AUR"
-paru -S --needed --noconfirm - < "$DOTS/aurlist.txt"
+# (uno a uno: si alguno falla o choca, sigue con los demás)
+while read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    pacman -Qq "$pkg" >/dev/null 2>&1 && continue
+    paru -S --needed --noconfirm "$pkg" || echo "  (no se pudo instalar $pkg del AUR: sigue sin él)"
+done < "$DOTS/aurlist.txt"
 
 # --- 2. Symlinks -------------------------------------------------------------
 log "Enlazando configuración (lo que ya exista se guarda en $BACKUP)"
