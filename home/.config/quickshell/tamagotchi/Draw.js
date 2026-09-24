@@ -1,5 +1,6 @@
 .pragma library
 .import "Hats.js" as Hats
+.import "Skins.js" as Skins
 
 // Mochi en pequeño, "de retrato", para fuera del escritorio: la imagen de fastfetch, la pestaña
 // del dashboard de Caelestia, la nueva pestaña de Zen y el panel de VSCodium. Solo cuerpo
@@ -18,6 +19,7 @@
 //   más brillo y un destello · 3 sabio: + una estrellita que le da vueltas · 4 legendario: + un
 //   brillo arcoíris en el borde)
 //   look: su aspecto (Look.qml: eyeSize, eyeGap, eyeY, eyeShape, wide; opcional)
+//   skin: id de una transformación (Skins.js; opcional) · skinAmt: 0-1 cuánto se ha transformado
 // }
 
 // Aspecto con valores por defecto
@@ -60,6 +62,33 @@ function avatar(ctx, o) {
         return [o.x + rx * Math.cos(a), o.y - ryB + (sn < 0 ? ryT : ryB) * sn];
     };
     const cx = o.x, cy = o.y - ryB;
+    // Transformado en otro personaje (Skins.js): su silueta, su color, sus ojos y sus detalles
+    const skin = o.skin ? Skins.byId(o.skin) : null, amt = skin ? Math.max(0, Math.min(1, o.skinAmt ?? 1)) : 0;
+    const bodyCol = skin ? mixHex(o.body, skin.color, amt) : o.body;
+    const g = {
+        x: cx,
+        y: cy,
+        rx: rx,
+        ryT: ryT,
+        ryB: ryB,
+        t: t,
+        face: o.face || "normal",
+        amt: amt
+    };
+    const rimOf = skin ? (a => {
+            const [fx, fy] = Skins.formPoint(skin, a, t, amt);
+            return [cx + rx * fx, cy + (fy < 0 ? ryT : ryB) * fy];
+        }) : rim;
+    const bodyPath = c => {
+        for (let i = 0; i <= 96; i++) {
+            const [px, py] = rimOf(2 * Math.PI * i / 96);
+            if (i)
+                c.lineTo(px, py);
+            else
+                c.moveTo(px, py);
+        }
+        c.closePath();
+    };
 
     // Sombrita en el suelo
     if (o.shadow > 0) {
@@ -68,23 +97,30 @@ function avatar(ctx, o) {
         Hats.E(ctx, cx - rx * 0.95, o.y - s * 0.07, rx * 1.9, s * 0.16);
         ctx.fill();
     }
-    // Cuerpo: cúpula (arriba) + base más plana, con un brillo arriba a la izquierda
-    ctx.fillStyle = o.body;
-    ctx.beginPath();
-    for (let i = 0; i <= 96; i++) {
-        const [px, py] = rim(2 * Math.PI * i / 96);
-        if (i)
-            ctx.lineTo(px, py);
-        else
-            ctx.moveTo(px, py);
+    // Cuerpo: cúpula (arriba) + base más plana, con un brillo arriba a la izquierda (y lo que le
+    // salga si está transformado: orejas, bracitos…, del mismo material)
+    if (skin && o.outline) {
+        // (el contorno también alrededor de las orejas: se pintan un poco más gordas debajo)
+        ctx.save();
+        ctx.fillStyle = o.outline;
+        for (const p of skin.parts || []) {
+            const q = Skins.grown(p, amt), k = Math.max(1, s * 0.035) / rx;
+            if (q.ra > 0.005)
+                Skins.capsule(ctx, g, q.a, q.b, q.ra + k, q.rb + k);
+        }
+        ctx.restore();
     }
-    ctx.closePath();
+    ctx.fillStyle = bodyCol;
+    ctx.beginPath();
+    bodyPath(ctx);
     ctx.fill();
     if (o.outline) {
         ctx.strokeStyle = o.outline;
         ctx.lineWidth = Math.max(1, s * 0.035);
         ctx.stroke();
     }
+    if (skin)
+        Skins.drawParts(ctx, skin, g, bodyCol, amt);   // (encima: tapan el contorno en la unión)
     ctx.fillStyle = `rgba(255,255,255,${stage >= 2 ? 0.2 : 0.07})`;
     ctx.beginPath();
     Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
@@ -110,21 +146,40 @@ function avatar(ctx, o) {
         ctx.restore();
     }
 
-    // Ojos
-    const u = s / 32, d = 9.5 * u * L.eyeSize * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
+    // Ojos (transformado: los suyos, a partir de la mitad de la transformación)
+    if (skin)
+        Skins.drawUnder(ctx, skin, g, bodyPath);
+    const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L) : null;
+    const eyeSize = SE ? SE.eyeSize : L.eyeSize, eyeGap = SE ? SE.eyeGap : L.eyeGap, eyeY = SE ? SE.eyeY : L.eyeY;
+    const u = s / 32, d = 9.5 * u * eyeSize * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
     let lx = o.lx || 0, ly = o.ly || 0;
     if (f === "sulky")
         lx = -0.8;
     if (f === "curious")
         ly = -0.3;
-    const ey = cy - 0.12 * ryT + ly * 5 * u + L.eyeY * 7 * u;
-    ctx.fillStyle = o.ink;
-    ctx.strokeStyle = o.ink;
+    const ink = SE?.ink || o.ink;
+    const ey0 = cy - 0.12 * ryT + eyeY * 7 * u, ey = ey0 + ly * 5 * u;
+    ctx.fillStyle = ink;
+    ctx.strokeStyle = ink;
     ctx.lineCap = "round";
+    g.eyes = [];
     for (const side of [-1, 1]) {
-        const ex = cx + side * 11.5 * u * L.eyeGap * Math.max(0.8, rx / s) + lx * 6 * u;
-        eye(ctx, f, ex, ey, d, side, o.blink || 0, u, L.eyeShape);
+        const ex0 = cx + side * 11.5 * u * eyeGap * Math.max(0.8, rx / s), ex = ex0 + lx * 6 * u;
+        g.eyes.push([ex0 + lx * 3 * u, ey0 + ly * 2.5 * u]);
+        if (SE?.white && !["happy", "excited", "love", "asleep", "squint"].includes(f)) {
+            // esclerótica: se queda en su sitio y la pupila mira
+            const k = SE.whiteScale, sh = SE ? SE.eyeShape : L.eyeShape;
+            const ww = d * k * (1 - 0.18 * sh), hh = d * k * (1 + 0.45 * sh) * (1 - 0.9 * (o.blink || 0));
+            ctx.fillStyle = SE.white;
+            ctx.beginPath();
+            Hats.E(ctx, ex0 - ww / 2, ey0 - hh / 2, ww, Math.max(hh, 1.5 * u));
+            ctx.fill();
+            ctx.fillStyle = ink;
+        }
+        eye(ctx, f, ex, ey, d, side, o.blink || 0, u, SE ? SE.eyeShape : L.eyeShape, SE);
     }
+    if (skin)
+        Skins.drawOver(ctx, skin, g, amt);
     // Sudor (calor)
     if (f === "hot" || m > 0.3) {
         const k = (t * 0.6) % 1, x = cx + 17 * u, y = cy - ryT * 0.6 + k * ryT * 0.5, r = 3.2 * u;
@@ -172,7 +227,7 @@ function avatar(ctx, o) {
     }
 }
 
-function eye(ctx, f, x, y, d, side, blink, u, shape) {
+function eye(ctx, f, x, y, d, side, blink, u, shape, SE) {
     ctx.beginPath();
     if (f === "happy" || f === "excited") {
         // ^ ^
@@ -209,7 +264,8 @@ function eye(ctx, f, x, y, d, side, blink, u, shape) {
         w *= 1.3;
         h *= 1.3;
     }
-    // Párpado de arriba: recto (sueño) o inclinado hacia fuera (pena, calor, enfado)
+    // Párpado de arriba: recto (sueño) o inclinado hacia fuera (pena, calor, enfado); algunas
+    // transformaciones lo traen de serie (Snorlax dormido, Gengar con cara de malo)
     let lid = 0, tilt = 0;
     if (f === "sleepy")
         lid = 0.5;
@@ -217,10 +273,15 @@ function eye(ctx, f, x, y, d, side, blink, u, shape) {
         [lid, tilt] = [0.35, -0.35];
     else if (f === "sad" || f === "sulky")
         [lid, tilt] = [0.25, -0.45];
-    const topY = y - h / 2, r = Math.min(w, h) / 2;
+    if (SE && SE.lid > lid && f !== "surprised")
+        [lid, tilt] = [SE.lid, SE.tilt];
+    const round = SE ? SE.round : 1;
+    const topY = y - h / 2, r = Math.min(w, h) / 2 * round;
     if (!lid || h < d * 0.3) {
         Hats.RR(ctx, x - w / 2, y - h / 2, w, Math.max(h, 1.8 * u), Math.min(r, Math.max(h, 1.8 * u) / 2));
         ctx.fill();
+        if (SE?.shine && h > d * 0.4)
+            shine(ctx, x, y, w, h);
         return;
     }
     // ojo con la parte de arriba cortada en diagonal
@@ -237,7 +298,30 @@ function eye(ctx, f, x, y, d, side, blink, u, shape) {
     ctx.beginPath();
     Hats.RR(ctx, x - w / 2, y - h / 2, w, h, r);
     ctx.fill();
+    if (SE?.shine)
+        shine(ctx, x, y, w, h);
     ctx.restore();
+}
+
+// Brillito en el ojo (arriba, hacia la izquierda)
+function shine(ctx, x, y, w, h) {
+    const f = ctx.fillStyle;
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.beginPath();
+    Hats.E(ctx, x - w * 0.34, y - h * 0.4, w * 0.4, Math.min(h * 0.36, w * 0.5));
+    ctx.fill();
+    ctx.fillStyle = f;
+}
+
+// Mezcla de dos colores "#rrggbb" (k = 0 → a, 1 → b)
+function mixHex(a, b, k) {
+    if (k <= 0 || !/^#[0-9a-f]{6}$/i.test(String(a)))
+        return k >= 1 ? b : a;
+    if (k >= 1)
+        return b;
+    const A = parseInt(String(a).slice(1), 16), B = parseInt(String(b).slice(1), 16);
+    const ch = sh => Math.round((A >> sh & 255) + ((B >> sh & 255) - (A >> sh & 255)) * k);
+    return "#" + ((1 << 24) + (ch(16) << 16) + (ch(8) << 8) + ch(0)).toString(16).slice(1);
 }
 
 // Estrellita de cuatro puntas

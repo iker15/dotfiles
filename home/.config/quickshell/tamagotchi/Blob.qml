@@ -1,5 +1,6 @@
 import QtQuick
 import "Hats.js" as Hats
+import "Skins.js" as Skins
 
 // Mochi: gota blanda con forma de daifuku (cúpula arriba, base plana) y solo dos ojos.
 // El cuerpo NO se dibuja aquí: lo dibuja shell.qml con los blobs de Caelestia (mismo material
@@ -87,6 +88,18 @@ Item {
     property real wide: 1         // ancho del cuerpo (el alto compensa)
     property real jelly: 1        // blandura: tiembla más y tarda más en calmarse
     property var traits: []       // rasgos de carácter (Traits.js): bailongo, curioso…
+    // Transformado (Skins.js): sus detalles (antifaz, mofletes, boca…) y cómo son sus ojos
+    // (el cuerpo, su color y lo que le brota los pinta shell.qml con el shader)
+    property string skin: ""
+    property real skinAmt: 0
+    property real skinT: 0
+    readonly property var skinDef: Skins.byId(skin)
+    property real eyeRound: 1                 // 1 redondos · 0 cuadrados (slime de Minecraft)
+    property color eyeWhite: "transparent"    // esclerótica (Totoro, Blinky…): la pupila mira dentro
+    property real eyeWhiteScale: 1.9
+    property bool eyeShine: false             // brillito
+    property real baseLid: 0                  // párpado de serie (Snorlax dormido, Gengar malote)
+    property real baseTilt: 0
     // Al nacer: charco (1 = aplastado del todo en el suelo, 0 = ya con su forma) y la primera
     // vez que abre los ojos (despacio; mientras, no parpadea solo)
     property real puddle: 0
@@ -732,7 +745,7 @@ Item {
             }
         }
 
-        function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
+        function drawEye(ctx: var, x: real, y: real, e: var, side: int, bx: real): void {
             const d = 9.5 * root.u * root.eyeSize;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
@@ -745,21 +758,54 @@ Item {
                 return;
             }
             const w = d * e.w * (1 - 0.18 * root.eyeShape), h = Math.max(1.9 * root.u, d * e.h * (1 + 0.45 * root.eyeShape) * (1 - 0.92 * root.blink));
-            const r = Math.min(w, h) / 2;
+            const r = Math.min(w, h) / 2 * root.eyeRound;
+
+            // Con esclerótica: se queda casi en su sitio y la pupila mira dentro de ella
+            if (root.eyeWhite.a > 0 && e.lb < 0.3 && h > d * 0.25) {
+                const k = root.eyeWhiteScale, ws = d * k * (1 - 0.18 * root.eyeShape), hs = d * k * (1 + 0.45 * root.eyeShape) * Math.max(0.12, 1 - 0.92 * root.blink) * Math.min(1.15, e.h);
+                const sx = bx + (x - bx) * 0.3, sy = y * 0.3;
+                ctx.fillStyle = root.eyeWhite;
+                ctx.beginPath();
+                ctx.ellipse(sx - ws / 2, sy - hs / 2, ws, hs);
+                ctx.fill();
+                const mx = Math.max(0, (ws - w) / 2 * 0.85), my = Math.max(0, (hs - h) / 2 * 0.85);
+                x = sx + Math.max(-mx, Math.min(mx, x - sx));
+                y = sy + Math.max(-my, Math.min(my, y - sy));
+            }
 
             ctx.fillStyle = root.ink;
             ctx.beginPath();
             ctx.roundedRect(x - w / 2, y - h / 2, w, h, r, r);
             ctx.fill();
+            if (root.eyeShine && h > d * 0.4) {
+                ctx.fillStyle = "rgba(255,255,255,0.92)";
+                ctx.beginPath();
+                ctx.ellipse(x - w * 0.34, y - h * 0.4, w * 0.4, Math.min(h * 0.36, w * 0.5));
+                ctx.fill();
+            }
 
             // Los párpados borran el ojo (el cuerpo es translúcido: no se puede tapar pintando)
             ctx.globalCompositeOperation = "destination-out";
             ctx.fillStyle = "black";
 
-            // Párpado de arriba (recto, inclinado hacia dentro o hacia fuera)
-            if (e.lt > 0.01) {
-                const top = y - h / 2 + e.lt * h;
-                const inner = top + e.tilt * h * 0.4, outer = top - e.tilt * h * 0.4;
+            // Párpado de arriba (recto, inclinado hacia dentro o hacia fuera); algunas
+            // transformaciones lo traen de serie (salvo con un susto)
+            let lt = e.lt, tilt = e.tilt;
+            if (root.baseLid > lt && root.face !== "surprised" && root.face !== "falling") {
+                lt = root.baseLid;
+                tilt = root.baseTilt;
+            }
+            if (root.eyeWhite.a > 0 && lt > 0.01) {
+                // (el párpado tapa también la esclerótica)
+                const k = root.eyeWhiteScale;
+                ctx.beginPath();
+                const top = y - h * k / 2 + lt * h * k;
+                ctx.rect(x - w * k, y - h * k * 1.5, w * 2 * k, top - (y - h * k * 1.5));
+                ctx.fill();
+            }
+            if (lt > 0.01) {
+                const top = y - h / 2 + lt * h;
+                const inner = top + tilt * h * 0.4, outer = top - tilt * h * 0.4;
                 const yl = side < 0 ? outer : inner, yr = side < 0 ? inner : outer;
                 ctx.beginPath();
                 ctx.moveTo(x - w / 2 - 2, yl);
@@ -768,12 +814,12 @@ Item {
                 ctx.lineTo(x - w / 2 - 2, y - h);
                 ctx.closePath();
                 ctx.fill();
-            } else if (e.tilt > 0.05 && h < d * 0.5) {
+            } else if (tilt > 0.05 && h < d * 0.5) {
                 // Ojos apretados: pellizco en la esquina interior
                 const inner = x - side * w / 2;
                 ctx.beginPath();
                 ctx.moveTo(inner, y - h);
-                ctx.lineTo(inner + side * w * 0.45 * e.tilt, y - h);
+                ctx.lineTo(inner + side * w * 0.45 * tilt, y - h);
                 ctx.lineTo(inner, y + h * 0.1);
                 ctx.closePath();
                 ctx.fill();
@@ -814,12 +860,33 @@ Item {
             ctx.beginPath();
             ctx.rect(cr.x + root.rx, cr.y + padTop, cr.width, cr.height);
             ctx.clip();
+            // Transformado: detalles sobre el cuerpo (recortados a su silueta; los de debajo de los
+            // ojos se pintan después, por detrás) y encima (boca, bigotes…)
+            const sk = root.skinDef, skA = Math.max(0, Math.min(1, root.skinAmt));
+            const g = sk ? {
+                x: cx,
+                y: cy,
+                rx: root.bodyRx,
+                ryT: root.bodyRy,
+                ryB: root.bodyRy,
+                t: root.skinT,
+                face: root.face,
+                amt: skA
+            } : null;
             ctx.save();
-            ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u + root.oy * 0.5);
-            ctx.rotate(sim.rot * Math.PI / 180);
+            const ex0 = cx + root.ox * 0.5, ey0 = cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u + root.oy * 0.5, rot = sim.rot * Math.PI / 180;
+            ctx.translate(ex0, ey0);
+            ctx.rotate(rot);
+            if (g)
+                g.eyes = [];
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                drawEye(ctx, side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx) + e.x, e.y, e, side);   // (aplastado de lado, que no se junten)
+                const bx = side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
+                drawEye(ctx, bx + e.x, e.y, e, side, bx);
+                if (g) {
+                    const lx = bx + e.x * 0.3, ly = e.y * 0.3;
+                    g.eyes.push([ex0 + lx * Math.cos(rot) - ly * Math.sin(rot), ey0 + lx * Math.sin(rot) + ly * Math.cos(rot)]);
+                }
             }
             // Sudor: una gotita que le resbala por la frente
             if (root.melt > 0.3 && sim.sweat >= 0) {
@@ -840,6 +907,14 @@ Item {
                 ctx.globalAlpha = 1;
             }
             ctx.restore();
+            if (sk && skA > 0) {
+                // (por DETRÁS de los ojos ya pintados: donde los párpados han borrado, se ve el
+                // detalle que hay debajo, p. ej. la cara crema de Snorlax con los ojos entornados)
+                ctx.globalCompositeOperation = "destination-over";
+                Skins.drawUnder(ctx, sk, g, c => c.ellipse(cx - root.bodyRx, cy - root.bodyRy, 2 * root.bodyRx, 2 * root.bodyRy));
+                ctx.globalCompositeOperation = "source-over";
+                Skins.drawOver(ctx, sk, g, skA);
+            }
 
             // Cabeza: lo más alto del cuerpo (la elipse con sus ondas, o la masa si sobresale)
             const wa = root.wobA, wb = root.wobB;

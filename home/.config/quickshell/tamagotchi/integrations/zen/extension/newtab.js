@@ -110,6 +110,7 @@ function frame(now) {
         snow: st?.snow ?? 0,
         stage: st?.stage ?? 1,
         look: st?.look,
+        skin: st?.skin ?? "",
         blink: face === "asleep" ? 0 : blink,
         lx: lx,
         ly: ly,

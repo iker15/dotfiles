@@ -7,6 +7,8 @@
 // Puede imitar formas (engranaje, Clawd —el bichito naranja de Claude Code—, corazón,
 // estrella, flecha): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da su color.
 // Y sacar un bracito (`arm`) de su propio material, p. ej. para sujetar la taza de café.
+// Transformaciones (Skins.js): `skinTint` tiñe el fluido, `skinForm` cambia la silueta (cubo,
+// llamas, fantasma, pinchos) y le brotan hasta 6 trozos (`pa*`/`pr*`: orejas, bracitos…).
 // Compilar: /usr/lib/qt6/bin/qsb --glsl "100 es,120,150" --hlsl 50 --msl 12 -o mochi.frag.qsb mochi.frag
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -32,6 +34,11 @@ layout(std140, binding = 0) uniform buf {
     vec4 shapeTint;  // color de la forma (rgb) y cuánto (a); junto al marco sigue siendo marco
     vec4 rainbow;    // arcoíris: cuánto (x, 0-1), tiempo (y, s)
     vec4 arm;        // bracito: punta x, y (px), cuánto ha salido (0-1), grosor de la punta (px)
+    vec4 skinTint;   // transformación: color (rgb) y cuánto se ha transformado (a, 0-1)
+    vec4 skinForm;   // silueta: cubo, llamas, fantasma, pinchos (0-1)
+    vec4 skinMisc;   // tiempo (s)
+    vec4 pa0; vec4 pa1; vec4 pa2; vec4 pa3; vec4 pa4; vec4 pa5;   // trozos: a.x, a.y, b.x, b.y (en semiejes)
+    vec4 pr0; vec4 pr1; vec4 pr2; vec4 pr3; vec4 pr4; vec4 pr5;   // radios en a y en b (en rx)
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
@@ -131,6 +138,50 @@ float smin(float a, float b, float k) {
     return min(a, b) - h * h * k * 0.25;
 }
 
+// ── Transformaciones (las mismas cuentas que Skins.js) ──
+float skirtEdge(float x, float t) {
+    return 0.8 + 0.2 * abs(sin(1.5 * 3.14159265 * (x + 1.0) + 0.25 * sin(t * 4.0)));
+}
+float spikeH(float x) {
+    return 0.3 * pow(max(0.0, cos(x * 2.6 * 3.14159265)), 6.0) * step(abs(x), 0.85);
+}
+float flameH(float x, float t) {
+    return 0.22 + 0.5 * pow(0.5 + 0.5 * cos(x * 3.3 * 3.14159265 - t * 3.0), 3.0) + 0.35 * exp(-x * x * 7.0);
+}
+
+// Trozo que le brota (cápsula que se afina de a a b)
+float partSd(vec2 p, vec4 ab, vec4 r, float amt) {
+    if (r.x * amt < 0.004)
+        return 1e5;
+    float k = 0.55 + 0.45 * amt;
+    vec2 a = body.xy + ab.xy * body.zw * k, b = body.xy + ab.zw * body.zw * k;
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-3), 0.0, 1.0);
+    return length(pa - ba * h) - mix(r.x, r.y, h) * body.z * amt;
+}
+
+// La silueta del cuerpo (elipse con ondas, distancia d) convertida en la de la skin
+float skinBody(float d, vec2 q, float amt) {
+    vec2 u = q / body.zw;
+    float R = min(body.z, body.w), t = skinMisc.x;
+    if (skinForm.x > 0.0) {
+        float rr = 0.22 * R;
+        d = mix(d, sdBox(q, body.zw * 0.96 - rr) - rr, skinForm.x * amt);
+    }
+    if (skinForm.z > 0.0 && u.y > 0.0) {
+        float xe = clamp(u.x, -1.0, 1.0);
+        float dg = max(abs(u.x) - 1.0, u.y - skirtEdge(xe, t)) * R;
+        d = mix(d, dg, skinForm.z * amt * smoothstep(0.0, 0.25, u.y));
+    }
+    float up = max(0.0, -u.y / max(length(u), 1e-3));
+    float xc = clamp(u.x, -1.0, 1.0);
+    if (skinForm.w > 0.0)
+        d -= skinForm.w * amt * spikeH(xc) * pow(up, 1.5) * body.w;
+    if (skinForm.y > 0.0)
+        d -= skinForm.y * amt * flameH(xc, t) * pow(up, 1.2) * body.w;
+    return d;
+}
+
 void main() {
     vec2 p = qt_TexCoord0 * size;
 
@@ -149,6 +200,18 @@ void main() {
     float wob = wobA.x * cos(2.0 * a) + wobA.y * sin(2.0 * a) + wobA.z * cos(3.0 * a) + wobA.w * sin(3.0 * a)
               + wobB.x * cos(4.0 * a) + wobB.y * sin(4.0 * a) + wobB.z * cos(5.0 * a) + wobB.w * sin(5.0 * a);
     float d = (length(q / body.zw) - (1.0 + wob)) * min(body.z, body.w);
+    // Transformado: su silueta y lo que le brota (orejas, bracitos…), del mismo material
+    // (los trozos usan skinMisc.y: sin recortar, así rebotan un poco al brotar)
+    float amt = skinTint.a, amtP = skinMisc.y;
+    if (amt > 0.001) {
+        d = skinBody(d, q, amt);
+        d = smin(d, partSd(p, pa0, pr0, amtP), 10.0);
+        d = smin(d, partSd(p, pa1, pr1, amtP), 10.0);
+        d = smin(d, partSd(p, pa2, pr2, amtP), 10.0);
+        d = smin(d, partSd(p, pa3, pr3, amtP), 10.0);
+        d = smin(d, partSd(p, pa4, pr4, amtP), 10.0);
+        d = smin(d, partSd(p, pa5, pr5, amtP), 10.0);
+    }
 
     d = smin(d, length(p - mass.xy) - mass.z, blobK);
     d = smin(d, length(p - tail.xy) - tail.z, blobK);
@@ -184,6 +247,9 @@ void main() {
         col = (edgeAt(s.x, 0.0) * w.x + edgeAt(s.y, 1.0) * w.y + edgeAt(s.x, 2.0) * w.z + edgeAt(s.y, 3.0) * w.w)
             / (w.x + w.y + w.z + w.w);
     }
+    // Color de la transformación (junto al marco sigue siendo marco: es el mismo fluido)
+    if (amt > 0.001)
+        col = mix(col, skinTint.rgb, amt * smoothstep(4.0, 22.0, inside));
     // Color de la forma (p. ej. el naranja de Clawd), salvo junto al marco: ahí sigue siendo
     // marco, como si el material se transformara en él
     if (shapeTint.a > 0.0 && shape.y > 0.0)

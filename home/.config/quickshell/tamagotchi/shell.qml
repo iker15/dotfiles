@@ -9,6 +9,7 @@ import Caelestia.Config
 import "Hats.js" as Hats
 import "Draw.js" as Draw
 import "Traits.js" as Traits
+import "Skins.js" as Skins
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
@@ -540,6 +541,9 @@ ShellRoot {
         levelEnd: Bond.lvlEnd,
         stage: Bond.stage,
         stageName: Bond.stageNames[Bond.stage],
+        skin: Look.born ? Wardrobe.wearing : "",
+        skinPending: Wardrobe.pendingLevel,
+        skinNext: Skins.nextAt(Bond.lvl),
         me: myName,
         neighbours: neighbours,
         away: away,
@@ -574,7 +578,7 @@ ShellRoot {
     }
     // El retrato: se repinta si cambia la cara, el gorro o el color (con calma: el color del
     // marco va variando)
-    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3), Bond.stage, JSON.stringify(Look.data())].join("|")
+    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3), Bond.stage, JSON.stringify(Look.data()), Wardrobe.wearing].join("|")
     onAvatarKeyChanged: avatarRedraw.restart()
     Timer {
         id: avatarRedraw
@@ -975,6 +979,7 @@ ShellRoot {
         target: Bond
 
         function onLevelUp(level: int, evolved: bool): void {
+            Wardrobe.sync(level);   // cada 5 niveles: transformación nueva para elegir
             // hueco nuevo para un rasgo de carácter (niveles 10, 20, 35): te lo dice
             if (Traits.slots(level) > Traits.slots(level - 1))
                 Quickshell.execDetached(["notify-send", "-a", "Mochi", "-i", `${Quickshell.env("HOME")}/.cache/mochi/avatar.png`, "Mochi puede aprender un rasgo nuevo", "Elígelo en su pestaña del dashboard (pincel junto a su nombre)."]);
@@ -988,6 +993,169 @@ ShellRoot {
                 shell.hopsLeft = evolved ? 3 : 1;
                 shell.hop();
             }
+        }
+    }
+
+    // ── Transformaciones (Skins.js + Wardrobe.qml): cada 5 niveles aprende una (le salen 3 y
+    // eliges en el dashboard) y desde ahí se la pones. No es un disfraz: el fluido entero se
+    // convierte en el personaje (color, silueta, orejas que le brotan, sus ojos y su cara); junto
+    // al marco sigue siendo marco. Si se la pones con el dashboard abierto, espera a que lo
+    // cierres para transformarse delante de ti.
+    property string skinShown: ""      // la que se ve (durante el cambio: la vieja y luego la nueva)
+    property real skinAmt: 0           // 0 él mismo → 1 transformado (en el rebote pasa un poco de 1)
+    property real skinT: 0
+    property string skinTry: ""        // (prueba por IPC: pet skinTry <id>, sin tenerla)
+    property bool skinQueued: false
+    property real skinQueuedAt: 0
+    readonly property string skinWanted: Look.born ? (skinTry || Wardrobe.wearing) : ""
+    readonly property var skinDef: Skins.byId(skinShown)
+    readonly property real skinK: Math.max(0, Math.min(1, skinAmt))
+    // sus ojos (a partir de la mitad de la transformación)
+    readonly property var skinEyes: skinDef && skinAmt > 0.5 ? Skins.eyesOf(skinDef, Look.data()) : null
+    // (lo que le brota se esconde con él al bucear o en el nido: nada de orejas asomando)
+    readonly property real skinPartsVis: phys === "dive" ? Math.max(0, 1 - diveUnder * 1.6) : phys === "nest" ? nestPeek : 1
+    // (para el shader)
+    readonly property var skinRgb: skinDef ? Skins.rgb(skinDef.color) : [0, 0, 0]
+    readonly property vector4d skinFormV: {
+        const f = skinDef?.form ?? {};
+        return Qt.vector4d(f.square ?? 0, f.flame ?? 0, f.skirt ?? 0, f.spikes ?? 0);
+    }
+    readonly property var skinPA: [0, 1, 2, 3, 4, 5].map(i => {
+        const p = skinDef?.parts?.[i];
+        return p ? Qt.vector4d(p.a[0], p.a[1], p.b[0], p.b[1]) : Qt.vector4d(0, 0, 0, 0);
+    })
+    readonly property var skinPR: [0, 1, 2, 3, 4, 5].map(i => {
+        const p = skinDef?.parts?.[i];
+        return p ? Qt.vector4d(p.ra, p.rb, 0, 0) : Qt.vector4d(0, 0, 0, 0);
+    })
+    onSkinWantedChanged: skinChange()
+
+    function skinChange(): void {
+        if (skinWanted === skinShown && !skinAnim.running)
+            return;
+        skinQueued = true;
+        skinQueuedAt = Date.now();
+        skinWait.restart();
+        skinWait.triggered();
+    }
+    // sin animación (no está a la vista o está esperando en su nido)
+    function skinInstant(): void {
+        skinAnim.stop();
+        skinQueued = false;
+        skinShown = skinWanted;
+        skinAmt = skinWanted ? 1 : 0;
+    }
+    Timer {
+        id: skinWait
+
+        running: shell.skinQueued
+        repeat: true
+        interval: 400
+        onTriggered: {
+            if (!shell.skinQueued || skinAnim.running)
+                return;
+            if (!Look.born || shell.phys === "away" || Date.now() - shell.skinQueuedAt > 600000)
+                return shell.skinInstant();
+            if (Object.values(shell.panels).some(r => r && r.length))
+                return;   // con el dashboard abierto no lo verías: espera a que lo cierres
+            if (!shell.present || shell.fsHide)
+                return;
+            if (shell.phys === "nest") {
+                if (shell.nestPinned)
+                    return shell.skinInstant();
+                shell.leaveNest();
+                return;
+            }
+            if (shell.phys === "swim" || shell.phys === "air" || shell.phys === "held") {
+                shell.skinQueued = false;
+                skinAnim.restart();
+            }
+        }
+    }
+    // Se concentra (tiembla con los ojos apretados), se deshace de la forma que tenía y la nueva
+    // le brota del cuerpo con un rebote de gelatina; luego lo celebra
+    SequentialAnimation {
+        id: skinAnim
+
+        ScriptAction {
+            script: {
+                shell.reacted("squint", 1500);
+                shell.kicked(1.2, -1.6);
+            }
+        }
+        PauseAnimation {
+            duration: 260
+        }
+        ScriptAction {
+            script: shell.kicked(-0.9, 1.1)
+        }
+        PauseAnimation {
+            duration: 220
+        }
+        ScriptAction {
+            script: shell.kicked(0.9, -1.2)
+        }
+        NumberAnimation {
+            target: shell
+            property: "skinAmt"
+            to: 0
+            duration: shell.skinShown && shell.skinAmt > 0 ? 520 : 0
+            easing.type: Easing.InQuad
+        }
+        ScriptAction {
+            script: {
+                shell.skinShown = shell.skinWanted;
+                shell.skinT = 0;
+                shell.kicked(-1.9, 2.8);   // se estira y…
+            }
+        }
+        NumberAnimation {
+            target: shell
+            property: "skinAmt"
+            to: shell.skinWanted ? 1 : 0
+            duration: shell.skinWanted ? 1100 : 0
+            easing.type: Easing.OutBack
+            easing.overshoot: 2.2
+        }
+        ScriptAction {
+            script: {
+                shell.splatted(0.7, false);
+                shell.reacted(shell.skinShown ? "excited" : "happy", 2200);
+                if (shell.phys === "swim") {
+                    shell.hopsLeft = 1;
+                    shell.hop();
+                }
+                if (shell.skinWanted !== shell.skinShown)
+                    shell.skinChange();   // (la han cambiado mientras tanto)
+            }
+        }
+    }
+
+    // Cada 5 niveles: le salen 3 transformaciones para elegir
+    Connections {
+        target: Wardrobe
+
+        function onUnlocked(level: int): void {
+            Quickshell.execDetached(["notify-send", "-a", "Mochi", "-i", `${Quickshell.env("HOME")}/.cache/mochi/avatar.png`, `¡Mochi puede transformarse! (nivel ${level})`, "Le han salido 3 transformaciones: elige una en su pestaña del dashboard."]);
+            if (shell.present && !shell.locked && shell.phys !== "away")
+                shell.reacted("excited", 2400);
+        }
+        function onLoadedChanged(): void {
+            shell.skinInit();
+        }
+    }
+    function skinInit(): void {
+        if (!Wardrobe.loaded)
+            return;
+        skinInstant();
+        if (Look.born && Bond.loaded)
+            Wardrobe.sync(Bond.lvl);   // (niveles alcanzados con él apagado)
+    }
+    Connections {
+        target: Bond
+
+        function onLoadedChanged(): void {
+            shell.skinInit();
         }
     }
 
@@ -1022,6 +1190,7 @@ ShellRoot {
             name: myName,
             level: Bond.lvl,
             stage: Bond.stage,
+            skin: Wardrobe.wearing,   // (el vecino lo ve transformado)
             hat: hat,
             bond: Math.round(Bond.bond),
             body: avatarBody,
@@ -2449,6 +2618,8 @@ ShellRoot {
         interval: 1600
         onTriggered: {
             Bond.reset();
+            Wardrobe.reset();
+            shell.skinTry = "";
             shell.nestPinned = false;
             shell.saveNest();
             shell.diveStay = false;
@@ -2728,6 +2899,7 @@ ShellRoot {
 
         function onBornNow(): void {
             shell.birth();
+            shell.skinInit();
         }
     }
 
@@ -3111,6 +3283,8 @@ ShellRoot {
             shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 1 : 0);
         else
             shapeRot = 0;
+        if (skinAmt > 0)
+            skinT += dt;   // (llamas de Calcifer, falda de Blinky…)
         if (phys !== "nest" && (bodyOffX || bodyOffY)) {
             // (al sacarlo del nido, el cuerpo sale de la barra detrás de los ojos)
             const f = Math.exp(-9 * dt);
@@ -3302,6 +3476,8 @@ ShellRoot {
     }
 
     Component.onCompleted: {
+        Wardrobe.writer = true;   // (el dashboard solo lo lee)
+        skinInit();
         mochiWs = Hyprland.focusedWorkspace?.id ?? -1;
         const s = Quickshell.screens[0];
         if (gx < 0 && s) {
@@ -3531,6 +3707,34 @@ ShellRoot {
             shell.goNest();
         }
         // Repetir el nacimiento (para probarlo; no borra nada)
+        // Transformaciones: elegir una de las 3 que le han salido en un nivel, ponérsela ("" o
+        // "none" = él mismo), probar una sin tenerla (skinTry <id>, "" para quitarla) y ver el estado
+        function skinPick(level: int, id: string): string {
+            if (!Wardrobe.pick(level, id))
+                return "no";
+            Wardrobe.wear(id);   // (y se transforma al momento: para eso la has elegido)
+            return "ok";
+        }
+        function skinWear(id: string): string {
+            return Wardrobe.wear(id === "none" ? "" : id) ? "ok" : "no la tiene";
+        }
+        function skinTry(id: string): string {
+            if (id && id !== "none" && !Skins.byId(id))
+                return "no existe: " + Skins.list.map(k => k.id).join(" ");
+            shell.skinTry = id === "none" ? "" : id;
+            return "ok";
+        }
+        function skinState(): string {
+            return JSON.stringify({
+                shown: shell.skinShown,
+                amt: Math.round(shell.skinAmt * 100) / 100,
+                wanted: shell.skinWanted,
+                queued: shell.skinQueued,
+                level: Bond.lvl,
+                wardrobe: Wardrobe.data(),
+                pending: Wardrobe.pendingLevel
+            });
+        }
         function birthTest(): void {
             if (Look.born)
                 shell.birth();
@@ -4385,6 +4589,22 @@ ShellRoot {
                         property vector4d rainbow: Qt.vector4d(shell.rainbowAmt, shell.rainbowT, 0, 0)
                         // bracito hasta el asa de la taza (o el mango del paraguas)
                         property vector4d arm: Qt.vector4d(shell.armTip.x - win.modelData.x - x, shell.armTip.y - win.modelData.y - y, Math.max(0, shell.armTip.z), 6)
+                        // transformado (Skins.js): color, silueta y lo que le brota
+                        property vector4d skinTint: shell.skinDef ? Qt.vector4d(shell.skinRgb[0], shell.skinRgb[1], shell.skinRgb[2], shell.skinK) : Qt.vector4d(0, 0, 0, 0)
+                        property vector4d skinForm: shell.skinFormV
+                        property vector4d skinMisc: Qt.vector4d(shell.skinT, Math.max(0, shell.skinAmt) * shell.skinPartsVis, 0, 0)
+                        property vector4d pa0: shell.skinPA[0]
+                        property vector4d pa1: shell.skinPA[1]
+                        property vector4d pa2: shell.skinPA[2]
+                        property vector4d pa3: shell.skinPA[3]
+                        property vector4d pa4: shell.skinPA[4]
+                        property vector4d pa5: shell.skinPA[5]
+                        property vector4d pr0: shell.skinPR[0]
+                        property vector4d pr1: shell.skinPR[1]
+                        property vector4d pr2: shell.skinPR[2]
+                        property vector4d pr3: shell.skinPR[3]
+                        property vector4d pr4: shell.skinPR[4]
+                        property vector4d pr5: shell.skinPR[5]
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
@@ -4730,6 +4950,21 @@ ShellRoot {
                 property vector4d shapeTint: bodyFx.shapeTint
                 property vector4d rainbow: bodyFx.rainbow
                 property vector4d arm: bodyFx.arm
+                property vector4d skinTint: bodyFx.skinTint
+                property vector4d skinForm: bodyFx.skinForm
+                property vector4d skinMisc: bodyFx.skinMisc
+                property vector4d pa0: bodyFx.pa0
+                property vector4d pa1: bodyFx.pa1
+                property vector4d pa2: bodyFx.pa2
+                property vector4d pa3: bodyFx.pa3
+                property vector4d pa4: bodyFx.pa4
+                property vector4d pa5: bodyFx.pa5
+                property vector4d pr0: bodyFx.pr0
+                property vector4d pr1: bodyFx.pr1
+                property vector4d pr2: bodyFx.pr2
+                property vector4d pr3: bodyFx.pr3
+                property vector4d pr4: bodyFx.pr4
+                property vector4d pr5: bodyFx.pr5
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
@@ -4890,6 +5125,7 @@ ShellRoot {
                             face: face,
                             hat: m.hat ?? "",
                             stage: m.stage ?? 1,
+                            skin: m.skin ?? "",
                             lx: d < 20 ? 0 : (shell.cursorX - g.x) / (d + 60),
                             ly: d < 20 ? 0 : (shell.cursorY - g.y + 40) / (d + 60),
                             blink: (g.t % 4) < 0.12 ? 1 : 0,
@@ -5095,6 +5331,7 @@ ShellRoot {
                         face: shell.peekFace,
                         hat: shell.hat,
                         stage: Bond.stage,
+                        skin: Wardrobe.wearing,
                         breath: 0.5 + 0.5 * Math.sin(t * 3),
                         ly: -0.4,
                         t: t
@@ -5141,6 +5378,7 @@ ShellRoot {
                         melt: shell.melt,
                         snow: shell.snowAmt,
                         stage: Bond.stage,
+                        skin: Wardrobe.wearing,
                         t: 0.3
                     });
                     pending = true;
@@ -5356,10 +5594,20 @@ ShellRoot {
                 // Solo en el workspace donde vive, y se aparta si hay algo a pantalla completa
                 visible: Look.born && shell.present && !shell.fsHide && shell.phys !== "away"
                 x: shell.gx - win.modelData.x - width / 2
-                eyeSize: Look.eyeSize
-                eyeGap: Look.eyeGap
-                eyeY: Look.eyeY
-                eyeShape: Look.eyeShape
+                // (transformado: sus ojos, los del personaje)
+                eyeSize: shell.skinEyes ? shell.skinEyes.eyeSize : Look.eyeSize
+                eyeGap: shell.skinEyes ? shell.skinEyes.eyeGap : Look.eyeGap
+                eyeY: shell.skinEyes ? shell.skinEyes.eyeY : Look.eyeY
+                eyeShape: shell.skinEyes ? shell.skinEyes.eyeShape : Look.eyeShape
+                eyeRound: shell.skinEyes ? shell.skinEyes.round : 1
+                eyeWhite: shell.skinEyes?.white || "transparent"
+                eyeWhiteScale: shell.skinEyes?.whiteScale ?? 1.9
+                eyeShine: shell.skinEyes?.shine ?? false
+                baseLid: shell.skinEyes?.lid ?? 0
+                baseTilt: shell.skinEyes?.tilt ?? 0
+                skin: shell.skinShown
+                skinAmt: shell.skinAmt
+                skinT: shell.skinT
                 wide: Look.wide
                 jelly: Look.jelly
                 traits: Look.traits
@@ -5385,7 +5633,7 @@ ShellRoot {
                 anchorNx: shell.nX
                 anchorNy: shell.nY
                 onDozingChanged: if (visible) shell.dozing = dozing
-                inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : "transparent"   // Clawd: ojos oscuros
+                inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : shell.skinEyes?.ink || "transparent"   // Clawd: ojos oscuros
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4) || shell.birthPuddle > 0.25
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
