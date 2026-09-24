@@ -43,11 +43,12 @@ link() {
     echo "  $dst"
 }
 for f in .config/*; do
-    [ "$f" = ".config/VSCodium" ] && continue
+    [ "$f" = ".config/VSCodium" ] || [ "$f" = ".config/Code - OSS" ] && continue
     link "$f"
 done
 link .config/VSCodium/User/settings.json
 link .config/VSCodium/User/keybindings.json
+link ".config/Code - OSS/User/settings.json"
 for f in .[!.]*; do
     [ "$f" = ".config" ] || [ "$f" = ".local" ] && continue
     link "$f"
@@ -72,6 +73,8 @@ log "Poniendo a Mochi en el arranque"
 "$HOME/dotfiles/system/limine/install.sh" || echo "  (sin fondo de Limine: ejecuta system/limine/install.sh más tarde)"
 
 # --- 4c. Mochi en las apps (Zen, VSCodium, Minecraft) ------------------------
+# (y basedpyright: errores de Python en el editor, para que Mochi los vea)
+command -v codium >/dev/null && codium --install-extension detachhead.basedpyright >/dev/null 2>&1 || true
 log "Integrando a Mochi en las apps"
 "$HOME/.config/quickshell/tamagotchi/integrations/install-all.sh" || echo "  (ejecuta ~/.config/quickshell/tamagotchi/integrations/install-all.sh más tarde)"
 

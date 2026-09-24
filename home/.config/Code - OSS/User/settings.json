@@ -1,0 +1,8 @@
+{
+    "workbench.colorTheme": "Caelestia",
+    "livePreview.autoRefreshPreview": "On All Changes in Editor",
+    "livePreview.openPreviewTarget": "Embedded Preview",
+    "debug.breakpointsView.presentation": "tree",
+    "basedpyright.analysis.typeCheckingMode": "standard",
+    "python.languageServer": "None"
+}
