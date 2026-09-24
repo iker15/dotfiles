@@ -18,7 +18,9 @@ Singleton {
     signal say(string text, string face)
     signal glance(real x, real y)           // mirar hacia un punto de la pantalla
     signal dance(int ms)
-    signal shape(string name, int ms)       // imitar una forma con el cuerpo (engranaje…)
+    signal shape(string name, int ms)       // imitar una forma con el cuerpo
+    signal youtube()                        // empiezas a ver un vídeo de YouTube
+    signal coding()                         // estás escribiendo código en VSCodium
 
     // Música
     readonly property var player: Mpris.players.values.find(p => p.isPlaying) ?? null
@@ -37,6 +39,62 @@ Singleton {
     property bool warnedCritical: false
 
     property var wsTimes: []
+
+    // Por título de ventana (Hyprland avisa de cada cambio): lo que era cada ventana la última
+    // vez, para reaccionar solo al pasar de una cosa a otra
+    property var wasClaude: ({})     // dirección → la terminal tenía Claude Code
+    property var wasDirty: ({})      // dirección → VSCodium con cambios sin guardar
+    property string lastVideo: ""
+    property real codingUntil: 0     // (para no repetirlo a cada rato)
+
+    // Claude Code pone en la terminal su símbolo delante del título (✳, ◑, ⠂…)
+    function isClaudeTitle(t: string): bool {
+        return /^[✳✢✶✻✽·◐◑◒◓◴◵◶◷\u2800-\u28FF]\s/.test(t) && !/— (Zen|Mozilla|Firefox)|Chromium|Brave/.test(t);
+    }
+    function isCodium(t: string): bool {
+        return /(VSCodium|Visual Studio Code)$/.test(t);
+    }
+    // "(3) Título del vídeo - YouTube — Zen Browser" → "Título del vídeo" (la portada no cuenta)
+    function youtubeVideo(t: string): string {
+        const m = t.match(/^(?:\(\d+\)\s*)?(.+?) - YouTube(?: — .*)?$/);
+        return m ? m[1] : "";
+    }
+
+    function onTitle(addr: string, title: string): void {
+        // Abres Claude en una terminal: se convierte en su destello un momento
+        const claude = isClaudeTitle(title);
+        if (addr in wasClaude && claude && !wasClaude[addr])
+            shape("claude", 3200);
+        wasClaude[addr] = claude;
+        // YouTube: vídeo nuevo → ojos de YouTube un momento
+        const video = youtubeVideo(title);
+        if (video && video !== lastVideo) {
+            lastVideo = video;
+            youtube();
+        }
+        // VSCodium: pasa a tener cambios sin guardar (estás escribiendo)
+        if (isCodium(title)) {
+            const dirty = title.startsWith("●");
+            if (addr in wasDirty && dirty && !wasDirty[addr] && Date.now() > codingUntil) {
+                codingUntil = Date.now() + 90000;
+                coding();
+            }
+            wasDirty[addr] = dirty;
+        }
+    }
+
+    Component.onCompleted: {
+        // (lo que ya estaba abierto no cuenta como "acabo de abrir")
+        for (const t of Hyprland.toplevels.values) {
+            const addr = t.address, title = t.title ?? "";
+            wasClaude[addr] = isClaudeTitle(title);
+            if (isCodium(title))
+                wasDirty[addr] = title.startsWith("●");
+            const v = youtubeVideo(title);
+            if (v)
+                lastVideo = v;
+        }
+    }
 
     // Lo que Claude recibe con cada mensaje, para saber qué está pasando
     function context(): string {
@@ -57,18 +115,6 @@ Singleton {
             re: /steam_app|^steam$|lutris|heroic|minecraft|prismlauncher|retroarch|gamescope/,
             kind: "game",
             face: "excited"
-        },
-        {
-            re: /systemsettings|control-center|nwg-look|pavucontrol|blueman|nm-connection|qt[56]ct|kvantum|settings/,
-            kind: "settings",
-            face: "focused",
-            shape: "gear"
-        },
-        {
-            re: /^claude|anthropic/,
-            kind: "claude",
-            face: "love",
-            shape: "claude"
         },
         {
             re: /codium|^code|zed|jetbrains|neovide/,
@@ -126,8 +172,7 @@ Singleton {
     function onWindowOpened(cls: string): void {
         const k = kindOf(cls);
         react(k ? k.face : "curious", 1600);
-        if (k?.shape)
-            shape(k.shape, 3200);   // p. ej. abres unos ajustes: se hace un engranaje
+
     }
 
     Connections {
@@ -135,8 +180,13 @@ Singleton {
 
         function onRawEvent(event: var): void {
             const name = event.name;
-            if (name === "openwindow") {
-                const [, , cls] = event.parse(4);
+            if (name === "windowtitlev2") {
+                const [addr, title] = event.parse(2);
+                root.onTitle(addr ?? "", title ?? "");
+            } else if (name === "openwindow") {
+                const [addr, , cls] = event.parse(4);
+                root.wasClaude[addr] = false;   // ventana nueva: aún no tiene Claude
+                root.wasDirty[addr] = false;
                 root.onWindowOpened(cls ?? "");
                 glanceLater.restart();
             } else if (name === "workspacev2") {

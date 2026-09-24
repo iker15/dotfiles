@@ -187,6 +187,11 @@ ShellRoot {
     signal kicked(real ax, real ay)
     signal woke()                     // cualquier uso: se le quita el sueño
     signal sleepTest(string what)
+    signal ytEyes()                   // ojos de YouTube un momento
+
+    // Escribiendo código en VSCodium: la forma que imita (la está pensando Iker; mientras
+    // tanto, solo pone ojos de concentrado)
+    property string codeShape: ""
     property bool dozing: false       // se ha quedado dormido (no pasea)
 
     // Pantalla de bloqueo (la avisa caelestia/modules/lock/Lock.qml): mientras está bloqueada
@@ -1194,6 +1199,18 @@ ShellRoot {
             if (shell.present && !shell.asking && !shell.dragging && shell.phys === "swim")
                 shell.shapeShift(name, ms);
         }
+        function onYoutube(): void {
+            if (shell.present && !shell.asking && !shell.dragging && !Brain.busy && shell.phys !== "dive" && shell.phys !== "hidden")
+                shell.ytEyes();
+        }
+        function onCoding(): void {
+            if (!shell.present || shell.asking || shell.dragging || Brain.busy)
+                return;
+            if (shell.codeShape && shell.phys === "swim")
+                shell.shapeShift(shell.codeShape, 3000);
+            else
+                shell.reacted("focused", 1800);
+        }
         function onGlance(x: real, y: real): void {
             shell.glanceX = x;
             shell.glanceY = y;
@@ -1328,6 +1345,10 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
+        }
+        // Probar los ojos de YouTube
+        function youtube(): void {
+            shell.ytEyes();
         }
         // Imitar una forma: gear | claude | heart | star | arrow (ms, 0 = 2,5 s)
         function shape(name: string, ms: int): void {
@@ -1736,6 +1757,8 @@ ShellRoot {
                 readonly property bool asleep: mochi.dozing || (shell.drowsy > 0.8 && !shell.cursorNear)
                 readonly property real nod: mochi.nod
                 onNodChanged: requestPaint()
+                readonly property real yt: mochi.yt
+                onYtChanged: requestPaint()
                 onAsleepChanged: requestPaint()
                 readonly property color ink: Theme.secondary
                 property real breath: 0
@@ -1797,7 +1820,23 @@ ShellRoot {
                     const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
                     for (const cx of [11, 19]) {
                         const x = cx + ex, y = 14 + ey;
-                        if (asleep) {
+                        if (yt > 0.01) {
+                            // ojos de YouTube: rojos con su "play"
+                            ctx.globalCompositeOperation = "source-over";
+                            const w = 3.5 + 2.6 * yt, h = 4.7 + 0.3 * yt;
+                            ctx.fillStyle = Qt.rgba(1, 0, 0.2, Math.min(1, yt * 1.4));
+                            ctx.beginPath();
+                            ctx.roundedRect(x - w / 2, y - h / 2, w, h, 1.3, 1.3);
+                            ctx.fill();
+                            ctx.fillStyle = Qt.rgba(1, 1, 1, yt);
+                            ctx.beginPath();
+                            ctx.moveTo(x - 0.9, y - 1.3);
+                            ctx.lineTo(x + 1.4, y);
+                            ctx.lineTo(x - 0.9, y + 1.3);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.globalCompositeOperation = "destination-out";
+                        } else if (asleep) {
                             // dormido: rayitas
                             ctx.fillStyle = "black";
                             ctx.beginPath();
@@ -1866,6 +1905,9 @@ ShellRoot {
                     }
                     function onWoke(): void {
                         mochi.wake();
+                    }
+                    function onYtEyes(): void {
+                        mochi.youtube();
                     }
                     function onSleepTest(what: string): void {
                         if (what === "nod")

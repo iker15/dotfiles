@@ -11,9 +11,9 @@ import Quickshell.Services.UPower
 // LockBody.qml dentro de la capa de la propia tarjeta (mismo material y una sola sombra).
 // Solo ojos y cuerpo; aquí no escucha ni obedece.
 // - Mientras escribes la contraseña se mete en la tarjeta y aprieta los ojos: no mira.
-// - Con Bloq Mayús se convierte en una flecha ⇪ y da botes, mirando al campo.
-// - Si fallas, se pone triste y se sacude; si aciertas, se hace un corazón, se descuelga, cae
-//   al borde de abajo y se va buceando al escritorio.
+// - Con Bloq Mayús se alarma y da botes, mirando al campo.
+// - Si fallas, se pone triste y se sacude; si aciertas, se alegra, se descuelga, cae al borde
+//   de abajo y se va buceando al escritorio.
 // - De madrugada tiene sueño (cabezadas, se queda frito abajo); mover el ratón lo despierta.
 // - Con poca batería mira preocupado al indicador de batería de vez en cuando.
 Item {
@@ -66,7 +66,7 @@ Item {
     property real shake: 0               // meneo de lado a lado (no)
 
     // Forma que imita (ver mochi.frag): "" · gear · claude · heart · star · arrow
-    readonly property string shapeName: capsLock && ready && !unlocking ? "arrow" : heartShape.running ? "heart" : ""
+    readonly property string shapeName: ""   // (de momento ninguna aquí)
     readonly property int shapeId: ({
             "gear": 1,
             "claude": 2,
@@ -275,13 +275,12 @@ Item {
         }
     }
 
-    // Contraseña bien: corazón, y se descuelga (o, si estaba abajo, se zambulle)
+    // Contraseña bien: se alegra y se descuelga (o, si estaba abajo, se zambulle)
     onUnlockingChanged: {
         if (!unlocking)
             return;
         mochi.wake();
         mochi.react("happy", 900);
-        heartShape.restart();
         if (phase === "card" || phase === "jump") {
             const n = cardPoint(t);
             phase = "drop";
@@ -297,12 +296,6 @@ Item {
         id: typingRecent
 
         interval: 1600
-    }
-
-    Timer {
-        id: heartShape
-
-        interval: 650
     }
 
     // De abajo a la tarjeta al poco de llegar (si está frito, cuando lo despiertes)
