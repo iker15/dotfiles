@@ -1,0 +1,6 @@
+# imágenes de referencia (arte con derechos: no van al repo) y lo que se genera con ellas
+src/
+clus/
+out/
+.venv/
+*.png

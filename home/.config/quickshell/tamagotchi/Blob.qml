@@ -94,6 +94,12 @@ Item {
     property real skinAmt: 0
     property real skinT: 0
     readonly property var skinDef: Skins.byId(skin)
+    // su silueta real (SkinShapes.js) y sus ojos en el sitio de los del personaje; px por semiancho
+    // de la silueta (en vertical, como el shader: sigue al cuerpo cuando se aplasta)
+    readonly property var silDef: skinDef?.sil ?? null
+    readonly property var silEyes: silDef && skinAmt > 0.5 ? silDef.eyes : null
+    readonly property real silKx: rx * sx * (silDef?.size ?? 1)
+    readonly property real silKy: rx * sy * (silDef?.size ?? 1)
     property real eyeRound: 1                 // 1 redondos · 0 cuadrados (slime de Minecraft)
     property color eyeWhite: "transparent"    // esclerótica (Totoro, Blinky…): la pupila mira dentro
     property real eyeWhiteScale: 1.9
@@ -746,7 +752,7 @@ Item {
         }
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int, bx: real): void {
-            const d = 9.5 * root.u * root.eyeSize;
+            const d = root.silEyes ? root.silEyes.d * root.silKx : 9.5 * root.u * root.eyeSize;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
                 ctx.fillStyle = root.ink;
@@ -866,22 +872,27 @@ Item {
             const g = sk ? {
                 x: cx,
                 y: cy,
+                base: cy + root.bodyRy,
+                k: root.silKx,
+                ky: root.silKy,
                 rx: root.bodyRx,
-                ryT: root.bodyRy,
-                ryB: root.bodyRy,
                 t: root.skinT,
                 face: root.face,
-                amt: skA
+                amt: skA,
+                ink: root.ink
             } : null;
             ctx.save();
-            const ex0 = cx + root.ox * 0.5, ey0 = cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u + root.oy * 0.5, rot = sim.rot * Math.PI / 180;
+            // (transformado: en el sitio de los ojos del personaje)
+            const se = root.silEyes;
+            const ex0 = cx + (se ? se.x * root.silKx : 0) + root.ox * 0.5;
+            const ey0 = (se ? cy + root.bodyRy + (se.y - 1) * root.silKy : cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u) + root.oy * 0.5, rot = sim.rot * Math.PI / 180;
             ctx.translate(ex0, ey0);
             ctx.rotate(rot);
             if (g)
                 g.eyes = [];
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                const bx = side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
+                const bx = se ? side * se.g * root.silKx : side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
                 drawEye(ctx, bx + e.x, e.y, e, side, bx);
                 if (g) {
                     const lx = bx + e.x * 0.3, ly = e.y * 0.3;
@@ -911,7 +922,13 @@ Item {
                 // (por DETRÁS de los ojos ya pintados: donde los párpados han borrado, se ve el
                 // detalle que hay debajo, p. ej. la cara crema de Snorlax con los ojos entornados)
                 ctx.globalCompositeOperation = "destination-over";
-                Skins.drawUnder(ctx, sk, g, c => c.ellipse(cx - root.bodyRx, cy - root.bodyRy, 2 * root.bodyRx, 2 * root.bodyRy));
+                // (recortados a su silueta, la misma que pinta el shader)
+                const rim = (i, n) => [cx + root.bodyRx * Math.cos(2 * Math.PI * i / n), cy + root.bodyRy * Math.sin(2 * Math.PI * i / n)];
+                const pts = Skins.outline(sk, g, rim, skA);
+                Skins.drawUnder(ctx, sk, g, c => {
+                    pts.forEach(([px, py], i) => i ? c.lineTo(px, py) : c.moveTo(px, py));
+                    c.closePath();
+                });
                 ctx.globalCompositeOperation = "source-over";
                 Skins.drawOver(ctx, sk, g, skA);
             }

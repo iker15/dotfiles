@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copia web (sin .pragma/.import de QML) de Hats.js + Skins.js + Draw.js para la extensión de Zen
+# Copia web (sin .pragma/.import de QML) de Hats.js + SkinShapes.js + Skins.js + Draw.js para la extensión de Zen
 # y la de VSCodium: define window.MochiDraw = { avatar }, MochiHats y MochiSkins.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -11,9 +11,13 @@ bundle() {
     grep -v '^\.pragma\|^\.import' "$root/Hats.js"
     echo "return { E, RR, draw, seasonal };"
     echo "})();"
+    echo "const Shapes = (function () {"
+    grep -v '^\.pragma\|^\.import' "$root/SkinShapes.js"
+    echo "return { get };"
+    echo "})();"
     echo "const Skins = (function () {"
     grep -v '^\.pragma\|^\.import' "$root/Skins.js"
-    echo "return { list, byId, milestones, nextAt, roll, formPoint, grown, capsule, drawParts, drawUnder, drawOver, eyesOf, rgb };"
+    echo "return { list, byId, milestones, nextAt, roll, outline, drawUnder, drawOver, eyesOf, rgb };"
     echo "})();"
     grep -v '^\.pragma\|^\.import' "$root/Draw.js"
     echo "g.MochiDraw = { avatar };"

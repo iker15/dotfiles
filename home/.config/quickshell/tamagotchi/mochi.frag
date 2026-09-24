@@ -39,9 +39,14 @@ layout(std140, binding = 0) uniform buf {
     vec4 skinMisc;   // tiempo (s)
     vec4 pa0; vec4 pa1; vec4 pa2; vec4 pa3; vec4 pa4; vec4 pa5;   // trozos: a.x, a.y, b.x, b.y (en semiejes)
     vec4 pr0; vec4 pr1; vec4 pr2; vec4 pr3; vec4 pr4; vec4 pr5;   // radios en a y en b (en rx)
+    vec4 silInfo;    // silueta real del personaje (siluetas/<id>.png): cuánto (x, 0-1), px por semiancho
+                     // de la silueta en horizontal (y) y en vertical (z; sigue al aplastarse)
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
+// Campo de distancias de la silueta: X −2…2, Y −3…1 en semianchos (base en Y = 1); 0.5 = borde,
+// ±0.6 semianchos en 0…1
+layout(binding = 2) uniform sampler2D silTex;
 
 vec3 edgeAt(float along, float row) {
     return texture(edge, vec2((along + 0.5) / view.z, (row + 0.5) / 4.0)).rgb;
@@ -213,8 +218,32 @@ void main() {
         d = smin(d, partSd(p, pa5, pr5, amtP), 10.0);
     }
 
-    d = smin(d, length(p - mass.xy) - mass.z, blobK);
-    d = smin(d, length(p - tail.xy) - tail.z, blobK);
+    // Transformado en un personaje: el fluido toma su silueta real (y sigue temblando)
+    float dsil = 1e5;
+    if (silInfo.x > 0.001) {
+        float kx = silInfo.y, ky = silInfo.z;
+        vec2 s = vec2(q.x / kx, 1.0 + (q.y - body.w) / ky);
+        vec2 uv = vec2((s.x + 2.0) * 0.25, (s.y + 3.0) * 0.25);
+        float ds;
+        if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+            ds = (texture(silTex, uv).r - 0.5) * 1.2;
+        else
+            ds = 0.6 + length(max(abs(s - vec2(0.0, -1.0)) - vec2(2.0), 0.0));
+        ds = ds * min(kx, ky) - wob * min(body.z, body.w) * 0.5;
+        dsil = ds;
+        d = mix(d, ds, clamp(silInfo.x, 0.0, 1.0));
+    }
+
+    // La masa y la cola (inercia): transformado, solo pueden salirse un poco de su silueta
+    // (si no, en las siluetas bajitas asomaban por encima y la redondeaban)
+    float dmass = length(p - mass.xy) - mass.z, dtail = length(p - tail.xy) - tail.z;
+    if (silInfo.x > 0.001) {
+        float t = clamp(silInfo.x, 0.0, 1.0);
+        dmass = mix(dmass, max(dmass, dsil - 5.0), t);
+        dtail = mix(dtail, max(dtail, dsil - 5.0), t);
+    }
+    d = smin(d, dmass, blobK);
+    d = smin(d, dtail, blobK);
     // Bracito: sale del centro y se va afinando hasta la punta
     if (arm.z > 0.001) {
         vec2 pa = p - body.xy, ba = (arm.xy - body.xy) * arm.z;

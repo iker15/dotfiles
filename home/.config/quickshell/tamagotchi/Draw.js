@@ -77,17 +77,23 @@ function avatar(ctx, o) {
         t: t,
         face: o.face || "normal",
         amt: amt,
-        ink: mono ? o.ink : "",
+        ink: o.ink,
         mono: mono,
-        accents: !mono || !!o.skinAccents
+        accents: !mono || !!o.skinAccents,
+        // (para la silueta: el suelo del cuerpo y px por semiancho de la silueta)
+        base: o.y,
+        k: skin ? rx * skin.sil.size : rx
     };
-    const rimOf = skin ? (a => {
-            const [fx, fy] = Skins.formPoint(skin, a, t, amt);
-            return [cx + rx * fx, cy + (fy < 0 ? ryT : ryB) * fy];
-        }) : rim;
+    // Transformado: la silueta real del personaje (de Mochi a ella según amt)
+    const pts = skin ? Skins.outline(skin, g, (i, n) => rim(2 * Math.PI * i / n), amt) : null;
     const bodyPath = c => {
+        if (pts) {
+            pts.forEach(([px, py], i) => i ? c.lineTo(px, py) : c.moveTo(px, py));
+            c.closePath();
+            return;
+        }
         for (let i = 0; i <= 96; i++) {
-            const [px, py] = rimOf(2 * Math.PI * i / 96);
+            const [px, py] = rim(2 * Math.PI * i / 96);
             if (i)
                 c.lineTo(px, py);
             else
@@ -105,17 +111,6 @@ function avatar(ctx, o) {
     }
     // Cuerpo: cúpula (arriba) + base más plana, con un brillo arriba a la izquierda (y lo que le
     // salga si está transformado: orejas, bracitos…, del mismo material)
-    if (skin && o.outline) {
-        // (el contorno también alrededor de las orejas: se pintan un poco más gordas debajo)
-        ctx.save();
-        ctx.fillStyle = o.outline;
-        for (const p of skin.parts || []) {
-            const q = Skins.grown(p, amt), k = Math.max(1, s * 0.035) / rx;
-            if (q.ra > 0.005)
-                Skins.capsule(ctx, g, q.a, q.b, q.ra + k, q.rb + k);
-        }
-        ctx.restore();
-    }
     ctx.fillStyle = bodyCol;
     ctx.beginPath();
     bodyPath(ctx);
@@ -125,8 +120,6 @@ function avatar(ctx, o) {
         ctx.lineWidth = Math.max(1, s * 0.035);
         ctx.stroke();
     }
-    if (skin)
-        Skins.drawParts(ctx, skin, g, bodyCol, amt);   // (encima: tapan el contorno en la unión)
     ctx.fillStyle = `rgba(255,255,255,${stage >= 2 ? 0.2 : 0.07})`;
     ctx.beginPath();
     Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
@@ -153,24 +146,27 @@ function avatar(ctx, o) {
     }
 
     // Ojos (transformado: los suyos, a partir de la mitad de la transformación)
-    if (skin && g.accents)
-        Skins.drawUnder(ctx, skin, g, bodyPath);
+    if (skin)
+        Skins.drawUnder(ctx, skin, g, bodyPath);   // (en su color: solo la cara, salvo accents)
     const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L) : null;
     const eyeSize = SE ? SE.eyeSize : L.eyeSize, eyeGap = SE ? SE.eyeGap : L.eyeGap, eyeY = SE ? SE.eyeY : L.eyeY;
-    const u = s / 32, d = 9.5 * u * eyeSize * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
+    const u = s / 32, f = o.face || "normal";
+    // (transformado: en el sitio de los ojos del personaje y de su tamaño)
+    const at = SE?.at ?? null;
+    const d = at ? at.d * g.k : 9.5 * u * eyeSize * (stage === 0 ? 1.12 : 1);
     let lx = o.lx || 0, ly = o.ly || 0;
     if (f === "sulky")
         lx = -0.8;
     if (f === "curious")
         ly = -0.3;
     const ink = mono ? o.ink : SE?.ink || o.ink;
-    const ey0 = cy - 0.12 * ryT + eyeY * 7 * u, ey = ey0 + ly * 5 * u;
+    const ey0 = at ? g.base + (at.y - 1) * g.k : cy - 0.12 * ryT + eyeY * 7 * u, ey = ey0 + ly * 5 * u;
     ctx.fillStyle = ink;
     ctx.strokeStyle = ink;
     ctx.lineCap = "round";
     g.eyes = [];
     for (const side of [-1, 1]) {
-        const ex0 = cx + side * 11.5 * u * eyeGap * Math.max(0.8, rx / s), ex = ex0 + lx * 6 * u;
+        const ex0 = at ? cx + (at.x + side * at.g) * g.k : cx + side * 11.5 * u * eyeGap * Math.max(0.8, rx / s), ex = ex0 + lx * 6 * u;
         g.eyes.push([ex0 + lx * 3 * u, ey0 + ly * 2.5 * u]);
         if (SE?.white && !["happy", "excited", "love", "asleep", "squint"].includes(f)) {
             // esclerótica: se queda en su sitio y la pupila mira
@@ -215,7 +211,7 @@ function avatar(ctx, o) {
 
     // Nieve y gorro, en lo alto de la cabeza
     let top = cy - ryT;
-    if (o.snow > 0.02) {
+    if (o.snow > 0.02 && !(skin && amt > 0.5)) {
         const w = rx * (0.5 + 0.45 * o.snow), h = 3 * u + 7 * u * o.snow;
         ctx.fillStyle = "#f6f9ff";
         ctx.beginPath();
@@ -225,7 +221,7 @@ function avatar(ctx, o) {
         ctx.fill();
         top -= h * 0.35;
     }
-    if (o.hat) {
+    if (o.hat && !(skin && amt > 0.5)) {   // (transformado no lleva gorro: es otro personaje)
         ctx.save();
         ctx.translate(cx, top + 0.16 * s);
         Hats.draw(ctx, o.hat, 0.75 * s, t, Math.sin(t * 1.3) * 0.3);

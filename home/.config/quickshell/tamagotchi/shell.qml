@@ -1722,8 +1722,9 @@ ShellRoot {
             const p = pointAt(tr, g.d);
             if (Math.abs(p.nx - g.nx) + Math.abs(p.ny - g.ny) > 0.5)
                 g.onSideSince = now;
-            g.x = p.x;
-            g.y = p.y;
+            const gl = g.def ? skinLift(p.ny) : 0;   // (transformado, de pie sobre el suelo)
+            g.x = p.x - p.nx * gl;
+            g.y = p.y - p.ny * gl;
             g.nx = p.nx;
             g.ny = p.ny;
         }
@@ -2554,6 +2555,11 @@ ShellRoot {
     }
 
     // Radio del cuerpo en la dirección de la normal (hacia el marco)
+    // Cuánto se separa del suelo transformado (solo en el suelo; en paredes y techo va pegado)
+    function skinLift(ny: real): real {
+        return (embed + 12) * Math.max(0, Math.min(1, (ny - 0.5) * 2));
+    }
+
     function normalRadius(p: var): real {
         return Math.abs(p.nx) * bodyRx + Math.abs(p.ny) * bodyRy;
     }
@@ -3845,7 +3851,8 @@ ShellRoot {
             const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
             nX = p.nx;
             nY = p.ny;
-            const lift = Math.max(0, morph) * Math.max(0, (lastShape === 2 ? 66 : 54) - normalRadius(p) + embed);   // (Clawd, con las patas enteras)
+            // (transformado, en el suelo se pone de pie sobre el marco: se le ve entero)
+            const lift = Math.max(Math.max(0, morph) * Math.max(0, (lastShape === 2 ? 66 : 54) - normalRadius(p) + embed), skinLift(p.ny) * skinK * skinPartsVis);   // (Clawd, con las patas enteras)
             gx += (p.x - p.nx * lift - gx) * k;
             gy += (p.y - p.ny * lift - gy) * k;
             return;
@@ -4999,6 +5006,15 @@ ShellRoot {
                 onLoaded: shell.setPanels(win.modelData.name, text())
             }
 
+            // Silueta real de la transformación (campo de distancias para mochi.frag)
+            Image {
+                id: silImg
+
+                visible: false
+                smooth: true
+                source: Qt.resolvedUrl("siluetas/" + (shell.skinDef?.id ?? "ditto") + ".png")
+            }
+
             Image {
                 id: edgeImg
 
@@ -5066,8 +5082,18 @@ ShellRoot {
                 property vector4d pr3: part(3) ? Qt.vector4d(part(3).ra, part(3).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
                 property vector4d pr4: part(4) ? Qt.vector4d(part(4).ra, part(4).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
                 property vector4d pr5: part(5) ? Qt.vector4d(part(5).ra, part(5).rb, 0, 0) : Qt.vector4d(0, 0, 0, 0)
+                property vector4d silInfo: def?.sil && b ? Qt.vector4d(1, b.silKx, b.silKy, 0) : Qt.vector4d(0, 0, 0, 0)
+                property var silTex: gsil
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
+
+                Image {
+                    id: gsil
+
+                    visible: false
+                    smooth: true
+                    source: Qt.resolvedUrl("siluetas/" + (gb.def?.id ?? "ditto") + ".png")
+                }
             }
 
             // Cuerpo de Mochi: mismo color, transparencia y sombra que el marco de Caelestia.
@@ -5154,6 +5180,8 @@ ShellRoot {
                         property vector4d pr3: shell.skinPR[3]
                         property vector4d pr4: shell.skinPR[4]
                         property vector4d pr5: shell.skinPR[5]
+                        property vector4d silInfo: shell.skinDef?.sil ? Qt.vector4d(shell.skinK * shell.skinPartsVis, mochi.silKx, mochi.silKy, 0) : Qt.vector4d(0, 0, 0, 0)   // (buceando o en el nido vuelve a ser él: nada de orejas asomando)
+                        property var silTex: silImg
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
@@ -5523,6 +5551,8 @@ ShellRoot {
                 property vector4d pr3: bodyFx.pr3
                 property vector4d pr4: bodyFx.pr4
                 property vector4d pr5: bodyFx.pr5
+                property vector4d silInfo: bodyFx.silInfo
+                property var silTex: silImg
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }
@@ -5691,7 +5721,7 @@ ShellRoot {
                     falling: g?.phys === "air" && !g.leaving && !g.entering && g.vy > 900
                     anchorNx: g?.phys === "swim" ? g.nx : 0
                     anchorNy: g?.phys === "swim" ? g.ny : 0
-                    hat: g?.m?.hat ?? ""
+                    hat: g?.def ? "" : g?.m?.hat ?? ""
                     affection: 0.6
                     sleepy: shell.dnd
                     music: Mind.musicPlaying
@@ -6209,7 +6239,7 @@ ShellRoot {
                 baseLid: shell.skinEyes?.lid ?? 0
                 baseTilt: shell.skinEyes?.tilt ?? 0
                 skin: shell.skinShown
-                skinAmt: shell.skinAmt
+                skinAmt: shell.skinAmt * shell.skinPartsVis
                 skinT: shell.skinT
                 wide: Look.wide
                 jelly: Look.jelly
@@ -6231,8 +6261,8 @@ ShellRoot {
                 sulky: Bond.sulky
                 press: shell.press
                 pressVertical: Math.abs(shell.nY) >= Math.abs(shell.nX)
-                snow: shell.snowAmt
-                hat: shell.phys === "nest" && shell.nestPeek < 0.4 ? "" : shell.hat
+                snow: shell.skinK > 0.5 ? 0 : shell.snowAmt
+                hat: (shell.phys === "nest" && shell.nestPeek < 0.4) || shell.skinK > 0.5 ? "" : shell.hat
                 anchorNx: shell.nX
                 anchorNy: shell.nY
                 onDozingChanged: if (visible) shell.dozing = dozing
