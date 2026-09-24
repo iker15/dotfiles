@@ -62,6 +62,13 @@ for f in .local/bin/*; do
     [ -e "$f" ] && link "$f"
 done
 
+# Teclado: el que se eligió al instalar CachyOS (en el repo está "us", el que usa iker a propósito)
+kb=$(localectl status 2>/dev/null | awk -F': *' '/X11 Layout/ {print $2}' | cut -d, -f1)
+if [[ -n $kb && $kb != us && $USER != iker ]]; then
+    log "Teclado: $kb"
+    sed -i "s/kb_layout *= *\"[^\"]*\"/kb_layout          = \"$kb\"/" "$DOTS/home/.config/hypr/hyprland/input.lua"
+fi
+
 # --- 3. Servicios ------------------------------------------------------------
 log "Activando servicios"
 sudo systemctl enable --now NetworkManager bluetooth ufw fstrim.timer 2>/dev/null || true
