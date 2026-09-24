@@ -46,10 +46,18 @@ if ! command -v paru >/dev/null; then
 fi
 
 log "Instalando paquetes del AUR"
-# (uno a uno: si alguno falla o choca, sigue con los demás)
+# Otros Quickshell (el de Noctalia, que trae la edición Hyprland de CachyOS) dicen ser
+# quickshell-git pero no lo son y Caelestia no arranca con ellos: fuera
+for fake in $(pacman -Qq 2>/dev/null | grep -xE 'noctalia-qs|quickshell'); do
+    log "Quitando $fake (Caelestia necesita quickshell-git)"
+    sudo pacman -Rdd --noconfirm "$fake"
+done
+# (uno a uno: si alguno falla o choca, sigue con los demás. Ojo: `pacman -Q nombre` también
+# acepta paquetes que solo "proveen" ese nombre, así que se mira el nombre exacto)
+pacman -Qq > /tmp/dotfiles-have.txt
 while read -r pkg; do
     [[ -z "$pkg" ]] && continue
-    pacman -Qq "$pkg" >/dev/null 2>&1 && continue
+    grep -qx "$pkg" /tmp/dotfiles-have.txt && continue
     paru -S --needed --noconfirm "$pkg" || echo "  (no se pudo instalar $pkg del AUR: sigue sin él)"
 done < "$DOTS/aurlist.txt"
 
