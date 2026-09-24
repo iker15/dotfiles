@@ -58,7 +58,9 @@ pacman -Qq > /tmp/dotfiles-have.txt
 while read -r pkg; do
     [[ -z "$pkg" ]] && continue
     grep -qx "$pkg" /tmp/dotfiles-have.txt && continue
-    paru -S --needed --noconfirm "$pkg" || echo "  (no se pudo instalar $pkg del AUR: sigue sin él)"
+    # (aur/: si no, paru coge de los repos cualquier paquete que "provea" ese nombre, p. ej.
+    # noctalia-qs en vez de quickshell-git)
+    paru -S --needed --noconfirm "aur/$pkg" || echo "  (no se pudo instalar $pkg del AUR: sigue sin él)"
 done < "$DOTS/aurlist.txt"
 
 # --- 2. Symlinks -------------------------------------------------------------
