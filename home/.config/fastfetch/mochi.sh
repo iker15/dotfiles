@@ -14,11 +14,14 @@ row)
     if [[ -n $KITTY_WINDOW_ID ]]; then
         size=$(kitten icat --print-window-size 2>/dev/null </dev/tty)   # "ANCHOxALTO" en px
         rows=$(tput lines 2>/dev/null </dev/tty)
-        h=${size#*x}
-        if [[ $h =~ ^[0-9]+$ && $rows =~ ^[0-9]+$ && $rows -gt 0 ]]; then
-            off=$(( (r + 5) * h / rows + 8 ))
+        cols=$(tput cols 2>/dev/null </dev/tty)
+        w=${size%x*} h=${size#*x}
+        if [[ $h =~ ^[0-9]+$ && $w =~ ^[0-9]+$ && $rows -gt 0 && $cols -gt 0 ]]; then
+            # centro del cuadrado (columnas 2-23, filas r..r+9), en px desde la esquina de la ventana
+            offx=$(( 13 * w / cols + 8 ))
+            offy=$(( (r + 5) * h / rows + 8 ))
             rm -f "$XDG_RUNTIME_DIR/mochi-term-eta"
-            (qs -c tamagotchi ipc call pet enterTerm "$off" >/dev/null 2>&1 &)
+            (qs -c tamagotchi ipc call pet enterTerm "$offx" "$offy" >/dev/null 2>&1 &)
         fi
     fi
     ;;

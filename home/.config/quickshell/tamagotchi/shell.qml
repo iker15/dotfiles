@@ -754,46 +754,60 @@ ShellRoot {
         dive(0, "hidden", true, 1.8);
         reacted("happy", 1200);
     }
-    // Abres kitty: su fluido rellena el cuadrado del saludo (fastfetch). Bucea por el marco hasta
-    // la barra de la izquierda, a la altura del cuadrado, y se queda dentro mientras uses esa
-    // kitty (la animación del cuadrado espera ~0,9 s a que llegue). Lo llama
-    // ~/.config/fastfetch/mochi.sh con cuántos px por debajo del borde de arriba está el cuadrado.
+    // Abres kitty: su fluido rellena el cuadrado del saludo (fastfetch). Mira la ventana nueva,
+    // bucea a su ritmo por el marco hasta el borde de arriba, justo encima del cuadrado, y desde
+    // ahí cae; se queda dentro mientras uses esa kitty. Lo llama ~/.config/fastfetch/mochi.sh con
+    // dónde está el centro del cuadrado (px desde la esquina de la ventana).
+    property real termOffX: 0
     property real termOffY: 0
     property int termTries: 0
-    function enterTerm(offY: real): void {
+    function enterTerm(offX: real, offY: real): void {
         if (locked || dnd || asking || dragging || !shown)
             return;
+        termOffX = offX;
         termOffY = offY;
         termTries = 0;
-        Hyprland.refreshToplevels();
-        termTimer.restart();
+        termWin.running = true;
+    }
+    // La ventana activa, preguntada a Hyprland en el momento (lastIpcObject puede ir atrasado:
+    // p. ej. con la posición de antes de reorganizarse las ventanas)
+    Process {
+        id: termWin
+
+        command: ["hyprctl", "-j", "activewindow"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let o = null;
+                try {
+                    o = JSON.parse(text);
+                } catch (e) {}
+                if (!shell.doEnterTerm(o) && ++shell.termTries < 6)
+                    termTimer.restart();
+            }
+        }
     }
     Timer {
         id: termTimer
 
-        interval: 120
-        onTriggered: {
-            if (!shell.doEnterTerm() && ++shell.termTries < 6) {
-                Hyprland.refreshToplevels();
-                restart();
-            }
-        }
+        interval: 150
+        onTriggered: termWin.running = true
     }
-    function doEnterTerm(): bool {
-        const tl = Hyprland.activeToplevel, o = tl?.lastIpcObject;
+    function doEnterTerm(o: var): bool {
         if (!o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
             return false;
-        const s = nearestScreen(o.at[0] + 20, o.at[1] + termOffY), tr = track(s);
-        const target = nearestD(tr, tr.L, o.at[1] + termOffY);
+        const tl = Hyprland.toplevels.values.find(w => "0x" + w.address === o.address || w.address === o.address) ?? Hyprland.activeToplevel;
+        // (por el borde de ARRIBA, justo encima del cuadrado: el fluido cae desde ahí)
+        const s = nearestScreen(o.at[0] + termOffX, o.at[1] + termOffY), tr = track(s);
+        const target = nearestD(tr, o.at[0] + termOffX, tr.T);
         appLeave.stop();
-        appHost = tl.address;
+        appHost = tl?.address ?? "";
         appSpot = pointAt(tr, target);
         const wasIn = inApp;
         inApp = true;
         diveToNest = false;
         if (!present || phys === "hidden") {
             // no estaba a la vista: aparece ya dentro
-            mochiWs = tl.workspace?.id ?? Hyprland.focusedWorkspace?.id ?? mochiWs;
+            mochiWs = o.workspace?.id ?? Hyprland.focusedWorkspace?.id ?? mochiWs;
             swimD = target;
             const p = appSpot, rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
             gx = p.x + p.nx * deep;
@@ -828,7 +842,7 @@ ShellRoot {
         termGo.restart();
         // (llegará cuando acabe de mirar y bucee hasta allí: se calcula ya para el cuadrado)
         const dist = trackDiff(tr, swimD, target), sp = termSpeed();
-        publishEta(termGo.interval + (1 + Math.abs(dist) / 380) / sp * 1000);
+        publishEta(termGo.interval + (1 + Math.abs(dist) / (Math.abs(dist) > 1200 ? 620 : 380)) / sp * 1000);
         return true;
     }
     // …y va buceando a su ritmo, asomando la cabeza, y al llegar se hunde del todo
@@ -849,8 +863,9 @@ ShellRoot {
             }
             if (shell.phys !== "swim")
                 return;
-            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
-            shell.dive(shell.trackDiff(tr, shell.swimD, shell.termTarget), "peek", false, shell.termSpeed());
+            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy)), dist = shell.trackDiff(tr, shell.swimD, shell.termTarget);
+            // (lejos: por dentro, más rápido; cerca: asomando la cabeza)
+            shell.dive(dist, Math.abs(dist) > 1200 ? "hidden" : "peek", false, shell.termSpeed());
             shell.diveStay = true;
         }
     }
@@ -2524,8 +2539,8 @@ ShellRoot {
         function pop(): void {
             shell.heartPop();
         }
-        function enterTerm(offY: real): void {
-            shell.enterTerm(offY);
+        function enterTerm(offX: real, offY: real): void {
+            shell.enterTerm(offX, offY);
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3825,8 +3840,8 @@ ShellRoot {
                     if (frame < 0)
                         return;
                     // Línea de tiempo (25 fps): 0-21 margen (el GIF empieza cuando Mochi ya está
-                    // llegando por la barra) · 22-40 asoma por el borde izquierdo, se estira y cae ·
-                    // 40-84 llena · luego gelatina, abre los ojos, mira a los lados, parpadea y cara
+                    // llegando por el borde de arriba) · 22-40 se descuelga una gota desde arriba y
+                    // cae · 40-84 llena · luego gelatina, abre los ojos, mira a los lados, parpadea y cara
                     const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 40, T2 = 84;
                     const E0 = T2 + 6, EL = E0 + 7, ER = EL + 10, EB = ER + 10, EF = EB + 5;   // ojos: abre, izq., der., parpadeo, cara
                     const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
@@ -3834,7 +3849,6 @@ ShellRoot {
                     const k = f - T2, jel = f >= T2 ? 0.07 * Math.exp(-k / 4) * Math.cos(k * 0.95) : 0;
                     const hop = f >= EF && f < EF + 7 ? Math.sin((f - EF) / 7 * Math.PI) : 0;
                     const hopSq = f >= EF + 7 ? 0.05 * Math.exp(-(f - EF - 7) / 2.5) * Math.cos((f - EF - 7) * 1.1) : 0;
-                    const inY = sy + 58;   // altura por la que entra
 
                     ctx.save();
                     const base = sy + sh;
@@ -3844,34 +3858,24 @@ ShellRoot {
                     ctx.fillStyle = body;
                     const surfY = sy + sh * (1 - fill);
 
-                    // Entra: una gota que asoma por la izquierda, se estira hacia dentro y cae
-                    if (f >= T0 && f < T1 + 2) {
-                        const p = Math.min(1, (f - T0) / 10);                     // se asoma, despacio
-                        const q = Math.max(0, Math.min(1, (f - T0 - 10) / 8));   // cae
-                        const hx = -30 + cx * ease(p), hy = inY + (surfY - 30 - inY) * q * q;
-                        const r = 20 + 6 * q;
-                        // cola que la une al borde (cada vez más fina)
-                        ctx.lineCap = "round";
-                        ctx.strokeStyle = body;
-                        ctx.lineWidth = 26 * (1 - q * 0.6);
+                    // Cae desde arriba (de donde está él, en el borde): una gota que se descuelga
+                    // despacio, se estira y cae con gravedad, y detrás el chorro, cada vez más fino
+                    if (f >= T0 && f < T2 - 6) {
+                        const hang = Math.min(1, (f - T0) / 8);                  // se descuelga
+                        const tf = Math.max(0, f - T0 - 8);                      // y cae
+                        const headY = Math.min(surfY - 4, -26 + 30 * hang + 0.5 * 4.2 * tf * tf);
+                        const w = 24 * (1 - Math.pow(Math.max(0, (f - T1) / (T2 - 6 - T1)), 1.3)) * (0.6 + 0.4 * hang);
+                        ctx.fillStyle = body;
                         ctx.beginPath();
-                        ctx.moveTo(-10, inY);
-                        ctx.quadraticCurveTo(hx * 0.6, inY, hx, hy);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        Hats.E(ctx, hx - r, hy - r, 2 * r, 2 * r * (1 + 0.3 * q));
+                        Hats.RR(ctx, cx - w / 2, -12, w, Math.max(w, headY + 12), w / 2);
                         ctx.fill();
-                    }
-                    // Y sigue entrando fluido por el borde (un chorro que se va afinando)
-                    if (f >= T1 && f < T2 - 6) {
-                        const w = 18 * (1 - (f - T1) / (T2 - 6 - T1));
-                        ctx.lineCap = "round";
-                        ctx.strokeStyle = body;
-                        ctx.lineWidth = w;
-                        ctx.beginPath();
-                        ctx.moveTo(-10, inY);
-                        ctx.quadraticCurveTo(sx + 50, inY, sx + 58, surfY + 6);
-                        ctx.stroke();
+                        if (f < T1) {
+                            // la gota de delante, algo más gorda y alargada al caer
+                            const r = 15 + 5 * hang, st = 1 + Math.min(0.5, tf * 0.06);
+                            ctx.beginPath();
+                            Hats.E(ctx, cx - r / st, headY - r * st, 2 * r / st, 2 * r * st);
+                            ctx.fill();
+                        }
                     }
 
                     // El fluido dentro del cuadrado, con la superficie ondulando
@@ -3884,7 +3888,7 @@ ShellRoot {
                         ctx.moveTo(sx - 2, sy + sh + 2);
                         for (let x = sx - 2; x <= sx + sw + 2; x += 6) {
                             const y = surfY + amp * Math.sin(x * 0.045 + f * 0.55) + amp * 0.5 * Math.sin(x * 0.11 - f * 0.35)
-                                    - (f < T2 - 6 ? 14 * (1 - fill) * Math.exp(-Math.pow((x - sx - 58) / 26, 2)) : 0);   // bulto donde cae el chorro
+                                    - (f < T2 - 6 ? 14 * (1 - fill) * Math.exp(-Math.pow((x - cx) / 26, 2)) : 0);   // bulto donde cae el chorro
                             ctx.lineTo(x, y);
                         }
                         ctx.lineTo(sx + sw + 2, sy + sh + 2);
@@ -3903,7 +3907,7 @@ ShellRoot {
                         const t = (f - T1) / 11;
                         ctx.fillStyle = body;
                         for (const [dx, v] of [[-1, 1], [1, 0.8], [-0.5, 1.3], [0.6, 1.2]]) {
-                            const px = cx - 30 + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
+                            const px = cx + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
                             ctx.beginPath();
                             Hats.E(ctx, px - r, py - r, 2 * r, 2 * r);
                             ctx.fill();
