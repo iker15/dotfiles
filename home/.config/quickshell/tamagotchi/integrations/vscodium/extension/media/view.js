@@ -11,7 +11,7 @@ cv.style.width = W + "px";
 cv.style.height = H + "px";
 ctx.scale(dpr, dpr);
 
-let st = null, face = "normal", blink = 0, mx = 0, my = 0, lx = 0, ly = 0;
+let st = null, langs = "", lang = "", face = "normal", blink = 0, mx = 0, my = 0, lx = 0, ly = 0;
 let here = 0, hereTarget = 0;          // 0 fuera → 1 dentro del editor (animado)
 let squash = 0, squashV = 0;           // muelle al llegar o al celebrar
 let celebrateUntil = 0, celebrateFace = "excited";
@@ -23,6 +23,8 @@ window.addEventListener("message", e => {
     if (m.type === "state") {
         st = m.state;
         face = m.face;
+        langs = m.langs || "";
+        lang = m.lang || "";
         const inApp = st?.where === "app";
         // (si Mochi no está en marcha, se queda aquí igualmente)
         hereTarget = inApp || !st ? 1 : 0;
@@ -30,7 +32,7 @@ window.addEventListener("message", e => {
     } else if (m.type === "blink") {
         doBlink();
     } else if (m.type === "xp") {
-        pops.push({ text: `+${m.n} XP`, t: performance.now() });
+        pops.push({ text: `+${m.n} XP`, t: performance.now(), why: m.why });
         squashV -= 2;
     } else if (m.type === "levelUp") {
         celebrateUntil = performance.now() + 3000;
@@ -46,6 +48,8 @@ function info() {
     document.getElementById("lvl").textContent = `Nivel ${lvl} · ${xp - a} / ${b - a} XP`;
     document.getElementById("fill").style.width = `${Math.max(0, Math.min(100, 100 * (xp - a) / Math.max(1, b - a)))}%`;
     document.getElementById("mood").textContent = st ? `❤ ${st.bond} · ${st.text}` : "";
+    document.getElementById("mood").title = langs ? `Programado: ${langs}` : "";
+    document.getElementById("langs").textContent = langs;
     const away = document.getElementById("away");
     away.style.display = hereTarget < 0.5 ? "block" : "none";
     away.textContent = `Mochi está fuera, paseando por el escritorio · nivel ${lvl}. Vuelve cuando entres al editor.`;

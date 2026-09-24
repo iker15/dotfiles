@@ -21,7 +21,19 @@ const EYES = {
 };
 
 let view = null, bar = null, state = null, reaction = null, errors = 0, peakErrors = 0;
-let pendingXp = 0, typedThisMinute = 0, lastSaveXp = 0;
+let pendingXp = 0, typedThisMinute = 0, lastSaveXp = 0, langThisMinute = "", memento = null;
+// Nombres bonitos de los lenguajes (el resto, tal cual)
+const LANGS = { php: "PHP", javascript: "JavaScript", javascriptreact: "JavaScript", python: "Python", typescript: "TypeScript", html: "HTML", css: "CSS", json: "JSON", shellscript: "Shell", sql: "SQL" };
+const langName = id => LANGS[id] ?? id;
+// Minutos programados en cada lenguaje (se guardan en el editor)
+function langMinutes() {
+    return memento?.get("mochi.langMinutes", {}) ?? {};
+}
+function langSummary() {
+    const m = langMinutes(), top = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const fmt = n => n >= 60 ? `${Math.floor(n / 60)} h ${n % 60 ? (n % 60) + " min" : ""}`.trim() : `${n} min`;
+    return top.map(([l, n]) => `${langName(l)} ${fmt(n)}`).join(" · ");
+}
 
 function readState() {
     let next = null;
@@ -48,9 +60,10 @@ function update() {
     if (bar) {
         const lv = state?.level ? ` Nv ${state.level}` : "";
         bar.text = `(${EYES[f] ?? "• •"})${lv}`;
-        bar.tooltip = state ? `${state.stageName ?? "Mochi"} · nivel ${state.level} (${state.xp - state.levelStart}/${state.levelEnd - state.levelStart} XP)\n❤ ${state.bond} · ${state.text}${errors ? ` · ${errors} errores` : ""}` : "Mochi";
+        const langs = langSummary();
+        bar.tooltip = state ? `${state.stageName ?? "Mochi"} · nivel ${state.level} (${state.xp - state.levelStart}/${state.levelEnd - state.levelStart} XP)\n❤ ${state.bond} · ${state.text}${errors ? ` · ${errors} errores` : ""}${langs ? `\nProgramado: ${langs}` : ""}` : "Mochi";
     }
-    view?.webview.postMessage({ type: "state", state, face: f });
+    view?.webview.postMessage({ type: "state", state, face: f, langs: langSummary(), lang: langName(vscode.window.activeTextEditor?.document.languageId ?? "") });
 }
 
 function react(f, ms) {
@@ -76,6 +89,7 @@ function countErrors() {
 }
 
 function activate(ctx) {
+    memento = ctx.globalState;
     bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -1000);
     bar.command = "mochi.show";
     bar.show();
@@ -99,10 +113,11 @@ canvas{position:absolute;left:0;bottom:0;cursor:pointer}
 #bar{height:5px;border-radius:3px;background:var(--vscode-editorWidget-border,rgba(128,128,128,.3));overflow:hidden}
 #fill{height:100%;width:0;background:var(--vscode-progressBar-background,#4d8);transition:width .6s}
 #mood{opacity:.7;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#langs{opacity:.55;margin-top:2px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #away{position:absolute;left:12px;bottom:12px;right:10px;font-size:12px;opacity:.6;display:none}
 </style></head><body>
 <canvas id="c"></canvas>
-<div id="info"><div id="name">Mochi</div><div id="lvl"></div><div id="bar"><div id="fill"></div></div><div id="mood"></div></div>
+<div id="info"><div id="name">Mochi</div><div id="lvl"></div><div id="bar"><div id="fill"></div></div><div id="mood"></div><div id="langs"></div></div>
 <div id="away"></div>
 <script src="${src("mochi-draw.js")}"></script><script src="${src("view.js")}"></script></body></html>`;
             v.webview.onDidReceiveMessage(m => {
@@ -141,11 +156,17 @@ canvas{position:absolute;left:0;bottom:0;cursor:pointer}
             return;
         for (const c of e.contentChanges)
             typedThisMinute += Math.min(c.text.length, 200) || (c.rangeLength ? 1 : 0);
+        langThisMinute = e.document.languageId;
     }));
     const minute = setInterval(() => {
         // solo si el editor tiene el foco (no cuenta pegar cosas con el editor en segundo plano)
-        if (typedThisMinute >= 20 && vscode.window.state.focused)
-            gain(10, "programando");
+        if (typedThisMinute >= 20 && vscode.window.state.focused) {
+            gain(10, langName(langThisMinute));
+            const m = langMinutes();
+            m[langThisMinute] = (m[langThisMinute] ?? 0) + 1;
+            memento.update("mochi.langMinutes", m);
+            update();
+        }
         typedThisMinute = 0;
     }, 60000);
     const flush = setInterval(() => {
@@ -155,6 +176,7 @@ canvas{position:absolute;left:0;bottom:0;cursor:pointer}
         }
     }, 30000);
     ctx.subscriptions.push({ dispose: () => { clearInterval(minute); clearInterval(flush); } });
+    ctx.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => update()));
     ctx.subscriptions.push(vscode.workspace.onDidSaveTextDocument(() => {
         view?.webview.postMessage({ type: "blink" });
         if (Date.now() - lastSaveXp > 20000) {
