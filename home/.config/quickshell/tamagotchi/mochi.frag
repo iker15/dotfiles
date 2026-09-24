@@ -111,11 +111,12 @@ float sdArrow(vec2 p) {
 // Taza de café humeante: cuerpo, asa a la derecha y dos hilos de vapor que suben ondulando; se
 // inclina un poco de vez en cuando (da sorbos)
 float cupSd(vec2 p, float t) {
+    p.y -= 0.24;   // (los ojos de Mochi quedan en el cuerpo de la taza)
     float tilt = 0.18 * max(0.0, sin(t * 1.6));
     float c = cos(tilt), s = sin(tilt);
     p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
     float body = sdBox(p - vec2(-0.08, -0.28), vec2(0.58, 0.46)) - 0.1;
-    body = max(body, -(p.y - 0.26));   // boca de la taza, recta
+    body = max(body, p.y - 0.2);       // boca de la taza, recta
     vec2 h = p - vec2(0.58, -0.25);
     float handle = abs(length(h) - 0.24) - 0.075;
     handle = max(handle, -h.x);        // solo la mitad de fuera

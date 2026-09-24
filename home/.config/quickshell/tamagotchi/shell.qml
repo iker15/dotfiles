@@ -104,7 +104,8 @@ ShellRoot {
             "claude": 2,
             "heart": 3,
             "star": 4,
-            "arrow": 5
+            "arrow": 5,
+            "cup": 6
         })[shapeName] ?? 0
     property int lastShape: 0
     property real morph: shapeId ? 1 : 0
@@ -154,6 +155,15 @@ ShellRoot {
     // Paneles abiertos de Caelestia (los publica caelestia/modules/drawers/MochiBridge.qml):
     // pantalla → [[x, y, w, h], …] en coordenadas globales. No se queda debajo de ellos.
     property var panels: ({})
+
+    // También de Caelestia (MochiBridge): notificaciones, No molestar y cafeína
+    property bool dnd: false           // No molestar: se va a dormir a su nido y no reacciona a nada
+    property bool caffeine: false      // cafeína: se toma un café y se queda bien despierto
+    property var notifSeen: ({})       // pantalla → id de la última notificación vista
+    // Mirar fijamente algo un rato (la notificación): manda sobre el ratón y los vistazos
+    property real focusX: 0
+    property real focusY: 0
+    property real focusUntil: 0
 
     // Humor según la hora: por la mañana con ganas, bajón después de comer, tranquilo por la
     // tarde-noche y dormilón de madrugada. Multiplica sus ganas de moverse; `drowsy` le
@@ -219,6 +229,30 @@ ShellRoot {
     // saliendo por el borde de abajo; al desbloquear vuelve por ahí mismo a su sitio
     property bool locked: false
     property var preLock: null         // dónde estaba antes de bloquear
+    onDndChanged: {
+        if (dnd) {
+            asking = false;
+            if (present && phys === "swim")
+                goNest();   // se va a dormir a su nido
+        } else {
+            woke();
+        }
+    }
+
+    // Cafeína: sale (si estaba en el nido), se toma un café y se queda despierto del todo
+    onCaffeineChanged: {
+        const d = new Date();
+        dayEnergy = caffeine ? Math.max(1.2, energyAt(d.getHours() + d.getMinutes() / 60)) : energyAt(d.getHours() + d.getMinutes() / 60);
+        if (!caffeine || dnd || locked)
+            return;
+        woke();
+        if (!present)
+            return;
+        if (phys === "nest")
+            leaveNest();
+        coffeeTimer.restart();
+    }
+
     onLockedChanged: {
         Brain.locked = locked;
         if (locked)
@@ -611,14 +645,69 @@ ShellRoot {
 
     function setPanels(name: string, text: string): void {
         const s = Quickshell.screens.find(q => q.name === name);
-        let rects = [];
+        const ox = s?.x ?? 0, oy = s?.y ?? 0;
+        let data = {};
         try {
-            rects = (JSON.parse(text).rects ?? []).map(r => [r[0] + (s?.x ?? 0), r[1] + (s?.y ?? 0), r[2], r[3]]);
+            data = JSON.parse(text);
         } catch (e) {}
         const all = Object.assign({}, panels);
-        all[name] = rects;
+        all[name] = (data.rects ?? []).map(r => [r[0] + ox, r[1] + oy, r[2], r[3]]);
         panels = all;
+        if (data.dnd !== undefined)
+            dnd = data.dnd;
+        if (data.caffeine !== undefined)
+            caffeine = data.caffeine;
+        // Notificación nueva (la primera lectura no cuenta: puede ser de antes)
+        const id = data.notif?.id ?? "";
+        const seen = name in notifSeen;
+        if (id && notifSeen[name] !== id) {
+            notifSeen[name] = id;
+            if (seen) {
+                const r = data.notif.rect;
+                lookAtNotif(r[0] + ox, r[1] + oy, r[2], r[3], data.notif.urgent);
+            }
+        } else if (!seen) {
+            notifSeen[name] = id;
+        }
         avoidPanels();
+    }
+
+    // Llega una notificación: se acerca nadando hasta su lado (sin ponerse debajo) y la mira un
+    // rato; si es urgente, con cara de susto
+    function lookAtNotif(x: real, y: real, w: real, h: real, urgent: bool): void {
+        if (dnd || !present || asking || dragging || Brain.busy)
+            return;
+        const cx = x + w / 2, cy = y + h / 2;
+        focusX = cx;
+        focusY = cy;
+        focusUntil = Date.now() + 5000;
+        reacted(urgent ? "surprised" : "curious", urgent ? 1800 : 1500);
+        if (urgent)
+            kicked(-1.2, 2.4);
+        if (phys !== "swim")
+            return;   // (en el nido, el icono la mira desde la barra)
+        const s = nearestScreen(gx, gy), tr = track(s);
+        let best = NaN, bestDist = Infinity;
+        for (let i = 0; i < 96; i++) {
+            const d = tr.len * i / 96, p = pointAt(tr, d);
+            if (inPanel(p.x, p.y, bodyRx + 40))
+                continue;
+            const dist = Math.hypot(p.x - cx, p.y - cy);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = d;
+            }
+        }
+        if (isNaN(best))
+            return;
+        const dist = trackDiff(tr, swimD, best);
+        focusUntil = Date.now() + 5000 + Math.abs(dist) * 2;
+        if (Math.abs(dist) > 320)
+            dive(dist, "peek", false, 1.6);
+        else if (Math.abs(dist) > 10) {
+            energy = 1.6;
+            swimTarget = best;
+        }
     }
 
     // ¿El punto (x, y) cae sobre algún panel abierto (con margen m)?
@@ -972,7 +1061,7 @@ ShellRoot {
         dt = Math.min(dt, 1 / 30);
         // el engranaje gira; Clawd usa esto como el tiempo de su animación (patas y brazos)
         if (morph > 0.01)
-            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 ? 1 : 0);
+            shapeRot += dt * (lastShape === 1 ? 1.3 : lastShape === 2 || lastShape === 6 ? 1 : 0);
         else
             shapeRot = 0;
         if (phys !== "nest" && (bodyOffX || bodyOffY)) {
@@ -1206,19 +1295,19 @@ ShellRoot {
         target: Mind
 
         function onReact(face: string, ms: int): void {
-            if (shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
+            if (!shell.dnd && shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
                 shell.reacted(face, ms);
         }
         function onDance(ms: int): void {
-            if (shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
+            if (!shell.dnd && shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
                 shell.reacted("dance", ms);
         }
         function onShape(name: string, ms: int): void {
-            if (shell.present && !shell.asking && !shell.dragging && shell.phys === "swim")
+            if (!shell.dnd && shell.present && !shell.asking && !shell.dragging && shell.phys === "swim")
                 shell.shapeShift(name, ms);
         }
         function onCoding(): void {
-            if (!shell.present || shell.asking || shell.dragging || Brain.busy)
+            if (shell.dnd || !shell.present || shell.asking || shell.dragging || Brain.busy)
                 return;
             if (shell.codeShape && shell.phys === "swim")
                 shell.shapeShift(shell.codeShape, 3000);
@@ -1231,7 +1320,7 @@ ShellRoot {
             shell.glanceUntil = Date.now() + 1400;
         }
         function onSay(text: string, face: string): void {
-            if (!shell.shown || Brain.busy || shell.asking || shell.voiceWaiting || shell.dragging || (shell.bubbleShown && !shell.remark))
+            if (shell.dnd || !shell.shown || Brain.busy || shell.asking || shell.voiceWaiting || shell.dragging || (shell.bubbleShown && !shell.remark))
                 return;
             if (!shell.present || shell.phys === "hidden")
                 shell.touch();
@@ -1424,8 +1513,10 @@ ShellRoot {
                     shell.cursorX = p.x;
                     shell.cursorY = p.y;
                     // Mira al ratón, salvo que algo le haya llamado la atención
-                    const glancing = Date.now() < shell.glanceUntil;
-                    const dx = (glancing ? shell.glanceX : p.x) - shell.gx, dy = (glancing ? shell.glanceY : p.y) - shell.gy;
+                    const now = Date.now(), focusing = now < shell.focusUntil, glancing = now < shell.glanceUntil;
+                    const tx = focusing ? shell.focusX : glancing ? shell.glanceX : p.x;
+                    const ty = focusing ? shell.focusY : glancing ? shell.glanceY : p.y;
+                    const dx = tx - shell.gx, dy = ty - shell.gy;
                     const d = Math.hypot(dx, dy);
                     shell.cursorNear = Math.hypot(p.x - shell.gx, p.y - shell.gy) < 220;
                     shell.lookX = d < 20 ? 0 : dx / (d + 60);
@@ -1488,7 +1579,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -1532,7 +1623,8 @@ ShellRoot {
         interval: 60000
         onTriggered: {
             const d = new Date();
-            shell.dayEnergy = shell.energyAt(d.getHours() + d.getMinutes() / 60);
+            const e = shell.energyAt(d.getHours() + d.getMinutes() / 60);
+            shell.dayEnergy = shell.caffeine ? Math.max(1.2, e) : e;
         }
     }
 
@@ -1586,6 +1678,59 @@ ShellRoot {
         id: rainbowTimer
 
         onTriggered: shell.rainbowAmt = 0
+    }
+
+    Timer {
+        id: coffeeTimer
+
+        interval: 700
+        onTriggered: {
+            if (shell.phys === "swim") {
+                shell.shapeShift("cup", 4600);
+                afterCoffee.restart();
+            }
+        }
+    }
+
+    Timer {
+        id: afterCoffee
+
+        interval: 4900
+        onTriggered: {
+            shell.reacted("excited", 1600);
+            shell.kicked(-1.4, 2.8);
+        }
+    }
+
+    // Con cafeína, de vez en cuando le da un subidón: tiembla un momento con los ojos como platos
+    Timer {
+        running: shell.caffeine && shell.present && !shell.dnd && shell.phys === "swim" && !shell.asking && !Brain.busy
+        repeat: true
+        interval: 7000
+        onTriggered: {
+            interval = 6000 + Math.random() * 8000;
+            shell.reacted("surprised", 700);
+            jitter.restart();
+        }
+    }
+
+    SequentialAnimation {
+        id: jitter
+
+        loops: 6
+
+        ScriptAction {
+            script: shell.kicked(0.9, -0.9)
+        }
+        PauseAnimation {
+            duration: 45
+        }
+        ScriptAction {
+            script: shell.kicked(-0.9, 0.9)
+        }
+        PauseAnimation {
+            duration: 45
+        }
     }
 
     // Te vas de encima del nido: se vuelve a meter al rato
@@ -1771,7 +1916,7 @@ ShellRoot {
                 readonly property real ly: shell.lookY
                 readonly property string face: mochi.face
                 // de madrugada, si no andas cerca, duerme (ojos cerrados y respira más despacio)
-                readonly property bool asleep: mochi.dozing || (shell.drowsy > 0.8 && !shell.cursorNear)
+                readonly property bool asleep: shell.dnd || (!shell.caffeine && (mochi.dozing || (shell.drowsy > 0.8 && !shell.cursorNear)))
                 readonly property real nod: mochi.nod
                 onNodChanged: requestPaint()
                 onAsleepChanged: requestPaint()
@@ -1877,14 +2022,14 @@ ShellRoot {
                 hidden: shell.phys === "hidden"
                 // (en el nido, en reposo, lo que se ve es su icono en la barra; los ojos de
                 // verdad salen al asomarse)
-                drowsy: shell.drowsy
+                drowsy: shell.caffeine ? 0 : shell.drowsy
                 onDozingChanged: if (visible) shell.dozing = dozing
                 inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : "transparent"   // Clawd: ojos oscuros
                 eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
                 clipRect: Qt.rect(-x, shell.frame - y, win.width - shell.frame, win.height - 2 * shell.frame)
-                sleepy: shell.phys === "hidden" && !shell.cursorNear
+                sleepy: shell.dnd || (shell.phys === "hidden" && !shell.cursorNear)
                 talking: Brain.talking
                 music: Mind.musicPlaying
 
