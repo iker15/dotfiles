@@ -808,12 +808,12 @@ ShellRoot {
         if (!o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
             return false;
         const tl = Hyprland.toplevels.values.find(w => "0x" + w.address === o.address || w.address === o.address) ?? Hyprland.activeToplevel;
-        // Dónde queda la animación en la pantalla: 22×10 celdas desde la columna 2 y la fila
-        // `row`, la imagen (cuadrada) alineada arriba a la izquierda; el margen de kitty es lo que
-        // sobra entre la ventana y el texto
+        // Dónde queda la animación en la pantalla: 22 columnas de ancho (el alto, igual: es
+        // cuadrada) desde la columna 2 y la fila `row` (kitty-anim.py); el margen de kitty es lo
+        // que sobra entre la ventana y el texto
         const g = termGrid, cw = g.w / g.cols, ch = g.h / g.rows;
         const padX = Math.max(0, (o.size[0] - g.w) / 2), padY = Math.max(0, (o.size[1] - g.h) / 2);
-        const side = Math.min(22 * cw, 10 * ch), gifX = o.at[0] + padX + 2 * cw, gifY = o.at[1] + padY + g.row * ch;
+        const side = 22 * cw, gifX = o.at[0] + padX + 2 * cw, gifY = o.at[1] + padY + g.row * ch;
         pourScale = side / 240;
         // (por el borde de ARRIBA, justo encima del cuadrado: el fluido cae desde ahí)
         const s = nearestScreen(gifX, gifY), tr = track(s);

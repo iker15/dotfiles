@@ -40,9 +40,14 @@ play)
     fi
     (
         sleep "$delay"
-        printf '\e7'
-        kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null </dev/tty
-        printf '\e8'
+        if [[ -f ~/.cache/mochi/fetch.b64 ]]; then
+            # fotogramas con transparencia suave, por el protocolo de kitty
+            python3 ~/.config/fastfetch/kitty-anim.py ~/.cache/mochi/fetch.b64 2 "${2:-1}" 22
+        else
+            printf '\e7'
+            kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null </dev/tty
+            printf '\e8'
+        fi
     ) >/dev/tty 2>/dev/null &
     disown
     ;;

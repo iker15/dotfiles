@@ -18,3 +18,5 @@ done < "$src"
 # (fotogramas completos: kitty no anima bien los GIF "optimizados" de ImageMagick)
 magick -delay 4 -dispose Background "$tmp"/f*.png -channel A -threshold 50% +channel -loop 1 "$tmp/out.gif"
 mv "$tmp/out.gif" "$out"
+# (y los fotogramas tal cual, con transparencia suave: los usa ~/.config/fastfetch/kitty-anim.py)
+cp "$src" ~/.cache/mochi/fetch.b64.tmp && mv ~/.cache/mochi/fetch.b64.tmp ~/.cache/mochi/fetch.b64
