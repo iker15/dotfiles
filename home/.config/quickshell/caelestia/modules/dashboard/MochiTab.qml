@@ -51,7 +51,7 @@ Item {
     // (1366x768…) todo encoge en proporción para que la ficha quepa entera
     readonly property real screenH: (QsWindow.window as QsWindow)?.screen?.height ?? 1080
     readonly property real k: Math.max(0.6, Math.min(1, screenH / 1080))
-    readonly property real maxH: Math.min(900, screenH * 0.82)   // (con las pestañas y el marco, cabe)
+    readonly property real maxH: screenH >= 1080 ? 900 : screenH * 0.82   // (con las pestañas y el marco, cabe)
 
     implicitWidth: Math.round(840 * k)
     implicitHeight: creating ? creatorFlick.height : mainFlick.height
