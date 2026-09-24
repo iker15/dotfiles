@@ -6,10 +6,11 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 "$here/../build-web.sh"
 
-# Host nativo (Zen lo busca como Firefox; por si acaso, en las tres rutas)
+# Host nativo (Zen lo busca como Firefox). ¡NUNCA crear ~/.zen!: si esa carpeta existe, Zen la
+# usa como perfil (la ruta antigua) y arranca con un perfil vacío, sin tus pestañas.
 host="$here/mochi_host.py"
 chmod +x "$host"
-for d in ~/.mozilla/native-messaging-hosts ~/.zen/native-messaging-hosts ~/.config/zen/native-messaging-hosts; do
+for d in ~/.mozilla/native-messaging-hosts ~/.config/zen/native-messaging-hosts; do
     mkdir -p "$d"
     cat > "$d/mochi.json" <<JSON
 {
