@@ -517,7 +517,13 @@ ShellRoot {
         levelStart: Bond.lvlStart,
         levelEnd: Bond.lvlEnd,
         stage: Bond.stage,
-        stageName: Bond.stageNames[Bond.stage]
+        stageName: Bond.stageNames[Bond.stage],
+        me: myName,
+        neighbours: neighbours,
+        away: away,
+        guests: guests.map(g => g.from),
+        invite: inviteCode,
+        neighbourMsg: neighbourMsg
     })
     // El próximo gorro (para el dashboard): cuál y cuándo
     readonly property string nextHat: {
@@ -805,7 +811,7 @@ ShellRoot {
         onTriggered: termWin.running = true
     }
     function doEnterTerm(o: var): bool {
-        if (!o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
+        if (phys === "away" || !o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
             return false;
         const tl = Hyprland.toplevels.values.find(w => "0x" + w.address === o.address || w.address === o.address) ?? Hyprland.activeToplevel;
         // Dónde queda la animación en la pantalla: 22 columnas de ancho (el alto, igual: es
@@ -946,6 +952,323 @@ ShellRoot {
                 shell.hop();
             }
         }
+    }
+
+    // ── Vecindario (integrations/vecinos.py): mandar TU Mochi de visita a la pantalla de un
+    // vecino (lanzándolo MUY fuerte contra su lado, o con el botón del dashboard) y recibir el
+    // suyo. Mientras está fuera, aquí no está (phys "away"). Los Mochis que te visitan pasean por
+    // el suelo de tu pantalla: se les puede acariciar (clic), coger y lanzar de vuelta a su lado.
+    readonly property string myName: {
+        const u = Quickshell.env("USER") || "yo";
+        return u.charAt(0).toUpperCase() + u.slice(1);
+    }
+    property var neighbours: []     // [{name, side, online}]
+    property var away: null         // {to, side, since}: de visita en casa de alguien
+    property string inviteCode: ""
+    // (el código de invitación se copia solo al portapapeles, para pegárselo a tu amigo)
+    onInviteCodeChanged: if (inviteCode) Quickshell.execDetached(["wl-copy", inviteCode])
+    property string neighbourMsg: ""
+    property var guests: []         // Mochis que te visitan (ver guestStep)
+    property int guestTick: 0
+    property string launching: ""   // lanzado con el botón hacia este vecino
+    signal heartPopAt(real x, real y)
+
+    function vecCmd(o: var): void {
+        o.me = myName;
+        vecProc.write(JSON.stringify(o) + "\n");
+    }
+    function neighbourOn(side: string): var {
+        return neighbours.find(n => n.side === side) ?? null;
+    }
+    function myMochi(): var {
+        return {
+            name: myName,
+            level: Bond.lvl,
+            stage: Bond.stage,
+            hat: hat,
+            bond: Math.round(Bond.bond),
+            body: avatarBody,
+            ink: avatarInk
+        };
+    }
+    // Sale por un lado de la pantalla: si hay vecino ahí, se va a su casa
+    function sendOut(dir: int): bool {
+        const n = launching ? neighbours.find(x => x.name === launching) : neighbourOn(dir > 0 ? "right" : "left");
+        if (!n)
+            return false;
+        launching = "";
+        vecCmd({
+            cmd: "send",
+            to: n.name,
+            type: "visit",
+            mochi: myMochi()
+        });
+        away = {
+            to: n.name,
+            side: n.side,
+            since: Date.now()
+        };
+        awayFile.setText(JSON.stringify(away));
+        phys = "away";
+        inApp = false;
+        diveStay = false;
+        return true;
+    }
+    // Botón del dashboard: da un salto y sale disparado hacia el lado de ese vecino
+    function launchTo(name: string): void {
+        const n = neighbours.find(x => x.name === name);
+        if (!n || phys === "away" || locked)
+            return;
+        launching = name;
+        if (!present || phys === "nest" || phys === "hidden" || phys === "dive" || inApp) {
+            sendOut(n.side === "right" ? 1 : -1);
+            return;
+        }
+        reacted("excited", 800);
+        vx = n.side === "right" ? 3800 : -3800;
+        vy = -700;
+        thrown = true;
+        phys = "air";
+    }
+    // Vuelve (lo devuelve el vecino, o lo llamas tú): entra volando por el lado de ese vecino
+    function comeHome(m: var): void {
+        if (phys !== "away")
+            return;
+        const side = away?.side ?? "right";
+        away = null;
+        awayFile.setText("");
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s)
+            return;
+        mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;
+        gx = side === "right" ? s.x + s.width + 80 : s.x - 80;
+        gy = s.y + s.height * 0.45;
+        vx = side === "right" ? -1500 : 1500;
+        vy = -500;
+        entering = true;
+        thrown = false;
+        phys = "air";
+        homeHappy.pets = m?.pets ?? 0;
+        homeHappy.restart();
+    }
+    Timer {
+        id: homeHappy
+
+        property int pets: 0
+
+        interval: 1300
+        onTriggered: {
+            shell.reacted(pets > 0 ? "love" : "happy", 2600);   // (si allí le han mimado, vuelve encantado)
+            shell.kicked(-1.6, 2.6);
+        }
+    }
+    function recall(): void {
+        if (!away)
+            return;
+        vecCmd({
+            cmd: "send",
+            to: away.to,
+            type: "recall"
+        });
+        recallFallback.restart();
+    }
+    // (si el vecino no contesta, vuelve igual)
+    Timer {
+        id: recallFallback
+
+        interval: 25000
+        onTriggered: shell.comeHome(null)
+    }
+    FileView {
+        id: awayFile
+
+        path: shell.stateDir + "/away.json"
+        printErrors: false
+        onLoaded: {
+            try {
+                const a = JSON.parse(text());
+                if (a?.to) {
+                    shell.away = a;
+                    shell.phys = "away";
+                }
+            } catch (e) {}
+        }
+    }
+
+    // Visitantes
+    function addGuest(ev: var): void {
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s || guests.length >= 2 || guests.some(g => g.from === ev.from))
+            return;
+        const left = ev.side === "left";
+        guests = guests.concat([{
+                from: ev.from,
+                side: ev.side,
+                m: ev.mochi ?? {},
+                sx: s.x,
+                sw: s.width,
+                floor: s.y + s.height - frame,
+                x: left ? s.x - 60 : s.x + s.width + 60,
+                y: s.y + s.height * 0.4,
+                vx: left ? 1100 : -1100,
+                vy: -500,
+                entering: true,
+                leaving: false,
+                held: false,
+                face: "surprised",
+                faceUntil: Date.now() + 1500,
+                next: Date.now() + 3000,
+                target: NaN,
+                pets: 0,
+                since: Date.now(),
+                t: 0
+            }]);
+        if (present && phys === "swim") {
+            reacted("curious", 1800);   // (tu Mochi mira quién ha venido)
+            glanceX = left ? s.x : s.x + s.width;
+            glanceY = s.y + s.height * 0.7;
+            glanceUntil = Date.now() + 1800;
+        }
+    }
+    function guestLeave(i: int): void {
+        const g = guests[i];
+        if (!g || g.leaving)
+            return;
+        g.leaving = true;
+        g.held = false;
+        g.face = "happy";
+        g.faceUntil = Date.now() + 3000;
+        g.vx = g.side === "left" ? -1500 : 1500;
+        g.vy = -800;
+    }
+    function guestStep(dt: real): void {
+        if (!guests.length)
+            return;
+        dt = Math.min(dt, 1 / 30);
+        const now = Date.now();
+        for (let i = guests.length - 1; i >= 0; i--) {
+            const g = guests[i];
+            g.t += dt;
+            if (g.held)
+                continue;
+            if (g.leaving && (g.x < g.sx - 90 || g.x > g.sx + g.sw + 90)) {
+                // se ha ido: vuelve a su casa (con las caricias que le has hecho)
+                vecCmd({
+                    cmd: "send",
+                    to: g.from,
+                    type: "return",
+                    mochi: Object.assign({}, g.m, {
+                        pets: g.pets
+                    })
+                });
+                guests.splice(i, 1);
+                continue;
+            }
+            // de visita un buen rato: se despide solo
+            if (!g.leaving && now - g.since > 90 * 60000)
+                guestLeave(i);
+            g.vy += 2600 * dt;
+            g.x += g.vx * dt;
+            g.y += g.vy * dt;
+            const L = g.sx + barW + 40, R = g.sx + g.sw - frame - 40;
+            if (g.entering && g.x > L && g.x < R)
+                g.entering = false;
+            if (!g.entering && !g.leaving) {
+                if (g.x < L) {
+                    g.x = L;
+                    g.vx = Math.abs(g.vx) * 0.4;
+                } else if (g.x > R) {
+                    g.x = R;
+                    g.vx = -Math.abs(g.vx) * 0.4;
+                }
+            }
+            if (g.y >= g.floor) {
+                g.y = g.floor;
+                g.vy = Math.abs(g.vy) > 350 ? -Math.abs(g.vy) * 0.25 : 0;
+                // paseo: hacia un sitio (a saltitos), luego descansa
+                if (!g.leaving && !g.entering) {
+                    if (isNaN(g.target) && now > g.next) {
+                        let x = L + Math.random() * (R - L);
+                        if (Math.abs(x - cursorX) < 200)
+                            x = cursorX < (L + R) / 2 ? R - Math.random() * 200 : L + Math.random() * 200;
+                        g.target = x;
+                    }
+                    if (!isNaN(g.target)) {
+                        const d = g.target - g.x;
+                        if (Math.abs(d) < 12) {
+                            g.target = NaN;
+                            g.next = now + 3000 + Math.random() * 7000;
+                            g.vx = 0;
+                        } else {
+                            g.vx = Math.sign(d) * 90;
+                            if (g.vy === 0)
+                                g.vy = -260;   // saltito
+                        }
+                    } else {
+                        g.vx *= 1 - Math.min(1, dt * 8);
+                    }
+                } else if (g.vy === 0) {
+                    g.vx *= 1 - Math.min(1, dt * 3);
+                }
+            }
+        }
+        guests = guests.slice();
+        guestTick++;
+    }
+    FrameAnimation {
+        running: shell.guests.length > 0
+        onTriggered: shell.guestStep(frameTime)
+    }
+    function petGuest(i: int): void {
+        const g = guests[i];
+        if (!g)
+            return;
+        g.pets++;
+        g.face = "love";
+        g.faceUntil = Date.now() + 1600;
+        heartPopAt(g.x, g.y - 70);
+        guestTick++;
+    }
+
+    Process {
+        id: vecProc
+
+        running: shell.shown
+        stdinEnabled: true
+        command: ["python3", Quickshell.shellDir + "/integrations/vecinos.py"]
+        onExited: if (shell.shown) vecRestart.restart()
+        stdout: SplitParser {
+            onRead: data => {
+                let ev = null;
+                try {
+                    ev = JSON.parse(data);
+                } catch (e) {
+                    return;
+                }
+                if (ev.ev === "neighbours")
+                    shell.neighbours = ev.list ?? [];
+                else if (ev.ev === "invite")
+                    shell.inviteCode = ev.code;
+                else if (ev.ev === "error")
+                    shell.neighbourMsg = ev.text;
+                else if (ev.ev === "visit")
+                    shell.addGuest(ev);
+                else if (ev.ev === "return") {
+                    recallFallback.stop();
+                    shell.comeHome(ev.mochi);
+                } else if (ev.ev === "recall") {
+                    const i = shell.guests.findIndex(g => g.from === ev.from);
+                    if (i >= 0)
+                        shell.guestLeave(i);
+                }
+            }
+        }
+    }
+    Timer {
+        id: vecRestart
+
+        interval: 8000
+        onTriggered: vecProc.running = true
     }
 
     // ── Ritmo de la música (integrations/beats.py): solo con música de verdad sonando ──
@@ -1550,6 +1873,8 @@ ShellRoot {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
+        if (phys === "away")
+            return;
         inApp = false;
         diveStay = false;
         const s = screenOfMonitor(Hyprland.focusedMonitor), tr = track(s);
@@ -1869,6 +2194,8 @@ ShellRoot {
     // Vuelve al nido buceando por el marco (sin que se le vea); si no está a la vista, aparece
     // directamente allí
     function goNest(): void {
+        if (phys === "away")
+            return;
         const s = present ? nearestScreen(gx, gy) : screenOfMonitor(Hyprland.focusedMonitor);
         if (!s)
             return;
@@ -2006,7 +2333,7 @@ ShellRoot {
     // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
     // workspace, viene
     function touch(): void {
-        if (locked)
+        if (locked || phys === "away")
             return;
         idleHide.restart();
         woke();
@@ -2120,6 +2447,8 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
+        if (phys === "away")
+            return;   // de visita en casa de un vecino
         if (phys !== "swim" && (nX || nY)) {
             nX = 0;
             nY = 0;
@@ -2251,6 +2580,8 @@ ShellRoot {
         // Paredes (salvo que al otro lado haya otra pantalla): se pega, o si va muy rápido
         // atraviesa al workspace de ese lado
         if (nx < tr.L && !screenAt(nx - bodyRx - barW, ny)) {
+            if (thrown && (vx < -3000 || launching) && sendOut(-1))
+                return;
             if (thrown && vx < -1100 && crossToWs(-1, s))
                 return;
             gx = tr.L;
@@ -2259,6 +2590,8 @@ ShellRoot {
             return;
         }
         if (nx > tr.R && !screenAt(nx + bodyRx + frame, ny)) {
+            if (thrown && (vx > 3000 || launching) && sendOut(1))
+                return;
             if (thrown && vx > 1100 && crossToWs(1, s))
                 return;
             gx = tr.R;
@@ -2591,6 +2924,52 @@ ShellRoot {
         }
         function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
             shell.enterTerm(row, cols, rows, w, h);
+        }
+        // Vecindario (lo usa el dashboard): invitar (lado: right/left), unirse con un código,
+        // mandarle a Mochi a un vecino, llamarlo de vuelta, devolver a un visitante, quitar vecino
+        function vecInvite(side: string): void {
+            shell.inviteCode = "";
+            shell.vecCmd({
+                cmd: "invite",
+                side: side || "right"
+            });
+        }
+        function vecJoin(code: string): void {
+            shell.vecCmd({
+                cmd: "join",
+                code: code
+            });
+        }
+        function vecSend(name: string): void {
+            shell.launchTo(name);
+        }
+        function vecRecall(): void {
+            shell.recall();
+        }
+        function vecGuestHome(name: string): void {
+            const i = shell.guests.findIndex(g => g.from === name);
+            if (i >= 0)
+                shell.guestLeave(i);
+        }
+        function vecRemove(name: string): void {
+            shell.vecCmd({
+                cmd: "remove",
+                name: name
+            });
+        }
+        // Prueba: finge que llega de visita el Mochi de alguien
+        function vecTestGuest(side: string): void {
+            shell.addGuest({
+                from: "Prueba",
+                side: side || "left",
+                mochi: {
+                    name: "Prueba",
+                    stage: 2,
+                    hat: "party",
+                    body: "#2b2b2f",
+                    ink: "#f4f1f0"
+                }
+            });
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3195,6 +3574,12 @@ ShellRoot {
                 Region {
                     item: bubble.visible ? bubble : null
                 }
+                Region {
+                    item: guestHit0.visible ? guestHit0 : null
+                }
+                Region {
+                    item: guestHit1.visible ? guestHit1 : null
+                }
             }
 
             // Paneles abiertos de Caelestia en esta pantalla
@@ -3288,6 +3673,13 @@ ShellRoot {
                         Connections {
                             target: shell
 
+                            function onHeartPopAt(hx: real, hy: real): void {
+                                if (hx >= win.modelData.x && hx < win.modelData.x + win.modelData.width)
+                                    popHeart.createObject(pops, {
+                                        x: hx - win.modelData.x - 11 + (Math.random() * 24 - 12),
+                                        y: hy - win.modelData.y
+                                    });
+                            }
                             function onHeartPop(): void {
                                 if (mochi.visible)
                                     popHeart.createObject(pops, {
@@ -3728,6 +4120,138 @@ ShellRoot {
                 }
             }
 
+            // Mochis que te visitan (de tus vecinos): pasean por el suelo de esta pantalla
+            Canvas {
+                id: guestCanvas
+
+                readonly property int tick: shell.guestTick
+
+                anchors.fill: parent
+                visible: shell.guests.some(g => g.sx === win.modelData.x)
+                onTickChanged: if (visible) requestPaint()
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    const now = Date.now();
+                    for (const g of shell.guests) {
+                        if (g.sx !== win.modelData.x)
+                            continue;
+                        const m = g.m ?? {}, x = g.x - win.modelData.x, y = g.y - win.modelData.y;
+                        const d = Math.hypot(shell.cursorX - g.x, shell.cursorY - g.y + 40);
+                        const face = now < g.faceUntil ? g.face : g.held ? "surprised" : "normal";
+                        ctx.save();
+                        // (en el aire se estira un poco)
+                        const st = g.y < g.floor - 2 ? 1 + Math.min(0.15, Math.abs(g.vy) / 4000) : 1;
+                        ctx.translate(x, y);
+                        ctx.scale(1 / st, st);
+                        ctx.translate(-x, -y);
+                        Draw.avatar(ctx, {
+                            x: x,
+                            y: y,
+                            s: 36,
+                            body: m.body ?? "#d0d3d6",
+                            ink: m.ink ?? "#1c1b1b",
+                            face: face,
+                            hat: m.hat ?? "",
+                            stage: m.stage ?? 1,
+                            lx: d < 20 ? 0 : (shell.cursorX - g.x) / (d + 60),
+                            ly: d < 20 ? 0 : (shell.cursorY - g.y + 40) / (d + 60),
+                            blink: (g.t % 4) < 0.12 ? 1 : 0,
+                            breath: 0.5 + 0.5 * Math.sin(g.t * 2.6),
+                            outline: "rgba(0,0,0,0.18)",
+                            shadow: g.y >= g.floor - 2 ? 1 : 0.4,
+                            t: g.t
+                        });
+                        ctx.restore();
+                    }
+                }
+            }
+            // Zonas para tocarlos (clic: caricia · arrastrar y lanzar hacia su lado: vuelve a su casa)
+            component GuestHit: MouseArea {
+                id: gh
+
+                required property int slot
+                readonly property var g: shell.guestTick >= 0 ? shell.guests[slot] ?? null : null
+                property real px
+                property real py
+                property real lastX
+                property real lastT
+                property real velX
+                property real velY
+                property bool moved
+
+                visible: !!g && g.sx === win.modelData.x && !g.leaving
+                x: g ? g.x - win.modelData.x - 42 : 0
+                y: g ? g.y - win.modelData.y - 84 : 0
+                width: 84
+                height: 86
+                hoverEnabled: true
+                cursorShape: pressed ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                onPressed: mouse => {
+                    px = mouse.x;
+                    py = mouse.y;
+                    moved = false;
+                    velX = velY = 0;
+                    lastT = Date.now();
+                }
+                onPositionChanged: mouse => {
+                    if (!pressed || !g)
+                        return;
+                    if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
+                        return;
+                    moved = true;
+                    g.held = true;
+                    const now = Date.now(), dt = Math.max(1, now - lastT) / 1000;
+                    const nx = g.x + mouse.x - px, ny = g.y + mouse.y - py;
+                    velX = velX * 0.6 + (nx - g.x) / dt * 0.4;
+                    velY = velY * 0.6 + (ny - g.y) / dt * 0.4;
+                    lastT = now;
+                    g.x = nx;
+                    g.y = Math.min(ny, g.floor);
+                    shell.guestTick++;
+                }
+                onReleased: {
+                    if (!g)
+                        return;
+                    if (!moved) {
+                        shell.petGuest(slot);
+                        return;
+                    }
+                    g.held = false;
+                    g.vx = Math.max(-4500, Math.min(4500, velX));
+                    g.vy = Math.max(-2600, Math.min(2600, velY));
+                    // lanzado hacia su lado: vuelve a su casa
+                    if ((g.side === "left" && g.vx < -1500) || (g.side === "right" && g.vx > 1500)) {
+                        g.leaving = true;
+                        g.face = "happy";
+                        g.faceUntil = Date.now() + 3000;
+                    }
+                }
+                // nombre al pasar por encima
+                Text {
+                    visible: gh.containsMouse && !gh.pressed
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.top
+                    text: `Mochi de ${gh.g?.from ?? ""}`
+                    color: "#ffffff"
+                    style: Text.Outline
+                    styleColor: "#1c1b1b"
+                    font.pixelSize: 13
+                    font.family: Theme.font
+                }
+            }
+            GuestHit {
+                id: guestHit0
+
+                slot: 0
+            }
+            GuestHit {
+                id: guestHit1
+
+                slot: 1
+            }
+
             // La gota y el chorro que caen del marco hasta el líquido del cuadrado de kitty (ver
             // schedulePour): los pinta todo el escritorio, por encima de la terminal, para que sea
             // un solo fluido; la animación de kitty solo se llena, salpica y abre los ojos
@@ -4092,7 +4616,7 @@ ShellRoot {
                 id: mochi
 
                 // Solo en el workspace donde vive, y se aparta si hay algo a pantalla completa
-                visible: shell.present && !shell.fsHide
+                visible: shell.present && !shell.fsHide && shell.phys !== "away"
                 x: shell.gx - win.modelData.x - width / 2
                 y: shell.gy - win.modelData.y - height / 2
                 mood: shell.mood
