@@ -21,9 +21,11 @@ Singleton {
     signal shape(string name, int ms)       // imitar una forma con el cuerpo
     signal coding()                         // estás escribiendo código en VSCodium
 
-    // Música
+    // Lo que suena (lo que sea: un vídeo, un directo…) y, aparte, si es MÚSICA de verdad: solo
+    // eso le hace bailar
     readonly property var player: Mpris.players.values.find(p => p.isPlaying) ?? null
-    readonly property bool musicPlaying: player !== null
+    readonly property var musicPlayer: Mpris.players.values.find(p => p.isPlaying && isMusic(p)) ?? null
+    readonly property bool musicPlaying: musicPlayer !== null
     property string lastTrack: ""
 
     // Ventana activa
@@ -87,7 +89,7 @@ Singleton {
         if (activeClass)
             parts.push(`ventana activa: ${activeClass} «${activeTitle.slice(0, 80)}»`);
         if (player)
-            parts.push(`suena «${player.trackTitle}»${player.trackArtist ? " de " + player.trackArtist : ""}`);
+            parts.push(`${musicPlayer ? "suena la canción" : "se está reproduciendo (vídeo/audio, no música)"} «${player.trackTitle}»${player.trackArtist ? " de " + player.trackArtist : ""}`);
         if (batteryLevel >= 0)
             parts.push(`batería ${Math.round(batteryLevel * 100)}%${UPower.onBattery ? "" : " (enchufado)"}`);
         return parts.join("; ");
@@ -215,19 +217,38 @@ Singleton {
 
     // Música: baila un poco cuando empieza una canción
     Connections {
-        target: root.player
+        target: root.musicPlayer
 
         function onTrackTitleChanged(): void {
             root.newTrack();
         }
     }
 
-    onPlayerChanged: newTrack()
+    onMusicPlayerChanged: newTrack()
+
+    // ¿Es música? Apps de música, webs de música (YouTube Music, Spotify, SoundCloud…), archivos
+    // de audio, y en YouTube normal solo lo que parece una canción (canal «- Topic»/VEVO,
+    // «official video», «lyrics», «ft.»…). Vídeos, directos, podcasts: no.
+    function isMusic(p: var): bool {
+        const app = `${p.identity} ${p.desktopEntry} ${p.dbusName}`.toLowerCase();
+        const url = String(p.metadata?.["xesam:url"] ?? "").toLowerCase();
+        const title = (p.trackTitle ?? "").toLowerCase(), artist = (p.trackArtist ?? "").toLowerCase();
+        if (/spotify|rhythmbox|elisa|lollypop|amberol|strawberry|clementine|audacious|cmus|mpd|ncmpcpp|tauon|deadbeef|quodlibet|cider|youtube.?music|tidal|deezer|g4music|gapless|musikcube|termusic|kew/.test(app))
+            return true;
+        if (/music\.youtube\.com|open\.spotify\.com|soundcloud\.com|bandcamp\.com|deezer\.com|tidal\.com|music\.apple\.com|music\.amazon/.test(url))
+            return true;
+        if (/\.(mp3|flac|ogg|opus|m4a|wav|aac|wma|alac|ape)(\?|$)/.test(url))
+            return true;
+        if (/youtube\.com|youtu\.be/.test(url))
+            return / - topic$|vevo|records$/.test(artist) || /official (music )?(video|audio)|videoclip|video oficial|lyrics?\b|letra|\(audio\)|\[audio\]|\bft\.|\bfeat\.|visuali[sz]er/.test(title);
+        // (reproductores de vídeo, otras webs…: si trae álbum, es una canción)
+        return !!p.trackAlbum && !/video|vídeo|podcast|episod/.test(title);
+    }
 
     function newTrack(): void {
-        if (!player || !player.trackTitle || player.trackTitle === lastTrack)
+        if (!musicPlayer || !musicPlayer.trackTitle || musicPlayer.trackTitle === lastTrack)
             return;
-        lastTrack = player.trackTitle;
+        lastTrack = musicPlayer.trackTitle;
         dance(5000);
     }
 

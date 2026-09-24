@@ -1507,6 +1507,11 @@ ShellRoot {
         function shape(name: string, ms: int): void {
             shell.shapeShift(name, ms);
         }
+        // Qué suena y si cuenta como música (solo con música baila)
+        function music(): string {
+            const p = Mind.player;
+            return p ? `${Mind.musicPlaying ? "música" : "no música"}: ${p.identity} «${p.trackTitle}» de ${p.trackArtist} ${p.metadata?.["xesam:url"] ?? ""}` : "nada";
+        }
         // Se toma un café (lo que hace al activar la cafeína)
         function coffee(): void {
             shell.coffee();
