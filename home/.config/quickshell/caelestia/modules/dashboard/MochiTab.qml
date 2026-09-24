@@ -10,6 +10,7 @@ import Quickshell.Io
 import Caelestia.Config
 import qs.components
 import qs.components.controls
+import qs.components.containers
 import qs.services
 
 // Pestaña de Mochi (~/.config/quickshell/tamagotchi) en el dashboard: su ficha. Cómo está y por
@@ -40,16 +41,31 @@ Item {
     }
 
     implicitWidth: 840
-    implicitHeight: creating ? creator.implicitHeight : layout.implicitHeight
+    implicitHeight: creating ? creatorFlick.height : layout.implicitHeight
 
-    MochiCreator {
-        id: creator
+    // El creador, con barra para bajar si no cabe (ancho fijo: todo se reparte en líneas)
+    StyledFlickable {
+        id: creatorFlick
 
-        anchors.left: parent.left
-        anchors.right: parent.right
         visible: root.creating
-        level: root.st.level ?? 1
-        onDone: root.editing = false
+        width: root.implicitWidth
+        height: Math.min(creator.implicitHeight, 900)
+        contentWidth: width
+        contentHeight: creator.implicitHeight
+        flickableDirection: Flickable.VerticalFlick
+        clip: true
+
+        StyledScrollBar.vertical: StyledScrollBar {
+            flickable: creatorFlick
+        }
+
+        MochiCreator {
+            id: creator
+
+            width: creatorFlick.width - 16   // (sitio para la barra)
+            level: root.st.level ?? 1
+            onDone: root.editing = false
+        }
     }
 
     // «Pegar código»: lee el portapapeles y se une como vecino

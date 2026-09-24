@@ -193,7 +193,6 @@ Item {
     Component.onCompleted: reset()
     onVisibleChanged: if (visible) reset()
 
-    implicitWidth: 840
     implicitHeight: col.implicitHeight
 
     Timer {
@@ -213,6 +212,8 @@ Item {
         // Cabecera
         Column {
             Layout.leftMargin: Tokens.padding.large
+            Layout.rightMargin: Tokens.padding.large
+            Layout.fillWidth: true
             spacing: Tokens.spacing.extraSmall
 
             StyledText {
@@ -222,6 +223,8 @@ Item {
             }
             StyledText {
                 text: root.traitsOnly ? "Ha crecido y puede aprender algo más de carácter. Su aspecto y su mote ya son suyos." : "Aún no ha nacido. Siempre será un blob blandito: tú decides los detalles y su carácter. Piénsalo bien: al nacer ya no se puede cambiar."
+                width: parent.width
+                wrapMode: Text.WordWrap
                 font: Tokens.font.body.small
                 color: Colours.palette.m3onSurfaceVariant
             }
@@ -399,6 +402,7 @@ Item {
             ColumnLayout {
                 visible: !root.traitsOnly
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1   // (que no empuje: ocupa lo que quede)
                 Layout.alignment: Qt.AlignTop
                 spacing: Tokens.spacing.small
 
@@ -447,6 +451,7 @@ Item {
                 // Estilos rápidos (solo el aspecto)
                 Flow {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     Layout.topMargin: Tokens.spacing.extraSmall
                     spacing: Tokens.spacing.small
 
@@ -491,6 +496,8 @@ Item {
             }
             StyledText {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                wrapMode: Text.WordWrap
                 text: {
                     const n = root.chosen.length, next = Traits.nextSlotAt(root.level);
                     const more = next ? ` · otro hueco en el nivel ${next}` : "";
@@ -523,6 +530,7 @@ Item {
 
                 Flow {
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: Tokens.spacing.small
 
                     Repeater {
