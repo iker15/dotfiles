@@ -17,6 +17,7 @@ row)
         h=${size#*x}
         if [[ $h =~ ^[0-9]+$ && $rows =~ ^[0-9]+$ && $rows -gt 0 ]]; then
             off=$(( (r + 5) * h / rows + 8 ))
+            rm -f "$XDG_RUNTIME_DIR/mochi-term-eta"
             (qs -c tamagotchi ipc call pet enterTerm "$off" >/dev/null 2>&1 &)
         fi
     fi
@@ -24,8 +25,23 @@ row)
 play)
     gif=~/.cache/mochi/fetch.gif
     [[ -n $KITTY_WINDOW_ID && -f $gif ]] || exit 0
-    printf '\e7'
-    kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null
-    printf '\e8'
+    # Mochi viene a su ritmo: dice cuándo llega (ms) en mochi-term-eta. El fluido empieza a
+    # asomar en el fotograma 22 (0,88 s): se arranca la animación para que coincida. Sin
+    # bloquear el prompt (en segundo plano).
+    eta_file=$XDG_RUNTIME_DIR/mochi-term-eta
+    for _ in $(seq 15); do [[ -s $eta_file ]] && break; sleep 0.1; done
+    delay=0
+    if [[ -s $eta_file ]]; then
+        eta=$(<"$eta_file")
+        now=$(date +%s%3N)
+        (( eta - now - 880 > 0 )) && delay=$(awk -v d=$(( eta - now - 880 )) 'BEGIN { printf "%.2f", d / 1000 }')
+    fi
+    (
+        sleep "$delay"
+        printf '\e7'
+        kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null </dev/tty
+        printf '\e8'
+    ) >/dev/tty 2>/dev/null &
+    disown
     ;;
 esac

@@ -800,6 +800,7 @@ ShellRoot {
             gy = p.y + p.ny * deep;
             dive(0, "hidden", true, 3);
             diveStay = true;
+            publishEta(0);
             return true;
         }
         if (phys === "nest") {
@@ -809,12 +810,59 @@ ShellRoot {
         }
         if (phys !== "swim" && phys !== "dive")
             return false;
-        // que llegue en ~0,85 s (lo que tarda en empezar a caer el fluido en el cuadrado)
-        const dist = trackDiff(tr, swimD, target);
-        dive(dist, "hidden", wasIn || phys === "dive", (1 + Math.abs(dist) / 620) / 0.85);
-        diveStay = true;
-        reacted("excited", 700);
+        if (wasIn || phys === "dive") {
+            // ya estaba sumergido (en otra ventana): va por dentro, sin asomarse
+            const dist = trackDiff(tr, swimD, target);
+            dive(dist, "hidden", true, 1.2 * dayEnergy);
+            diveStay = true;
+            publishEta(diveDur * 1000);
+            return true;
+        }
+        // Se da cuenta de la ventana nueva: la mira con curiosidad un momento…
+        reacted("curious", 1100);
+        glanceX = o.at[0] + o.size[0] / 2;
+        glanceY = o.at[1] + o.size[1] / 3;
+        glanceUntil = Date.now() + 900;
+        kicked(-0.8, 1.2);
+        termTarget = target;
+        termGo.restart();
+        // (llegará cuando acabe de mirar y bucee hasta allí: se calcula ya para el cuadrado)
+        const dist = trackDiff(tr, swimD, target), sp = termSpeed();
+        publishEta(termGo.interval + (1 + Math.abs(dist) / 380) / sp * 1000);
         return true;
+    }
+    // …y va buceando a su ritmo, asomando la cabeza, y al llegar se hunde del todo
+    property real termTarget: 0
+    function termSpeed(): real {
+        return Math.max(0.8, Math.min(1.4, 1.1 * dayEnergy));
+    }
+    Timer {
+        id: termGo
+
+        interval: 700
+        onTriggered: {
+            if (!shell.inApp)
+                return;
+            if (shell.phys === "air" || shell.phys === "held") {
+                restart();   // (estaba dando un saltito: en cuanto aterrice)
+                return;
+            }
+            if (shell.phys !== "swim")
+                return;
+            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
+            shell.dive(shell.trackDiff(tr, shell.swimD, shell.termTarget), "peek", false, shell.termSpeed());
+            shell.diveStay = true;
+        }
+    }
+    // Cuándo llega (ms de época): lo lee mochi.sh para empezar a rellenar el cuadrado justo entonces
+    function publishEta(ms: real): void {
+        termEta.setText(String(Math.round(Date.now() + ms)));
+    }
+    FileView {
+        id: termEta
+
+        path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-term-eta`
+        printErrors: false
     }
 
     // Sube de nivel: lo celebra (si está en el editor, lo celebra el del panel)
@@ -1508,6 +1556,11 @@ ShellRoot {
         const down = smooth((u - 0.05) / 0.2), up = diveToNest || diveStay ? 0 : smooth((u - 0.78) / 0.2);
         let vis = (diveFromDeep ? diveVisible("hidden", rn) : surface) * (1 - down) + mid * down;
         vis = vis * (1 - up) + surface * up;
+        // (si se queda dentro, al final se hunde del todo aunque viajara asomando la cabeza)
+        if (diveStay) {
+            const sinkEnd = smooth((u - 0.82) / 0.18);
+            vis = vis * (1 - sinkEnd) + diveVisible("hidden", rn) * sinkEnd;
+        }
         if (!diveFromDeep && u < 0.06)
             vis += 5 * Math.sin(Math.PI * u / 0.06);   // coge aire: se estira hacia arriba antes
         const under = down * (1 - up);
@@ -3718,7 +3771,7 @@ ShellRoot {
             Canvas {
                 id: fetchCanvas
 
-                readonly property int count: 100
+                readonly property int count: 140
                 property int frame: -1
                 property var frames: []
                 property string face: "happy"
@@ -3771,16 +3824,16 @@ ShellRoot {
                     ctx.reset();
                     if (frame < 0)
                         return;
-                    // Línea de tiempo (25 fps): 0-21 espera a que llegue buceando por la barra ·
-                    // 22-31 entra por el borde izquierdo y cae · 31-62 llena · 62+ gelatina ·
-                    // 66 abre los ojos · 71 mira a la izquierda · 78 a la derecha · 85 parpadea ·
-                    // 89 cara (con saltito)
-                    const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 31, T2 = 62;
+                    // Línea de tiempo (25 fps): 0-21 margen (el GIF empieza cuando Mochi ya está
+                    // llegando por la barra) · 22-40 asoma por el borde izquierdo, se estira y cae ·
+                    // 40-84 llena · luego gelatina, abre los ojos, mira a los lados, parpadea y cara
+                    const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 40, T2 = 84;
+                    const E0 = T2 + 6, EL = E0 + 7, ER = EL + 10, EB = ER + 10, EF = EB + 5;   // ojos: abre, izq., der., parpadeo, cara
                     const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
                     const fill = f < T1 ? 0 : ease((f - T1) / (T2 - T1));
                     const k = f - T2, jel = f >= T2 ? 0.07 * Math.exp(-k / 4) * Math.cos(k * 0.95) : 0;
-                    const hop = f >= 89 && f < 95 ? Math.sin((f - 89) / 6 * Math.PI) : 0;
-                    const hopSq = f >= 95 ? 0.05 * Math.exp(-(f - 95) / 2.5) * Math.cos((f - 95) * 1.1) : 0;
+                    const hop = f >= EF && f < EF + 7 ? Math.sin((f - EF) / 7 * Math.PI) : 0;
+                    const hopSq = f >= EF + 7 ? 0.05 * Math.exp(-(f - EF - 7) / 2.5) * Math.cos((f - EF - 7) * 1.1) : 0;
                     const inY = sy + 58;   // altura por la que entra
 
                     ctx.save();
@@ -3793,8 +3846,8 @@ ShellRoot {
 
                     // Entra: una gota que asoma por la izquierda, se estira hacia dentro y cae
                     if (f >= T0 && f < T1 + 2) {
-                        const p = Math.min(1, (f - T0) / 5);                    // se asoma
-                        const q = Math.max(0, Math.min(1, (f - T0 - 5) / 5));   // cae
+                        const p = Math.min(1, (f - T0) / 10);                     // se asoma, despacio
+                        const q = Math.max(0, Math.min(1, (f - T0 - 10) / 8));   // cae
                         const hx = -30 + cx * ease(p), hy = inY + (surfY - 30 - inY) * q * q;
                         const r = 20 + 6 * q;
                         // cola que la une al borde (cada vez más fina)
@@ -3846,8 +3899,8 @@ ShellRoot {
                         ctx.restore();
                     }
                     // Salpicaduras al caer la gota
-                    if (f >= T1 && f < T1 + 9) {
-                        const t = (f - T1) / 9;
+                    if (f >= T1 && f < T1 + 11) {
+                        const t = (f - T1) / 11;
                         ctx.fillStyle = body;
                         for (const [dx, v] of [[-1, 1], [1, 0.8], [-0.5, 1.3], [0.6, 1.2]]) {
                             const px = cx - 30 + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
@@ -3864,16 +3917,16 @@ ShellRoot {
                     }
 
                     // Ojos: se abren, mira a un lado y a otro, parpadea y pone la cara
-                    if (f >= 66) {
+                    if (f >= E0) {
                         let fc = "normal", lx = 0, blink = 0;
-                        if (f < 71)
-                            blink = 1 - (f - 66) / 5;
-                        else if (f < 78)
+                        if (f < EL)
+                            blink = 1 - (f - E0) / (EL - E0);   // abre los ojos despacio
+                        else if (f < ER)
                             lx = -0.75;
-                        else if (f < 85)
+                        else if (f < EB)
                             lx = 0.75;
-                        else if (f < 89)
-                            blink = [0.5, 1, 1, 0.4][f - 85];
+                        else if (f < EF)
+                            blink = [0.5, 1, 1, 0.6, 0.2][f - EB];
                         else
                             fc = this.face;
                         Draw.avatar(ctx, {
@@ -3882,7 +3935,7 @@ ShellRoot {
                             y: sy + sh * 0.5,
                             s: 76,
                             ink: ink,
-                            face: fc === "asleep" && f < 89 ? "normal" : fc,
+                            face: fc === "asleep" && f < EF ? "normal" : fc,
                             lx: lx,
                             blink: blink
                         });
