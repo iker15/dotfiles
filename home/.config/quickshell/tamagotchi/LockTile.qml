@@ -53,10 +53,27 @@ Item {
             return Qt.point(0, 0);
         }
     }
-    readonly property point eyes: {
-        const a = eyeSpot(shapeFrom), b = eyeSpot(shapeTo), k = Math.max(0, Math.min(1, mix));
-        return Qt.point(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+    // Los ojos van con el líquido: al centro de la gota y de ahí a su sitio en la forma nueva
+    function smooth(e0: real, e1: real, x: real): real {
+        x = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+        return x * x * (3 - 2 * x);
     }
+    readonly property point eyes: {
+        const a = eyeSpot(shapeFrom), b = eyeSpot(shapeTo), t = Math.max(0, Math.min(1, mix));
+        const u1 = smooth(0, 0.5, t), u2 = smooth(0.42, 1, t), drop = Math.sin(Math.PI * t);
+        const cy = 0.046 * drop;   // (la gota cae un poco)
+        const x1 = a.x * (1 - u1), y1 = a.y + (cy - a.y) * u1;
+        return Qt.point(x1 + (b.x - x1) * u2, y1 + (b.y - y1) * u2);
+    }
+    // Gelatina: al juntarse en gota se asienta, y al llenar la forma nueva salpica un poco
+    onMixChanged: {
+        if (mix >= 0.5 && lastMix < 0.5)
+            mochi.kick(1.3, -1.0);
+        if (mix >= 0.93 && lastMix < 0.93)
+            mochi.kick(-0.9, 1.3);
+        lastMix = mix;
+    }
+    property real lastMix: 1
 
     function morphTo(n: int): void {
         if (n === shapeTo && mix >= 1)
@@ -85,8 +102,8 @@ Item {
         property: "mix"
         from: 0
         to: 1
-        duration: 2400                 // poco a poco
-        easing.type: Easing.InOutSine
+        duration: 3000                 // poco a poco (las fases ya van suavizadas)
+        easing.type: Easing.Linear
     }
 
     Timer {
@@ -179,9 +196,14 @@ Item {
         }
     }
 
-    // Mover el ratón lo despierta
-    HoverHandler {
-        onPointChanged: mochi.wake()
+    // Mover el ratón por cualquier sitio de la pantalla de bloqueo lo despierta
+    Item {
+        parent: root.Window.contentItem
+        anchors.fill: parent
+
+        HoverHandler {
+            onPointChanged: mochi.wake()
+        }
     }
 
     ShaderEffect {

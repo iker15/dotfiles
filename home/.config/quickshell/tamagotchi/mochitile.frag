@@ -106,14 +106,48 @@ float shapeSd(float n, vec2 px) {
     return d * S;
 }
 
+float smin(float a, float b, float k) {
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
+// Cambio de forma como un fluido: la forma de partida se recoge hacia dentro (primero las
+// puntas) y su volumen se junta en una gota que ondula y se descuelga un poco; luego la gota se
+// expande y va llenando la forma nueva desde el centro hacia fuera, como líquido en un molde.
 void main() {
     vec2 px = (qt_TexCoord0 - 0.5) * size;
     px.y = -px.y;
     px /= squash;
     float t = morph.z;
-    float d = mix(shapeSd(morph.x, px), shapeSd(morph.y, px), t);
-    // (a mitad del cambio, un poco más blandito: se funde de una forma a la otra)
-    d -= sin(3.1416 * t) * 4.0;
+    vec2 tile = size - 2.0 * inset;
+    float S = min(tile.x, tile.y) * 0.46;
+    float Rmax = length(tile * 0.5) + 8.0;
+    float k = S * 0.35;                              // viscosidad (lo que se funden las partes)
+
+    float u1 = smoothstep(0.0, 0.5, t);              // se recoge
+    float u2 = smoothstep(0.42, 1.0, t);             // rellena la forma nueva
+    float drop = sin(3.1415927 * t);                 // cuánto es gota ahora
+
+    // la forma de partida, recogiéndose de fuera hacia dentro
+    float dA = max(shapeSd(morph.x, px), length(px) - mix(Rmax, -k, u1));
+    // la nueva, llenándose de dentro hacia fuera
+    float dB = max(shapeSd(morph.y, px), length(px) - mix(-k, Rmax, u2));
+    float d = smin(dA, dB, k);
+
+    // la gota: junta el volumen, con ondas en la superficie, y cae un poco por su peso
+    if (drop > 0.001) {
+        vec2 bc = vec2(0.0, -0.1 * S * drop);
+        vec2 q = px - bc;
+        float a = atan(q.y, q.x);
+        float waves = 0.07 * sin(3.0 * a + info.w * 5.0) + 0.045 * sin(5.0 * a - info.w * 7.3)
+                    + 0.03 * sin(2.0 * a + info.w * 3.1);
+        // (crece mientras recoge la forma de partida y se vacía mientras llena la nueva)
+        float rb = S * 0.74 * pow(u1, 0.6) * pow(1.0 - u2, 0.8);
+        d = smin(d, length(q) - rb * (1.0 + waves * drop), k);
+        // y toda la superficie tiembla un poco mientras fluye
+        d += S * 0.012 * sin(7.0 * atan(px.y, px.x) + info.w * 6.0) * drop;
+    }
+
     float alpha = clamp(0.5 - d * min(squash.x, squash.y), 0.0, 1.0);
     fragColor = color * alpha * qt_Opacity;   // (Qt ya lo pasa premultiplicado)
 }
