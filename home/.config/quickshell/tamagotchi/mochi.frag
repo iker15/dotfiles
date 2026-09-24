@@ -5,8 +5,7 @@
 // El color sale de `edge`: el marco visto justo en la unión, a lo largo de cada lado (bg.py),
 // así que en la unión Mochi es del mismo color que el marco, píxel a píxel.
 // Puede imitar formas (engranaje, Clawd —el bichito naranja de Claude Code—, corazón,
-// estrella, flecha): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da su color. En la pantalla de bloqueo se funde con la tarjeta (`card`),
-// que es translúcida: ahí solo pinta fuera de ella, repartiendo el borde para que no se note.
+// estrella, flecha): `shape` mezcla el cuerpo con la silueta y `shapeTint` le da su color.
 // Compilar: /usr/lib/qt6/bin/qsb --glsl "100 es,120,150" --hlsl 50 --msl 12 -o mochi.frag.qsb mochi.frag
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -29,11 +28,6 @@ layout(std140, binding = 0) uniform buf {
     float bandOnly;  // 1 = pintar solo la franja sobre el borde del marco (pasada sin sombra)
     vec4 shape;      // forma: id (0 ninguna, 1 engranaje, 2 Clawd, 3 corazón, 4 estrella, 5 flecha),
                      //        mezcla 0-1, giro (rad; en Clawd, el tiempo de su animación), tamaño (px)
-    vec4 card;       // tarjeta del bloqueo (x, y, ancho, alto en este item)
-    float cardR;     // su radio de esquina
-    float cardOn;    // 1 = hay tarjeta (Mochi en otra capa: solo pinta fuera de ella)
-                     // 2 = Mochi va dentro de la capa de la tarjeta: se pinta la unión entera
-    float baseAlpha; // opacidad del material (la tarjeta y Mochi)
     vec4 shapeTint;  // color de la forma (rgb) y cuánto (a); junto al marco sigue siendo marco
 };
 
@@ -50,11 +44,6 @@ float dot2(vec2 v) {
 float sdBox(vec2 p, vec2 b) {
     vec2 d = abs(p) - b;
     return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-}
-
-float sdRoundBox(vec2 p, vec2 b, float r) {
-    vec2 q = abs(p) - b + r;
-    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
 // (Las formas van en unidades del tamaño, y hacia arriba = +y)
@@ -165,14 +154,6 @@ void main() {
         d = mix(d, shapeSd(q), shape.y);
     float dm = d;   // solo Mochi, sin el marco
 
-    // La tarjeta del bloqueo: se funde con ella por fuera
-    float cardCov = 0.0;
-    if (cardOn > 0.5) {
-        float dc = sdRoundBox(p - (card.xy + card.zw * 0.5), card.zw * 0.5, cardR);
-        d = smin(d, dc, frameK);
-        cardCov = clamp(0.5 - dc, 0.0, 1.0);
-    }
-
     // Fundirse con el marco
     d = smin(d, inside, frameK);
 
@@ -180,10 +161,6 @@ void main() {
     if (inside < 0.0)   // en la franja del borde: solo donde Mochi está pegado, fundiéndose
         // (y difuminada hacia dentro del marco, para que su tono pase al de Mochi sin escalón)
         alpha = clamp((frameK * 0.6 - dm) / (frameK * 0.3), 0.0, 1.0) * smoothstep(-6.0, -1.5, inside);
-    // Sobre la tarjeta no pinta (ya está ella); en su borde suavizado pone justo lo que falta
-    // para que las dos capas juntas den la misma opacidad que el material
-    if (cardCov > 0.0 && cardOn < 1.5)
-        alpha *= (1.0 - cardCov) / max(1.0 - baseAlpha * cardCov, 0.001);
     if (alpha <= 0.0) {
         fragColor = vec4(0.0);
         return;

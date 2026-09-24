@@ -7,7 +7,6 @@ import Caelestia.Config
 import qs.components
 import qs.components.images
 import qs.services
-import "mochi" as Mochi
 
 WlSessionLockSurface {
     id: root
@@ -207,12 +206,12 @@ WlSessionLockSurface {
         rotation: 180
         scale: 0
 
-        // Fondo de la tarjeta. Va dentro de una capa más grande que ella porque Mochi, pegado a
-        // la tarjeta, forma parte de esta misma pieza de material (misma opacidad y una sola
-        // sombra) y sobresale por fuera
-        Item {
+        StyledRect {
+            id: lockBg
+
             anchors.fill: parent
-            anchors.margins: -170
+            color: Colours.palette.m3surface
+            radius: parent.radius
             opacity: Colours.transparency.enabled ? Colours.transparency.base : 1
 
             layer.enabled: true
@@ -220,23 +219,6 @@ WlSessionLockSurface {
                 shadowEnabled: true
                 blurMax: 15
                 shadowColor: Qt.alpha(Colours.palette.m3shadow, 0.7)
-            }
-
-            StyledRect {
-                id: lockBg
-
-                x: 170
-                y: 170
-                width: parent.width - 340
-                height: parent.height - 340
-                color: Colours.palette.m3surface
-                radius: lockContent.radius
-            }
-
-            // Cuerpo de Mochi cuando está pegado a la tarjeta
-            Mochi.LockBody {
-                pet: lockPet
-                cardItem: lockBg
             }
         }
 
@@ -260,26 +242,5 @@ WlSessionLockSurface {
             opacity: 0
             scale: 0
         }
-    }
-
-    // Mochi (~/.config/quickshell/tamagotchi): llega por el borde de abajo y salta a la tarjeta,
-    // que aquí es su medio. Solo compañía: aquí no escucha ni obedece.
-    Mochi.LockPet {
-        id: lockPet
-
-        pam: root.pam
-        failState: root.pam.state === Pam.MaxTries ? 2 : root.pam.state === Pam.Failed || root.pam.state === Pam.Error ? 1 : 0
-        capsLock: Hypr.capsLock
-        unlocking: root.unlocking
-        ready: !initAnim.running
-        bodyColor: Colours.palette.m3surface
-        bodyOpacity: Colours.transparency.enabled ? Colours.transparency.base : 1
-        shadowColor: Colours.palette.m3shadow
-        smoothing: Config.border.smoothing
-        card: Qt.rect(lockContent.x, lockContent.y, lockContent.width, lockContent.height)
-        cardRadius: lockBg.radius
-        fieldPos: Qt.point(width * 0.5, height * 0.68)
-        batteryPos: Qt.point(width * 0.667, height * 0.583)
-        opacity: background.opacity
     }
 }

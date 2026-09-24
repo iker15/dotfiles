@@ -1694,10 +1694,6 @@ ShellRoot {
                         property vector4d shape: Qt.vector4d(shell.lastShape, Math.max(0, shell.morph), shell.shapeRot, 44)
                         // Clawd es naranja (el de Claude)
                         property vector4d shapeTint: shell.lastShape === 2 ? Qt.vector4d(0.851, 0.467, 0.341, 1) : Qt.vector4d(0, 0, 0, 0)
-                        property vector4d card: Qt.vector4d(0, 0, 0, 0)
-                        property real cardR: 0
-                        property real cardOn: 0
-                        property real baseAlpha: 1
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
@@ -1728,10 +1724,6 @@ ShellRoot {
                 property real bandOnly: 1
                 property vector4d shape: bodyFx.shape
                 property vector4d shapeTint: bodyFx.shapeTint
-                property vector4d card: bodyFx.card
-                property real cardR: 0
-                property real cardOn: 0
-                property real baseAlpha: 1
 
                 fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
             }

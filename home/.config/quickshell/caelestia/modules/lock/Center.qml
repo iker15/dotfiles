@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Caelestia.Config
 import qs.components
 import qs.services
+import "mochi" as Mochi
 
 ColumnLayout {
     id: root
@@ -41,10 +42,20 @@ ColumnLayout {
         Layout.fillHeight: true
     }
 
-    ProfilePic {
+    // Mochi (~/.config/quickshell/tamagotchi/LockTile.qml) en el sitio de la foto de perfil: una
+    // ficha como las demás que se va transformando en cosas (reloj, candado, pila, sol/luna)
+    Mochi.LockTile {
         Layout.alignment: Qt.AlignHCenter
         Layout.bottomMargin: Tokens.spacing.extraLarge * root.centerScale
-        centerWidth: root.centerWidth
+        implicitWidth: Math.round(root.centerWidth * 0.5)
+        implicitHeight: implicitWidth
+
+        pam: root.lock.pam
+        failState: root.lock.pam.state === Pam.MaxTries ? 2 : root.lock.pam.state === Pam.Failed || root.lock.pam.state === Pam.Error ? 1 : 0
+        capsLock: Hypr.capsLock
+        unlocking: root.lock.unlocking
+        tileColor: Colours.tPalette.m3surfaceContainer
+        radius: Tokens.rounding.extraLarge
     }
 
     PasswordInput {
