@@ -50,7 +50,7 @@ Item {
     // Zona donde se pueden ver los ojos (coordenadas de este Item): el interior del marco
     property rect clipRect: Qt.rect(-1e5, -1e5, 2e5, 2e5)
 
-    readonly property real u: 1.45                 // escala respecto al Mochi original
+    property real u: 1.45                          // escala respecto al Mochi original (la ficha del bloqueo lo sube: ojos nítidos)
     readonly property real rx: 32 * u              // semiejes del cuerpo en reposo
     readonly property real ry: 29 * u
 

@@ -24,6 +24,7 @@ RowLayout {
 
     Center {
         lock: root.lock
+        tileHeight: resources.implicitHeight   // (Mochi, alineado con las otras fichas)
     }
 
     Resources {

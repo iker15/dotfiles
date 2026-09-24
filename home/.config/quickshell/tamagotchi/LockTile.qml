@@ -65,7 +65,7 @@ Item {
         shapeTo = n;
         mix = 0;
         morphAnim.restart();
-        mochi.kick(-1.4, 2.4);   // gelatina al transformarse
+        mochi.kick(-0.7, 1.2);   // un poco de gelatina al transformarse
     }
 
     // Lo que sigue en la ronda: ficha → cosa → ficha → otra cosa…
@@ -85,19 +85,18 @@ Item {
         property: "mix"
         from: 0
         to: 1
-        duration: 750
-        easing.type: Easing.OutBack
-        easing.overshoot: 1.2
+        duration: 2400                 // poco a poco
+        easing.type: Easing.InOutSine
     }
 
     Timer {
         running: root.visible && !root.typing && !root.capsLock && !root.unlocking && !mochi.dozing
         repeat: true
-        interval: 5000
+        interval: 9000
         onTriggered: {
             const n = root.nextShape();
             root.morphTo(n);
-            interval = n === 0 ? 5000 + Math.random() * 3000 : 4500;
+            interval = n === 0 ? 12000 + Math.random() * 6000 : 9000;
         }
     }
 
@@ -203,10 +202,9 @@ Item {
     Blob {
         id: mochi
 
-        readonly property real k: root.width / 105   // escala de los ojos respecto al Mochi normal
         x: root.width * (0.5 + root.eyes.x) - width / 2 + Math.sin(root.shake * Math.PI * 6) * 8 * (1 - root.shake)
         y: root.height * (0.5 + root.eyes.y) - height / 2
-        scale: k
+        u: 1.45 * root.width / 105   // ojos más grandes, dibujados a su tamaño (nítidos)
         worldX: 0
         worldY: 0
         bodyColor: Qt.alpha(root.tileColor, 1)
