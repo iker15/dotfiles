@@ -501,8 +501,14 @@ ShellRoot {
         outside: isNaN(weatherTemp) ? null : Math.round(weatherTemp),
         energy: Math.round(dayEnergy * 100) / 100,
         drowsy: Math.round(drowsy * 100) / 100,
-        where: phys,
-        nextHat: nextHat
+        where: inApp ? "app" : phys,
+        nextHat: nextHat,
+        xp: Math.round(Bond.xp),
+        level: Bond.lvl,
+        levelStart: Bond.lvlStart,
+        levelEnd: Bond.lvlEnd,
+        stage: Bond.stage,
+        stageName: Bond.stageNames[Bond.stage]
     })
     // El próximo gorro (para el dashboard): cuál y cuándo
     readonly property string nextHat: {
@@ -531,7 +537,7 @@ ShellRoot {
     }
     // El retrato: se repinta si cambia la cara, el gorro o el color (con calma: el color del
     // marco va variando)
-    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3)].join("|")
+    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3), Bond.stage].join("|")
     onAvatarKeyChanged: avatarRedraw.restart()
     Timer {
         id: avatarRedraw
@@ -653,6 +659,93 @@ ShellRoot {
                 try {
                     shell.gameEvent(JSON.parse(data), false);
                 } catch (e) {}
+            }
+        }
+    }
+
+    // ── Dentro del editor (Code - OSS / VSCodium) ──
+    // Cuando el editor es la ventana activa en su workspace, bucea por el marco hasta la esquina
+    // de abajo a la izquierda del editor y "se mete": se queda sumergido ahí y aparece en su panel
+    // de la extensión (integrations/vscodium). Al salir del editor, vuelve a salir por esa esquina.
+    // Mientras programas gana experiencia (la manda la extensión: `pet codeXp <n>`).
+    readonly property bool codeActive: /^(code-oss|codium|vscodium|code|code-url-handler)$/i.test(Hyprland.activeToplevel?.wayland?.appId ?? "") && Hyprland.activeToplevel?.workspace?.id === mochiWs
+    property bool inApp: false
+    property var appSpot: null        // punto del marco por el que se ha metido
+    property bool appOptOut: false    // lo has sacado tú (le has hablado…): no vuelve a entrar hasta que salgas del editor
+    onCodeActiveChanged: {
+        if (codeActive) {
+            appLeave.stop();
+        } else {
+            appOptOut = false;
+            if (inApp)
+                appLeave.restart();
+        }
+    }
+    // (lo va intentando: si acaba de llegar buceando, o estaba haciendo otra cosa, entra luego)
+    Timer {
+        running: shell.codeActive && !shell.inApp && !shell.appOptOut
+        repeat: true
+        interval: 1200
+        onTriggered: {
+            Hyprland.refreshToplevels();
+            shell.enterApp();
+        }
+    }
+    Timer {
+        id: appLeave
+
+        interval: 700
+        onTriggered: shell.leaveApp()
+    }
+    function enterApp(): void {
+        if (inApp || !codeActive || locked || dnd || !present || asking || Brain.busy || (phys !== "swim" && phys !== "nest"))
+            return;
+        const o = Hyprland.activeToplevel?.lastIpcObject;
+        if (!o?.at || o.fullscreen)
+            return;
+        const s = nearestScreen(o.at[0] + 10, o.at[1] + o.size[1] - 10), tr = track(s);
+        if (phys === "nest") {
+            phys = "swim";
+            bodyOffX = 0;
+            swimD = nearestD(tr, tr.L, gy);
+        }
+        const target = nearestD(tr, o.at[0] + 40, o.at[1] + o.size[1]);
+        appSpot = pointAt(tr, target);
+        inApp = true;
+        reacted("curious", 900);
+        dive(trackDiff(tr, swimD, target), "hidden", false, 1.8);
+        diveToNest = false;
+        diveStay = true;   // se queda dentro
+    }
+    function leaveApp(): void {
+        if (!inApp)
+            return;
+        inApp = false;
+        diveStay = false;
+        if (!present || locked)
+            return;   // (si te has ido a otro workspace, ya vendrá detrás de ti)
+        const s = nearestScreen(appSpot?.x ?? gx, appSpot?.y ?? gy), tr = track(s);
+        swimD = nearestD(tr, appSpot?.x ?? gx, appSpot?.y ?? gy);
+        const p = pointAt(tr, swimD), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
+        gx = p.x + p.nx * deep;
+        gy = p.y + p.ny * deep;
+        dive(0, "hidden", true, 1.8);
+        reacted("happy", 1200);
+    }
+    // Sube de nivel: lo celebra (si está en el editor, lo celebra el del panel)
+    Connections {
+        target: Bond
+
+        function onLevelUp(level: int, evolved: bool): void {
+            if (shell.inApp || !shell.present || shell.locked)
+                return;
+            shell.reacted(evolved ? "love" : "excited", 2600);
+            shell.kicked(-1.8, 2.8);
+            if (evolved)
+                shell.rainbow(4000);
+            if (shell.phys === "swim") {
+                shell.hopsLeft = evolved ? 3 : 1;
+                shell.hop();
             }
         }
     }
@@ -1259,6 +1352,8 @@ ShellRoot {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
+        inApp = false;
+        diveStay = false;
         const s = screenOfMonitor(Hyprland.focusedMonitor), tr = track(s);
         const fromLeft = mochiWs >= 0 && mochiWs < ws.id;
         mochiWs = ws.id;
@@ -1506,6 +1601,7 @@ ShellRoot {
     // Se bloquea la pantalla: se hunde en el borde de abajo (en su x) y le cuenta a la pantalla de
     // bloqueo dónde está y cuánto sueño tiene
     function goLock(): void {
+        inApp = false;
         asking = false;
         voiceWaiting = false;
         const s = present ? nearestScreen(gx, gy) : screenOfMonitor(Hyprland.focusedMonitor);
@@ -1711,6 +1807,11 @@ ShellRoot {
             return;
         idleHide.restart();
         woke();
+        if (inApp) {
+            appOptOut = true;
+            leaveApp();   // le hablas o lo llamas: sale del editor
+            return;
+        }
         if (!present) {
             summon();
             return;
@@ -2274,6 +2375,11 @@ ShellRoot {
                 ms: 2400,
                 hacer: faces[1]
             }, peek);
+        }
+        // Experiencia por programar (la manda la extensión del editor)
+        function codeXp(n: real): string {
+            Bond.addXp(n);
+            return `nivel ${Bond.lvl} · ${Math.round(Bond.xp)} XP (siguiente nivel: ${Bond.lvlEnd})`;
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3376,6 +3482,7 @@ ShellRoot {
                         ink: shell.avatarInk,
                         face: shell.peekFace,
                         hat: shell.hat,
+                        stage: Bond.stage,
                         breath: 0.5 + 0.5 * Math.sin(t * 3),
                         ly: -0.4,
                         t: t
@@ -3420,6 +3527,7 @@ ShellRoot {
                         hat: shell.hat,
                         melt: shell.melt,
                         snow: shell.snowAmt,
+                        stage: Bond.stage,
                         t: 0.3
                     });
                     pending = true;

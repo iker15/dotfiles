@@ -111,6 +111,13 @@ Item {
                 }
 
                 Stat {
+                    icon: "military_tech"
+                    label: root.st.stageName ?? "Nivel"
+                    value: `Nivel ${root.st.level ?? 1} · ${(root.st.xp ?? 0) - (root.st.levelStart ?? 0)}/${(root.st.levelEnd ?? 60) - (root.st.levelStart ?? 0)} XP`
+                    colour: Colours.palette.m3primary
+                }
+
+                Stat {
                     icon: "checkroom"
                     label: "Gorro"
                     value: root.st.hat ? root.hatNames[root.st.hat] ?? root.st.hat : "ninguno"
@@ -201,6 +208,7 @@ Item {
                             hat: root.st.hat ?? "",
                             melt: root.st.melt ?? 0,
                             snow: root.st.snow ?? 0,
+                            stage: root.st.stage ?? 1,
                             blink: f === "asleep" ? 0 : blink,
                             lx: lx,
                             ly: ly,

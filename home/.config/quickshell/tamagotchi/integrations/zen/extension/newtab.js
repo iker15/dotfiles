@@ -20,7 +20,7 @@ function apply(msg) {
         r.setProperty("--primary", c.primary);
         r.setProperty("--container", c.surfaceContainer);
     }
-    document.getElementById("status").textContent = st ? `Mochi · ❤ ${st.bond} · ${st.text}` : "";
+    document.getElementById("status").textContent = st ? `${st.stageName ?? "Mochi"} · nivel ${st.level ?? 1} · ❤ ${st.bond} · ${st.text}` : "";
 }
 browser.runtime.sendMessage({ type: "getState" }).then(apply);
 browser.runtime.onMessage.addListener(msg => {
@@ -80,6 +80,7 @@ function frame(now) {
         hat: st?.hat ?? "",
         melt: st?.melt ?? 0,
         snow: st?.snow ?? 0,
+        stage: st?.stage ?? 1,
         blink: face === "asleep" ? 0 : blink,
         lx: lx,
         ly: ly,

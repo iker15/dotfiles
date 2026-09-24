@@ -26,6 +26,35 @@ Singleton {
     property real now: Date.now()
     readonly property bool sulky: loaded && now - lastTouch > 2 * 86400000
 
+    // ── Experiencia: sube mientras programas (la manda la extensión del editor) ──
+    // Nivel L necesita 60·(L−1)^1.6 XP en total (nivel 10 ≈ 3-4 h programando, 20 ≈ 11 h).
+    // Cada pocos niveles evoluciona (más brillo, destellos, una estrellita que le sigue…).
+    property real xp: 0
+    readonly property int lvl: levelFor(xp)          // (level es el cariño 0-1)
+    readonly property real lvlStart: xpFor(lvl)
+    readonly property real lvlEnd: xpFor(lvl + 1)
+    readonly property int stage: lvl >= 35 ? 4 : lvl >= 20 ? 3 : lvl >= 10 ? 2 : lvl >= 5 ? 1 : 0
+    readonly property var stageNames: ["Mochi bebé", "Mochi", "Mochi brillante", "Mochi sabio", "Mochi legendario"]
+    signal levelUp(int level, bool evolved)
+    function xpFor(l: int): real {
+        return Math.round(60 * Math.pow(Math.max(0, l - 1), 1.6));
+    }
+    function levelFor(x: real): int {
+        let l = 1;
+        while (xpFor(l + 1) <= x)
+            l++;
+        return l;
+    }
+    function addXp(n: real): void {
+        if (!loaded || !(n > 0))
+            return;
+        const before = lvl, stBefore = stage;
+        xp += Math.min(n, 200);   // (por si acaso: nada de saltos enormes de golpe)
+        if (lvl > before)
+            levelUp(lvl, stage > stBefore);
+        save.restart();
+    }
+
     signal reconciled()   // estaba enfurruñado y le has hecho caso (la segunda vez)
     signal pouted()       // estaba enfurruñado y le haces caso: la primera vez te gira la cara
     property real poutAt: 0
@@ -125,7 +154,8 @@ Singleton {
                 lastSeen: root.lastSeen,
                 day: root.day,
                 gainedToday: root.gainedToday,
-                presenceToday: root.presenceToday
+                presenceToday: root.presenceToday,
+                xp: Math.round(root.xp)
             }))
     }
 
@@ -145,6 +175,7 @@ Singleton {
                 root.day = d.day ?? "";
                 root.gainedToday = d.gainedToday ?? 0;
                 root.presenceToday = d.presenceToday ?? 0;
+                root.xp = d.xp ?? 0;
             } catch (e) {}
             root.start();
         }

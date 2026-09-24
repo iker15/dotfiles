@@ -1,13 +1,21 @@
-// El Mochi pequeñito del panel: respira, parpadea, te sigue con los ojos y cambia de cara.
+// El panel de Mochi (abajo a la izquierda del explorador): Mochi en la esquina, con su nivel y
+// la barra de experiencia. Cuando el Mochi del escritorio se mete en el editor, aparece aquí
+// saltando desde abajo; cuando se va, se hunde y queda un aviso de que está fuera.
 const vscode = acquireVsCodeApi();
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const W = 150, H = 130;
 const dpr = window.devicePixelRatio || 1;
-cv.width = 220 * dpr;
-cv.height = 150 * dpr;
-cv.style.width = "220px";
-cv.style.height = "150px";
+cv.width = W * dpr;
+cv.height = H * dpr;
+cv.style.width = W + "px";
+cv.style.height = H + "px";
 ctx.scale(dpr, dpr);
+
 let st = null, face = "normal", blink = 0, mx = 0, my = 0, lx = 0, ly = 0;
+let here = 0, hereTarget = 0;          // 0 fuera → 1 dentro del editor (animado)
+let squash = 0, squashV = 0;           // muelle al llegar o al celebrar
+let celebrateUntil = 0, celebrateFace = "excited";
+const pops = [];                       // "+10 XP" que suben y se desvanecen
 const t0 = performance.now();
 
 window.addEventListener("message", e => {
@@ -15,17 +23,44 @@ window.addEventListener("message", e => {
     if (m.type === "state") {
         st = m.state;
         face = m.face;
-        document.getElementById("s").textContent = st ? `❤ ${st.bond} · ${st.text}` : "";
+        const inApp = st?.where === "app";
+        // (si Mochi no está en marcha, se queda aquí igualmente)
+        hereTarget = inApp || !st ? 1 : 0;
+        info();
     } else if (m.type === "blink") {
         doBlink();
+    } else if (m.type === "xp") {
+        pops.push({ text: `+${m.n} XP`, t: performance.now() });
+        squashV -= 2;
+    } else if (m.type === "levelUp") {
+        celebrateUntil = performance.now() + 3000;
+        celebrateFace = m.evolved ? "love" : "excited";
+        pops.push({ text: m.evolved ? `¡Evoluciona! ${m.stageName}` : `¡Nivel ${m.level}!`, t: performance.now(), big: true });
+        squashV -= 5;
     }
 });
+
+function info() {
+    const lvl = st?.level ?? 1, a = st?.levelStart ?? 0, b = st?.levelEnd ?? 60, xp = st?.xp ?? 0;
+    document.getElementById("name").textContent = st?.stageName ?? "Mochi";
+    document.getElementById("lvl").textContent = `Nivel ${lvl} · ${xp - a} / ${b - a} XP`;
+    document.getElementById("fill").style.width = `${Math.max(0, Math.min(100, 100 * (xp - a) / Math.max(1, b - a)))}%`;
+    document.getElementById("mood").textContent = st ? `❤ ${st.bond} · ${st.text}` : "";
+    const away = document.getElementById("away");
+    away.style.display = hereTarget < 0.5 ? "block" : "none";
+    away.textContent = `Mochi está fuera, paseando por el escritorio · nivel ${lvl}. Vuelve cuando entres al editor.`;
+    document.getElementById("info").style.display = hereTarget < 0.5 ? "none" : "block";
+}
+
 document.addEventListener("mousemove", e => {
     const r = cv.getBoundingClientRect();
     mx = e.clientX - (r.x + r.width / 2);
     my = e.clientY - (r.y + r.height * 0.6);
 });
-cv.addEventListener("click", () => vscode.postMessage({ type: "poke" }));
+cv.addEventListener("click", () => {
+    squashV -= 3;
+    vscode.postMessage({ type: "poke" });
+});
 
 function doBlink() {
     const s = performance.now();
@@ -44,28 +79,63 @@ function doBlink() {
     setTimeout(loop, 2500 + Math.random() * 3500);
 })();
 
+let last = performance.now();
 function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
     const t = (now - t0) / 1000, d = Math.hypot(mx, my);
     lx += ((d < 15 ? 0 : mx / (d + 80)) - lx) * 0.12;
     ly += ((d < 15 ? 0 : my / (d + 80)) - ly) * 0.12;
-    const css = getComputedStyle(document.body);
-    ctx.clearRect(0, 0, 220, 150);
-    MochiDraw.avatar(ctx, {
-        x: 110,
-        y: 142,
-        s: 44,
-        body: st?.body ?? css.getPropertyValue("--vscode-editorWidget-background") ?? "#ccc",
-        ink: st?.ink ?? "#1c1b1b",
-        face: face,
-        hat: st?.hat ?? "",
-        melt: st?.melt ?? 0,
-        snow: st?.snow ?? 0,
-        blink: face === "asleep" ? 0 : blink,
-        lx: lx,
-        ly: ly,
-        breath: 0.5 + 0.5 * Math.sin(t * (face === "asleep" ? 1.6 : 2.6)),
-        t: t
-    });
+    // llegar / irse: sube desde abajo con un rebote
+    const wasHere = here;
+    here += (hereTarget - here) * Math.min(1, dt * 5);
+    if (wasHere < 0.5 && here >= 0.5)
+        squashV -= 6;
+    squashV += (-120 * squash - 9 * squashV) * dt;
+    squash += squashV * dt;
+
+    ctx.clearRect(0, 0, W, H);
+    if (here > 0.02) {
+        const f = now < celebrateUntil ? celebrateFace : face;
+        const hop = now < celebrateUntil ? Math.abs(Math.sin((now - celebrateUntil) / 180)) * 10 : 0;
+        ctx.save();
+        const baseY = H - 6 + (1 - here) * 110 - hop;
+        ctx.translate(62, baseY);
+        ctx.scale(1 - squash * 0.05, 1 + squash * 0.07);
+        ctx.translate(-62, -baseY);
+        MochiDraw.avatar(ctx, {
+            x: 62,
+            y: baseY,
+            s: 40,
+            body: st?.body ?? "#d0d3d6",
+            ink: st?.ink ?? "#1c1b1b",
+            face: f,
+            hat: st?.hat ?? "",
+            melt: st?.melt ?? 0,
+            snow: st?.snow ?? 0,
+            stage: st?.stage ?? 0,
+            blink: f === "asleep" ? 0 : blink,
+            lx: lx,
+            ly: ly,
+            breath: 0.5 + 0.5 * Math.sin(t * (f === "asleep" ? 1.6 : 2.6)),
+            t: t
+        });
+        ctx.restore();
+    }
+    // "+XP" que suben
+    for (let i = pops.length - 1; i >= 0; i--) {
+        const p = pops[i], k = (now - p.t) / (p.big ? 2600 : 1400);
+        if (k >= 1) {
+            pops.splice(i, 1);
+            continue;
+        }
+        ctx.globalAlpha = 1 - k * k;
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--vscode-charts-yellow") || "#e5c07b";
+        ctx.font = `${p.big ? "bold 13px" : "600 12px"} ${getComputedStyle(document.body).fontFamily}`;
+        ctx.textAlign = "center";
+        ctx.fillText(p.text, p.big ? 75 : 100, 34 - k * 26);
+        ctx.globalAlpha = 1;
+    }
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

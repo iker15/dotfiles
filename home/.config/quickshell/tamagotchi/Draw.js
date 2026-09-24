@@ -12,10 +12,14 @@
 //   sleepy | surprised | squint | hot | curious | excited
 //   lx, ly: hacia dónde mira (−1…1) · blink: 0 abierto → 1 cerrado · t: tiempo (s)
 //   breath: 0-1 (respira) · melt: 0-1 · hat: "" | witch | santa | party | crown · snow: 0-1
+//   stage: evolución por nivel (0 bebé: más pequeño y ojos más grandes · 1 normal · 2 brillante:
+//   más brillo y un destello · 3 sabio: + una estrellita que le da vueltas · 4 legendario: + un
+//   brillo arcoíris en el borde)
 // }
 
 function avatar(ctx, o) {
-    const s = o.s, t = o.t || 0, m = o.melt || 0, b = o.breath || 0;
+    const stage = o.stage ?? 1;
+    const s = o.s * (stage === 0 ? 0.82 : 1), t = o.t || 0, m = o.melt || 0, b = o.breath || 0;
     const rx = s * (1 + 0.3 * m + 0.03 * b), ryT = s * (1.0 - 0.34 * m - 0.03 * b), ryB = s * (0.72 - 0.2 * m);
     const cx = o.x, cy = o.y - ryB;
 
@@ -32,13 +36,34 @@ function avatar(ctx, o) {
     }
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.fillStyle = `rgba(255,255,255,${stage >= 2 ? 0.2 : 0.07})`;
     ctx.beginPath();
     Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
     ctx.fill();
+    // Legendario: un brillo arcoíris que recorre el borde
+    if (stage >= 4) {
+        ctx.save();
+        ctx.lineWidth = s * 0.06;
+        for (let i = 0; i < 24; i++) {
+            const a0 = 2 * Math.PI * i / 24, a1 = 2 * Math.PI * (i + 1) / 24;
+            const hue = (i * 15 + t * 90) % 360;
+            ctx.strokeStyle = `hsla(${hue}, 90%, 65%, 0.55)`;
+            ctx.beginPath();
+            for (let k = 0; k <= 4; k++) {
+                const a = a0 + (a1 - a0) * k / 4, sn = Math.sin(a);
+                const px = cx + rx * Math.cos(a), py = cy + (sn < 0 ? ryT : ryB) * sn;
+                if (k)
+                    ctx.lineTo(px, py);
+                else
+                    ctx.moveTo(px, py);
+            }
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
 
     // Ojos
-    const u = s / 32, d = 9.5 * u, f = o.face || "normal";
+    const u = s / 32, d = 9.5 * u * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
     let lx = o.lx || 0, ly = o.ly || 0;
     if (f === "sulky")
         lx = -0.8;
@@ -64,6 +89,19 @@ function avatar(ctx, o) {
         ctx.quadraticCurveTo(x - r * 1.1, y - r * 0.4, x, y - r * 2.2);
         ctx.fill();
         ctx.globalAlpha = 1;
+    }
+
+    // Brillante en adelante: un destello que aparece y se va; sabio: una estrellita que le da vueltas
+    if (stage >= 2) {
+        const k = (t * 0.45) % 1;
+        if (k < 0.4)
+            sparkle(ctx, cx + rx * 0.72, cy - ryT * 0.72, s * 0.12 * Math.sin(k / 0.4 * Math.PI), "#fff6c8");
+    }
+    if (stage >= 3) {
+        const a = t * 1.3;
+        const x = cx + Math.cos(a) * rx * 1.25, y = cy - ryT * 0.35 + Math.sin(a) * ryT * 0.35;
+        // (por detrás de la cabeza se ve más pequeña)
+        sparkle(ctx, x, y, s * (Math.sin(a) > 0 ? 0.1 : 0.07), "#ffd84a");
     }
 
     // Nieve y gorro, en lo alto de la cabeza
@@ -149,6 +187,22 @@ function eye(ctx, f, x, y, d, side, blink, u) {
     ctx.clip();
     ctx.beginPath();
     Hats.RR(ctx, x - w / 2, y - h / 2, w, h, r);
+    ctx.fill();
+    ctx.restore();
+}
+
+// Estrellita de cuatro puntas
+function sparkle(ctx, x, y, r, color) {
+    if (r <= 0.3)
+        return;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.quadraticCurveTo(x, y, x, y + r);
+    ctx.quadraticCurveTo(x, y, x - r, y);
+    ctx.quadraticCurveTo(x, y, x, y - r);
     ctx.fill();
     ctx.restore();
 }
