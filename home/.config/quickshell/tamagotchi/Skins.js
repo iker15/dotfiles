@@ -153,10 +153,10 @@ const list = [
                 circle(ctx, g, s * 0.68, 0.14, 0.17);
         },
         over(ctx, g) {
-            ctx.fillStyle = "#1d1712";
+            ctx.fillStyle = g.ink || "#1d1712";
             oval(ctx, g, 0, -0.02, 0.06, 0.04);
             // boca "ω"
-            ctx.strokeStyle = "#1d1712";
+            ctx.strokeStyle = g.ink || "#1d1712";
             ctx.lineWidth = g.rx * 0.03;
             ctx.lineCap = "round";
             ctx.beginPath();
@@ -916,7 +916,8 @@ function drawOver(ctx, skin, g, amt) {
         return;
     ctx.save();
     ctx.globalAlpha *= fade(amt);
-    drawTips(ctx, skin, g, amt);
+    if (g.accents !== false)
+        drawTips(ctx, skin, g, amt);
     if (skin?.over)
         skin.over(ctx, g);
     ctx.restore();

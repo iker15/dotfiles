@@ -20,6 +20,8 @@
 //   brillo arcoíris en el borde)
 //   look: su aspecto (Look.qml: eyeSize, eyeGap, eyeY, eyeShape, wide; opcional)
 //   skin: id de una transformación (Skins.js; opcional) · skinAmt: 0-1 cuánto se ha transformado
+//   skinMono: con su color de siempre (solo la forma y la cara) · skinAccents: aun así, los
+//   toques de color (mofletes, puntas de las orejas…)
 // }
 
 // Aspecto con valores por defecto
@@ -64,7 +66,8 @@ function avatar(ctx, o) {
     const cx = o.x, cy = o.y - ryB;
     // Transformado en otro personaje (Skins.js): su silueta, su color, sus ojos y sus detalles
     const skin = o.skin ? Skins.byId(o.skin) : null, amt = skin ? Math.max(0, Math.min(1, o.skinAmt ?? 1)) : 0;
-    const bodyCol = skin ? mixHex(o.body, skin.color, amt) : o.body;
+    const mono = !!(skin && o.skinMono);
+    const bodyCol = skin && !mono ? mixHex(o.body, skin.color, amt) : o.body;
     const g = {
         x: cx,
         y: cy,
@@ -73,7 +76,10 @@ function avatar(ctx, o) {
         ryB: ryB,
         t: t,
         face: o.face || "normal",
-        amt: amt
+        amt: amt,
+        ink: mono ? o.ink : "",
+        mono: mono,
+        accents: !mono || !!o.skinAccents
     };
     const rimOf = skin ? (a => {
             const [fx, fy] = Skins.formPoint(skin, a, t, amt);
@@ -147,7 +153,7 @@ function avatar(ctx, o) {
     }
 
     // Ojos (transformado: los suyos, a partir de la mitad de la transformación)
-    if (skin)
+    if (skin && g.accents)
         Skins.drawUnder(ctx, skin, g, bodyPath);
     const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L) : null;
     const eyeSize = SE ? SE.eyeSize : L.eyeSize, eyeGap = SE ? SE.eyeGap : L.eyeGap, eyeY = SE ? SE.eyeY : L.eyeY;
@@ -157,7 +163,7 @@ function avatar(ctx, o) {
         lx = -0.8;
     if (f === "curious")
         ly = -0.3;
-    const ink = SE?.ink || o.ink;
+    const ink = mono ? o.ink : SE?.ink || o.ink;
     const ey0 = cy - 0.12 * ryT + eyeY * 7 * u, ey = ey0 + ly * 5 * u;
     ctx.fillStyle = ink;
     ctx.strokeStyle = ink;
