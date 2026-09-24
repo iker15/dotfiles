@@ -2,4 +2,4 @@
 
 [templates.zen]
 input_path = '~/.config/matugen/templates/zen.css'
-output_path = '/home/iker/.config/zen/mdvi3q2i.Default (release)/chrome/matugen.css'
+output_path = '~/.config/zen/matugen.css'   # (zen/install.sh lo enlaza en el chrome/ de cada perfil)

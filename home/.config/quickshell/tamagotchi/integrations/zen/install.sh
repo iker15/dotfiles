@@ -34,6 +34,19 @@ for p in ~/.config/zen/*/; do
     touch "$p/user.js"
     grep -q 'xpinstall.signatures.required' "$p/user.js" || echo 'user_pref("xpinstall.signatures.required", false);' >> "$p/user.js"
     grep -q 'extensions.autoDisableScopes' "$p/user.js" || echo 'user_pref("extensions.autoDisableScopes", 14);' >> "$p/user.js"
+    # Colores del fondo de pantalla (matugen escribe ~/.config/zen/matugen.css): enlazado en su
+    # chrome/ e importado desde userChrome.css
+    grep -q 'toolkit.legacyUserProfileCustomizations.stylesheets' "$p/user.js" || echo 'user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);' >> "$p/user.js"
+    mkdir -p "$p/chrome"
+    if [[ -f "$p/chrome/matugen.css" && ! -L "$p/chrome/matugen.css" ]]; then
+        [[ -f ~/.config/zen/matugen.css ]] || cp "$p/chrome/matugen.css" ~/.config/zen/matugen.css
+        rm -f "$p/chrome/matugen.css"
+    fi
+    touch ~/.config/zen/matugen.css
+    ln -sfn ~/.config/zen/matugen.css "$p/chrome/matugen.css"
+    touch "$p/chrome/userChrome.css"
+    grep -q 'matugen.css' "$p/chrome/userChrome.css" || sed -i '1i @import url("matugen.css");' "$p/chrome/userChrome.css"
+    [[ -s "$p/chrome/userChrome.css" ]] || echo '@import url("matugen.css");' > "$p/chrome/userChrome.css"
     echo "Instalada en $p"
 done
 rm -f "$xpi"

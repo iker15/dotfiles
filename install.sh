@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Instala los dotfiles de iker en una CachyOS recién instalada.
-# Uso: git clone <repo> ~/dotfiles && cd ~/dotfiles && ./install.sh
+# Instala los dotfiles de iker en una CachyOS recién instalada (la tuya o la de un amigo).
+# Uso: bash bootstrap.sh (lo clona en ~/dotfiles y ejecuta esto), o
+#      git clone <repo> ~/dotfiles && ~/dotfiles/install.sh
 set -euo pipefail
 
 DOTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,8 +12,12 @@ log() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
 # --- 1. Paquetes -------------------------------------------------------------
 log "Actualizando sistema e instalando paquetes oficiales"
 sudo pacman -Syu --needed --noconfirm base-devel git
-# Solo los paquetes que existen en los repos (evita fallos por paquetes renombrados)
+# Solo los paquetes que existen en los repos (evita fallos por paquetes renombrados), y sin los
+# de hardware (drivers NVIDIA/Intel, microcódigo, kernels): esos ya los pone el instalador de
+# CachyOS según el PC de cada uno
+HW='^(nvidia.*|lib32-nvidia.*|opencl-nvidia|lib32-opencl-nvidia|libva-nvidia-driver|linux-cachyos.*|linux-.*-headers|intel-ucode|amd-ucode|intel-lpmd|intel-media-driver|vulkan-intel|lib32-vulkan-intel|vulkan-radeon|lib32-vulkan-radeon|xf86-video-.*)$'
 comm -12 <(sort "$DOTS/pkglist.txt") <(pacman -Slq | sort -u) \
+    | grep -vE "$HW" \
     | sudo pacman -S --needed --noconfirm -
 
 if ! command -v paru >/dev/null; then
@@ -69,8 +74,8 @@ log "Preparando el oído de Mochi"
 
 # --- 4b. Mochi: pantalla de arranque (Plymouth) -----------------------------
 log "Poniendo a Mochi en el arranque"
-"$HOME/dotfiles/system/plymouth/mochi/install.sh" || echo "  (sin tema de arranque: ejecuta system/plymouth/mochi/install.sh más tarde)"
-"$HOME/dotfiles/system/limine/install.sh" || echo "  (sin fondo de Limine: ejecuta system/limine/install.sh más tarde)"
+"$DOTS/system/plymouth/mochi/install.sh" || echo "  (sin tema de arranque: ejecuta system/plymouth/mochi/install.sh más tarde)"
+"$DOTS/system/limine/install.sh" || echo "  (sin fondo de Limine: ejecuta system/limine/install.sh más tarde)"
 
 # --- 4c. Mochi en las apps (Zen, VSCodium, Minecraft) ------------------------
 # (y basedpyright: errores de Python en el editor, para que Mochi los vea)

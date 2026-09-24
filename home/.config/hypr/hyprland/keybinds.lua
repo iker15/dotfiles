@@ -167,9 +167,9 @@ create_bind(vars.kbAudioSettings, hl.dsp.exec_cmd(vars.audioSettings))
 create_bind(vars.kbScreenshot, hl.dsp.exec_cmd("caelestia screenshot"), locked)
 create_bind(vars.kbScreenshotFreeze, hl.dsp.global("caelestia:screenshotFreeze"))
 create_bind(vars.kbScreenshotRegion, hl.dsp.global("caelestia:screenshot"))
-create_bind(vars.kbRecord, hl.dsp.exec_cmd("/home/iker/.local/bin/caelestia-record"))
-create_bind(vars.kbRecordSound, hl.dsp.exec_cmd("/home/iker/.local/bin/caelestia-record -s"))
-create_bind(vars.kbRecordRegion, hl.dsp.exec_cmd("/home/iker/.local/bin/caelestia-record -r"))
+create_bind(vars.kbRecord, hl.dsp.exec_cmd("~/.local/bin/caelestia-record"))
+create_bind(vars.kbRecordSound, hl.dsp.exec_cmd("~/.local/bin/caelestia-record -s"))
+create_bind(vars.kbRecordRegion, hl.dsp.exec_cmd("~/.local/bin/caelestia-record -r"))
 create_bind(vars.kbColorPicker, hl.dsp.exec_cmd("hyprpicker -a"))
 
 -- Brightness
