@@ -19,8 +19,11 @@ Item {
     id: root
 
     property var st: ({})
-    // Crear a Mochi (si aún no ha nacido) o retocarlo: se muestra el creador en vez de su ficha
+    // Crear a Mochi (si aún no ha nacido) o elegir un rasgo nuevo (si ha desbloqueado un hueco):
+    // se muestra el creador en vez de su ficha. Una vez nacido no se retoca: solo empezar de cero.
     property bool editing: false
+    property bool confirmReset: false
+    readonly property int freeTraits: Traits.slots(st.level ?? 1) - Mochi.Look.traits.length
     readonly property bool creating: Mochi.Look.loaded && (!Mochi.Look.born || editing)
 
     readonly property int bond: st.bond ?? 0
@@ -108,10 +111,13 @@ Item {
                         font: Tokens.font.body.large
                         color: Colours.palette.m3primary
                     }
-                    IconButton {
+                    IconTextButton {
                         anchors.verticalCenter: parent.verticalCenter
-                        icon: "brush"
-                        type: IconButton.Text
+                        visible: root.freeTraits > 0
+                        icon: "add"
+                        text: "Rasgo nuevo"
+                        isRound: true
+                        type: IconTextButton.Tonal
                         onClicked: root.editing = true
                     }
                 }
@@ -124,10 +130,9 @@ Item {
 
                 // Su carácter (y si ha desbloqueado un rasgo nuevo, avisa)
                 StyledText {
-                    readonly property int free: Traits.slots(root.st.level ?? 1) - Mochi.Look.traits.length
-                    text: Mochi.Look.traits.map(id => Traits.byId(id)?.name).filter(Boolean).join(" · ") + (free > 0 ? `  ·  ¡rasgo nuevo para elegir! (pincel)` : "")
+                    text: Mochi.Look.traits.map(id => Traits.byId(id)?.name).filter(Boolean).join(" · ") + (root.freeTraits > 0 ? "  ·  ¡puede aprender un rasgo nuevo!" : "")
                     font: Tokens.font.body.small
-                    color: free > 0 ? Colours.palette.m3tertiary : Colours.palette.m3primary
+                    color: root.freeTraits > 0 ? Colours.palette.m3tertiary : Colours.palette.m3primary
                 }
             }
 
@@ -519,6 +524,70 @@ Item {
                 isRound: true
                 type: IconTextButton.Tonal
                 onClicked: root.ipc("sleep", "doze")
+            }
+            IconTextButton {
+                icon: "restart_alt"
+                text: "Empezar de cero"
+                isRound: true
+                type: IconTextButton.Text
+                onClicked: root.confirmReset = true
+            }
+        }
+
+        // Empezar de cero: avisa de todo lo que se pierde antes de hacerlo
+        StyledRect {
+            Layout.fillWidth: true
+            visible: root.confirmReset
+            implicitHeight: resetCol.implicitHeight + Tokens.padding.large * 2
+            radius: Tokens.rounding.large
+            color: Colours.palette.m3errorContainer
+
+            ColumnLayout {
+                id: resetCol
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: Tokens.padding.large
+                spacing: Tokens.spacing.small
+
+                RowLayout {
+                    spacing: Tokens.spacing.medium
+
+                    MaterialIcon {
+                        text: "warning"
+                        color: Colours.palette.m3onErrorContainer
+                    }
+                    StyledText {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: `¿Empezar de cero? Este Mochi se despedirá y desaparecerá para siempre: su aspecto, su mote, su carácter, su nivel (${root.st.level ?? 1}) y el cariño que te tiene (${root.bond}/100). No se puede deshacer. Luego podrás crear uno nuevo.`
+                        font: Tokens.font.body.small
+                        color: Colours.palette.m3onErrorContainer
+                    }
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignRight
+                    spacing: Tokens.spacing.small
+
+                    IconTextButton {
+                        icon: "close"
+                        text: "No, me lo quedo"
+                        isRound: true
+                        type: IconTextButton.Text
+                        onClicked: root.confirmReset = false
+                    }
+                    IconTextButton {
+                        icon: "restart_alt"
+                        text: "Sí, empezar de cero"
+                        isRound: true
+                        type: IconTextButton.Filled
+                        onClicked: {
+                            root.confirmReset = false;
+                            root.ipc("resetMochi");
+                        }
+                    }
+                }
             }
         }
     }

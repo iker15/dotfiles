@@ -55,6 +55,19 @@ Singleton {
         save.restart();
     }
 
+    // Empezar de cero (un Mochi nuevo): sin cariño acumulado ni nivel
+    function reset(): void {
+        bond = 30;
+        xp = 0;
+        gainedToday = 0;
+        presenceToday = 0;
+        lastTouch = Date.now();
+        lastDecay = Date.now();
+        now = Date.now();
+        lastGain = {};
+        save.restart();
+    }
+
     signal reconciled()   // estaba enfurruñado y le has hecho caso (la segunda vez)
     signal pouted()       // estaba enfurruñado y le haces caso: la primera vez te gira la cara
     property real poutAt: 0

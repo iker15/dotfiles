@@ -68,6 +68,13 @@ Singleton {
             root[k] = c[k];
     }
 
+    // Empezar de cero: borra su aspecto (y deja de haber nacido)
+    function wipe(): void {
+        save(null, false);
+        born = false;
+        apply({});
+    }
+
     // ¿Tiene este rasgo?
     function has(id: string): bool {
         return traits.includes(id);

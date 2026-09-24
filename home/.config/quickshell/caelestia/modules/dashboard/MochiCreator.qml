@@ -11,11 +11,11 @@ import qs.components
 import qs.components.controls
 import qs.services
 
-// Crear a tu Mochi (antes de que nazca) o retocarlo después. Siempre es un blob blandito con dos
-// ojos y siempre se llama Mochi: aquí eliges los detalles (Mochi.Look), un mote y su carácter
-// (rasgos de Traits.js: 3 al nacer, uno más a los niveles 10, 20 y 35; los que ya tiene no se
-// quitan). Mientras lo retocas, el de verdad cambia en vivo; «Cancelar» lo deja como estaba.
-// «¡Que nazca!» escribe look.json y él nace en el escritorio.
+// Crear a tu Mochi antes de que nazca. Siempre es un blob blandito con dos ojos y siempre se llama
+// Mochi: aquí eliges los detalles (Mochi.Look), un mote y su carácter (rasgos de Traits.js: 3).
+// Al nacer es para siempre: no se puede retocar (solo empezar de cero, desde su ficha). Lo único
+// que se puede hacer después es elegir un rasgo nuevo cuando se desbloquea un hueco (niveles 10,
+// 20 y 35): entonces este creador solo enseña los rasgos (traitsOnly).
 Item {
     id: root
 
@@ -29,7 +29,9 @@ Item {
     property string face: "normal"
     property string hint: ""                     // descripción del rasgo bajo el ratón
     readonly property var chosen: draft.traits ?? []
-    readonly property bool ready: chosen.length >= Math.min(3, slots)
+    readonly property bool traitsOnly: born
+    readonly property bool ready: traitsOnly ? chosen.length > locked.length : chosen.length >= Math.min(3, slots)
+    property bool confirming: false              // segundo clic: «¿seguro? es para siempre»
 
     signal done
 
@@ -88,15 +90,15 @@ Item {
         draft = born ? look.data() : look.clean({});
         locked = born ? (look.traits ?? []).slice() : [];
         hint = "";
+        confirming = false;
         face = "happy";
         faceBack.restart();
     }
 
     function changed(d: var, k: real): void {
         draft = d;
+        confirming = false;
         jiggle(k);
-        if (born)
-            livePush.restart();
     }
 
     function set(key: string, v: real): void {
@@ -173,13 +175,18 @@ Item {
     }
 
     function commit(): void {
-        look.save(draft, true);
+        if (!confirming) {
+            confirming = true;   // primero avisa: es para siempre
+            return;
+        }
+        // (ya nacido: solo se añaden los rasgos nuevos; lo demás no se toca)
+        look.save(traitsOnly ? Object.assign(look.data(), {
+            traits: chosen
+        }) : draft, true);
         done();
     }
 
     function cancel(): void {
-        if (born)
-            look.save(original, true);
         done();
     }
 
@@ -189,13 +196,6 @@ Item {
     implicitWidth: 840
     implicitHeight: col.implicitHeight
 
-    // (retocándolo: el de verdad cambia mientras mueves los controles)
-    Timer {
-        id: livePush
-
-        interval: 140
-        onTriggered: root.look.save(root.draft, true)
-    }
     Timer {
         id: faceBack
 
@@ -216,12 +216,12 @@ Item {
             spacing: Tokens.spacing.extraSmall
 
             StyledText {
-                text: root.born ? "Retoca a Mochi" : "Crea a tu Mochi"
+                text: root.traitsOnly ? "Un rasgo nuevo para Mochi" : "Crea a tu Mochi"
                 font: Tokens.font.body.builders.large.size(28).weight(Font.DemiBold).build()
                 color: Colours.palette.m3onSurface
             }
             StyledText {
-                text: root.born ? "Los cambios se ven en él mientras los haces." : "Aún no ha nacido. Siempre será un blob blandito: tú decides los detalles y su carácter."
+                text: root.traitsOnly ? "Ha crecido y puede aprender algo más de carácter. Su aspecto y su mote ya son suyos." : "Aún no ha nacido. Siempre será un blob blandito: tú decides los detalles y su carácter. Piénsalo bien: al nacer ya no se puede cambiar."
                 font: Tokens.font.body.small
                 color: Colours.palette.m3onSurfaceVariant
             }
@@ -234,8 +234,9 @@ Item {
             // Vista previa, viva
             StyledRect {
                 Layout.preferredWidth: 280
+                Layout.fillWidth: root.traitsOnly
                 Layout.fillHeight: true
-                Layout.minimumHeight: 330
+                Layout.minimumHeight: root.traitsOnly ? 230 : 330
                 radius: Tokens.rounding.extraLarge * 2
                 color: Colours.tPalette.m3surfaceContainer
 
@@ -372,19 +373,20 @@ Item {
 
                         StyledText {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: root.draft.nick ? `«${root.draft.nick}»` : "sin mote"
+                            text: root.draft.nick ? `«${root.draft.nick}»` : root.traitsOnly ? "" : "sin mote"
                             font: Tokens.font.body.small
                             color: root.draft.nick ? Colours.palette.m3primary : Colours.palette.m3outline
                         }
                         IconButton {
                             anchors.verticalCenter: parent.verticalCenter
+                            visible: !root.traitsOnly
                             icon: "casino"
                             type: IconButton.Text
                             onClicked: root.otherNick()
                         }
                         IconButton {
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: !!root.draft.nick
+                            visible: !!root.draft.nick && !root.traitsOnly
                             icon: "close"
                             type: IconButton.Text
                             onClicked: root.clearNick()
@@ -393,8 +395,9 @@ Item {
                 }
             }
 
-            // Controles de aspecto
+            // Controles de aspecto (solo antes de nacer)
             ColumnLayout {
+                visible: !root.traitsOnly
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 spacing: Tokens.spacing.small
@@ -532,9 +535,40 @@ Item {
                 StyledText {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: root.hint || "Pasa el ratón por un rasgo para ver qué hace. Cambian de verdad cómo se comporta; una vez nacido, los que tenga ya son parte de él."
+                    text: root.hint || "Pasa el ratón por un rasgo para ver qué hace. Cambian de verdad cómo se comporta, y los que elijas serán parte de él para siempre."
                     font: Tokens.font.body.small
                     color: root.hint ? Colours.palette.m3onSurface : Colours.palette.m3onSurfaceVariant
+                }
+            }
+        }
+
+        // Aviso antes de confirmar: es para siempre
+        StyledRect {
+            Layout.fillWidth: true
+            visible: root.confirming
+            implicitHeight: warn.implicitHeight + Tokens.padding.medium * 2
+            radius: Tokens.rounding.large
+            color: Colours.palette.m3tertiaryContainer
+
+            RowLayout {
+                id: warn
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: Tokens.padding.large
+                spacing: Tokens.spacing.medium
+
+                MaterialIcon {
+                    text: "warning"
+                    color: Colours.palette.m3onTertiaryContainer
+                }
+                StyledText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: root.traitsOnly ? "Este rasgo será parte de Mochi para siempre: luego no se puede quitar." : "Cuando nazca será así para siempre: no podrás cambiar su aspecto, su mote ni su carácter. La única forma de cambiarlo será empezar de cero, y perderías su nivel y el cariño que te tenga."
+                    font: Tokens.font.body.small
+                    color: Colours.palette.m3onTertiaryContainer
                 }
             }
         }
@@ -546,18 +580,24 @@ Item {
             spacing: Tokens.spacing.small
 
             IconTextButton {
-                visible: root.born
-                icon: "close"
-                text: "Cancelar"
+                visible: root.born || root.confirming
+                icon: root.confirming ? "arrow_back" : "close"
+                text: root.confirming ? "Pensármelo" : "Cancelar"
                 isRound: true
                 type: IconTextButton.Text
-                onClicked: root.cancel()
+                onClicked: root.confirming ? root.confirming = false : root.cancel()
             }
             IconTextButton {
                 enabled: root.ready
                 opacity: enabled ? 1 : 0.5
-                icon: root.born ? "check" : "egg"
-                text: root.born ? "Guardar" : root.ready ? "¡Que nazca Mochi!" : `Elige ${Math.min(3, root.slots) - root.chosen.length} ${Math.min(3, root.slots) - root.chosen.length === 1 ? "rasgo más" : "rasgos más"}`
+                icon: root.confirming ? "check" : root.traitsOnly ? "add" : "egg"
+                text: {
+                    if (!root.ready)
+                        return root.traitsOnly ? "Elige un rasgo nuevo" : `Elige ${Math.min(3, root.slots) - root.chosen.length} ${Math.min(3, root.slots) - root.chosen.length === 1 ? "rasgo más" : "rasgos más"}`;
+                    if (root.confirming)
+                        return root.traitsOnly ? "Sí, que lo aprenda" : "Sí, que nazca así";
+                    return root.traitsOnly ? "Aprender rasgo" : "¡Que nazca Mochi!";
+                }
                 isRound: true
                 type: IconTextButton.Filled
                 onClicked: root.commit()

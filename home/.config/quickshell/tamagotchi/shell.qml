@@ -2415,6 +2415,45 @@ ShellRoot {
         }
     }
 
+    // Empezar de cero (botón del dashboard, tras avisar): se despide con pena, se hunde en el marco
+    // y desaparece; se borran su aspecto, su carácter, su nivel y el cariño. Luego se crea otro.
+    function farewell(): void {
+        if (!Look.born)
+            return;
+        seeking = false;
+        inApp = false;
+        if (phys === "nest")
+            leaveNest();
+        reacted("sad", 2600);
+        farewellDive.restart();
+    }
+    Timer {
+        id: farewellDive
+
+        interval: 1800
+        onTriggered: {
+            if (shell.phys === "swim") {
+                shell.dive(0, "hidden", false, 0.8);
+                shell.diveToNest = false;
+                shell.diveStay = true;
+            }
+            farewellEnd.restart();
+        }
+    }
+    Timer {
+        id: farewellEnd
+
+        interval: 1600
+        onTriggered: {
+            Bond.reset();
+            shell.nestPinned = false;
+            shell.saveNest();
+            shell.diveStay = false;
+            shell.phys = "swim";
+            Look.wipe();
+        }
+    }
+
     // Nace (lo acabas de crear en el dashboard): asoma del borde de arriba en medio de la
     // pantalla, se queda colgando como una gota… y cae
     function birth(): void {
@@ -3260,6 +3299,10 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
+        }
+        // Empezar de cero (lo usa el dashboard tras avisar)
+        function resetMochi(): void {
+            shell.farewell();
         }
         // Escondite: se esconde ya (o sale si ya estaba escondido)
         function hideSeek(): string {
