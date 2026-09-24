@@ -17,12 +17,10 @@ row)
         cols=$(tput cols 2>/dev/null </dev/tty)
         w=${size%x*} h=${size#*x}
         if [[ $h =~ ^[0-9]+$ && $w =~ ^[0-9]+$ && $rows -gt 0 && $cols -gt 0 ]]; then
-            # centro del cuadrado (columnas 2-23, filas r..r+9), en px desde la esquina de la ventana
-            offx=$(( 13 * w / cols + 8 ))
-            offy=$(( (r + 5) * h / rows + 8 ))
-            top=$(( r * h / rows + 8 ))   # borde de arriba del cuadrado
+            # Mochi calcula dónde queda la animación (22×10 celdas en la columna 2, fila r; la
+            # imagen se alinea arriba a la izquierda) con esto y el tamaño real de la ventana
             rm -f "$XDG_RUNTIME_DIR/mochi-term-eta"
-            (qs -c tamagotchi ipc call pet enterTerm "$offx" "$offy" "$top" >/dev/null 2>&1 &)
+            (qs -c tamagotchi ipc call pet enterTerm "$r" "$cols" "$rows" "$w" "$h" >/dev/null 2>&1 &)
         fi
     fi
     ;;

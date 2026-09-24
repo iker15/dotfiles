@@ -758,16 +758,26 @@ ShellRoot {
     // bucea a su ritmo por el marco hasta el borde de arriba, justo encima del cuadrado, y desde
     // ahí cae; se queda dentro mientras uses esa kitty. Lo llama ~/.config/fastfetch/mochi.sh con
     // dónde está el centro del cuadrado (px desde la esquina de la ventana).
-    property real termOffX: 0
-    property real termTop: 0
-    property real termOffY: 0
+    // (del saludo de kitty: fila donde empieza, columnas y filas del terminal y px del texto)
+    property var termGrid: ({
+            row: 1,
+            cols: 80,
+            rows: 24,
+            w: 800,
+            h: 480
+        })
+    property real pourScale: 0.8   // escala del GIF en pantalla (para que el chorro tenga su grosor)
     property int termTries: 0
-    function enterTerm(offX: real, offY: real, top: real): void {
+    function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
         if (locked || dnd || asking || dragging || !shown)
             return;
-        termOffX = offX;
-        termOffY = offY;
-        termTop = top > 0 ? top : offY - 100;
+        termGrid = {
+            row: row,
+            cols: Math.max(1, cols),
+            rows: Math.max(1, rows),
+            w: w,
+            h: h
+        };
         termTries = 0;
         termWin.running = true;
     }
@@ -798,13 +808,19 @@ ShellRoot {
         if (!o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
             return false;
         const tl = Hyprland.toplevels.values.find(w => "0x" + w.address === o.address || w.address === o.address) ?? Hyprland.activeToplevel;
+        // Dónde queda la animación en la pantalla: 22×10 celdas desde la columna 2 y la fila
+        // `row`, la imagen (cuadrada) alineada arriba a la izquierda; el margen de kitty es lo que
+        // sobra entre la ventana y el texto
+        const g = termGrid, cw = g.w / g.cols, ch = g.h / g.rows;
+        const padX = Math.max(0, (o.size[0] - g.w) / 2), padY = Math.max(0, (o.size[1] - g.h) / 2);
+        const side = Math.min(22 * cw, 10 * ch), gifX = o.at[0] + padX + 2 * cw, gifY = o.at[1] + padY + g.row * ch;
+        pourScale = side / 240;
         // (por el borde de ARRIBA, justo encima del cuadrado: el fluido cae desde ahí)
-        const s = nearestScreen(o.at[0] + termOffX, o.at[1] + termOffY), tr = track(s);
-        const target = nearestD(tr, o.at[0] + termOffX, tr.T);
-        // por dónde cae su fluido: del borde de arriba del marco al cuadrado (en la pantalla)
-        pourX = o.at[0] + termOffX;
+        const s = nearestScreen(gifX, gifY), tr = track(s);
+        pourX = gifX + 120 * pourScale;   // el centro del cuadrado en el GIF está en x = 120
+        const target = nearestD(tr, pourX, tr.T);
         pourTop = s.y + frame;
-        pourBottom = o.at[1] + termTop;
+        pourBottom = gifY;
         appLeave.stop();
         appHost = tl?.address ?? "";
         appSpot = pointAt(tr, target);
@@ -2568,8 +2584,8 @@ ShellRoot {
         function pop(): void {
             shell.heartPop();
         }
-        function enterTerm(offX: real, offY: real, top: real): void {
-            shell.enterTerm(offX, offY, top);
+        function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
+            shell.enterTerm(row, cols, rows, w, h);
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3734,7 +3750,7 @@ ShellRoot {
                     ctx.fillStyle = shell.frameColor;
                     // se hincha una gota colgando del marco
                     if (t < 0.5) {
-                        const k = t / 0.5, r = 15 * (1 - Math.pow(1 - k, 2));
+                        const k = t / 0.5, r = 20 * shell.pourScale * (1 - Math.pow(1 - k, 2));
                         ctx.beginPath();
                         ctx.moveTo(cx - r * 1.4, top - 4);
                         ctx.quadraticCurveTo(cx - r, top, cx - r, top + r * 0.9);
@@ -3747,7 +3763,8 @@ ShellRoot {
                     // cae (y detrás, el chorro)
                     const tf = t - 0.5, head = Math.min(bottom, top + 14 + 0.5 * g * tf * tf);
                     // grosor del chorro: como en el GIF (se afina a partir de ~0,36 s de llegar, hasta ~2,2 s)
-                    const ta = t - arrive, w = ta < 0.36 ? 22 : 22 * Math.max(0, 1 - Math.pow((ta - 0.36) / 1.52, 1.3));
+                    const sc = shell.pourScale, W0 = 24 * sc;   // (mismo grosor que el chorro del GIF)
+                    const ta = t - arrive, w = ta < 0.36 ? W0 : W0 * Math.max(0, 1 - Math.pow((ta - 0.36) / 1.52, 1.3));
                     if (w > 0.5) {
                         ctx.beginPath();
                         Hats.RR(ctx, cx - w / 2, top - 4, w, Math.max(w, head - top + 8), w / 2);
@@ -3763,7 +3780,7 @@ ShellRoot {
                     }
                     if (ta < 0) {
                         // la gota de delante, alargada al caer
-                        const r = 17, st = 1 + Math.min(0.5, tf * 2);
+                        const r = 20 * sc, st = 1 + Math.min(0.5, tf * 2);
                         ctx.beginPath();
                         Hats.E(ctx, cx - r / st, head - r * st, 2 * r / st, 2 * r * st);
                         ctx.fill();
