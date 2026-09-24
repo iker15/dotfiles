@@ -56,7 +56,16 @@ def watcher():
         time.sleep(1)
 
 
+def log(msg):
+    try:
+        with open(os.path.join(RUN, "mochi-host.log"), "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
+
+
 def main():
+    log(f"arranca {sys.argv[1:]}")
     threading.Thread(target=watcher, daemon=True).start()
     while True:
         msg = read()
@@ -77,4 +86,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        log("fin (el navegador cerró la conexión)")
+    except Exception as e:
+        log(f"error: {e!r}")
+        raise

@@ -5,10 +5,13 @@ let last = { state: null, colours: {}, mode: "dark" };
 let videoTab = null;   // pestaña que manda el vídeo ahora
 
 function connect() {
+    if (port)
+        return;
     try {
         port = browser.runtime.connectNative("mochi");
     } catch (e) {
         port = null;
+        setTimeout(connect, 5000);
         return;
     }
     port.onMessage.addListener(msg => {
@@ -23,6 +26,8 @@ function connect() {
     });
 }
 connect();
+// (por si acaso: si se queda sin conexión por lo que sea, vuelve a intentarlo)
+setInterval(connect, 15000);
 
 browser.runtime.onMessage.addListener((msg, sender) => {
     if (msg.type === "video") {
