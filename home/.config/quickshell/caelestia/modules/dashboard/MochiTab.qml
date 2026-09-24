@@ -276,7 +276,7 @@ Item {
             DetailCard {
                 icon: root.st.watching ? "smart_display" : root.st.music ? "music_note" : "home"
                 label: "Ahora"
-                value: root.st.watching ? "viendo un vídeo" : root.st.music ? "escuchando música" : root.st.where === "nest" ? "en su nido" : root.st.where === "dive" ? "buceando" : "paseando"
+                value: root.st.watching ? "viendo un vídeo" : root.st.music ? "escuchando música" : root.st.where === "nest" ? (root.st.waiting ? "esperándote en su nido" : "en su nido") : root.st.where === "dive" ? "buceando" : "paseando"
                 colour: Colours.palette.m3primary
             }
         }
@@ -468,7 +468,7 @@ Item {
                 text: "Al nido"
                 isRound: true
                 type: IconTextButton.Tonal
-                onClicked: root.ipc("nest")
+                onClicked: root.ipc("waitNest")
             }
             IconTextButton {
                 icon: "bedtime"

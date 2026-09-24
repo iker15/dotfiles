@@ -95,9 +95,22 @@ ShellRoot {
     // Nido: fundido del todo en la barra de la izquierda, en el hueco libre del medio (donde
     // antes salía la ventana activa). Solo se le ven los ojos; al pasar el ratón se asoma un
     // poco, y arrastrándolo se le saca. Vuelve ahí cuando no le haces caso.
-    readonly property real nestFrac: 0.53     // altura del hueco (fracción de la pantalla)
+    // Altura del nido (fracción de la pantalla). Se puede cambiar soltándolo en otra altura del
+    // hueco libre (nestMin-nestMax, en px de 1080 → fracción)
+    property real nestFrac: 0.53
+    readonly property real nestMin: 330 / 1080
+    readonly property real nestMax: 815 / 1080
     property bool nestHover: false
     property real nestPeek: 0                 // 0 = solo ojos · 1 = asomado
+    // "Modo espera": lo has metido tú soltándolo encima de la barra. Se queda ahí hasta que lo
+    // saques (clic, arrastrar, ++…): no sale solo a ver vídeos, al editor, a saludar ni por el café
+    property bool nestPinned: false
+    property bool nestAim: false              // lo llevas agarrado por encima de la barra
+    property real nestAimAt: 0
+    property real nestBodyX: 0                // x del cuerpo en el nido (suavizada: entra fluyendo)
+    property bool nestLeaving: false          // saliendo del nido (animación)
+    property real nestOutT: 0
+    property real nestTuckT: 0                // tiempo desde que lo has metido (se hunde despacio)
     // El cuerpo puede ir desplazado respecto a los ojos (en el nido: hundido en la barra
     // mientras los ojos quedan a la vista); fuera del nido vuelve a 0
     property real bodyOffX: 0
@@ -432,7 +445,7 @@ ShellRoot {
             reacted("sad", 2000);
             return;
         }
-        if (Bond.level > 0.45) {
+        if (Bond.level > 0.45 && !(phys === "nest" && nestPinned)) {
             touch();
             reacted("love", 2400);
             kicked(-1.6, 2.8);
@@ -511,6 +524,7 @@ ShellRoot {
         energy: Math.round(dayEnergy * 100) / 100,
         drowsy: Math.round(drowsy * 100) / 100,
         where: inApp ? "app" : phys,
+        waiting: phys === "nest" && nestPinned,
         nextHat: nextHat,
         xp: Math.round(Bond.xp),
         level: Bond.lvl,
@@ -725,7 +739,7 @@ ShellRoot {
         onTriggered: shell.leaveApp(false)
     }
     function enterApp(): void {
-        if (inApp || !codeActive || locked || dnd || !present || asking || Brain.busy || (phys !== "swim" && phys !== "nest"))
+        if (inApp || !codeActive || locked || dnd || !present || asking || Brain.busy || (phys !== "swim" && phys !== "nest") || (phys === "nest" && nestPinned))
             return;
         const o = Hyprland.activeToplevel?.lastIpcObject;
         if (!o?.at || o.fullscreen)
@@ -757,6 +771,17 @@ ShellRoot {
         const p = pointAt(tr, swimD), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
         gx = p.x + p.nx * deep;
         gy = p.y + p.ny * deep;
+        if (nestPinned && !force) {
+            // estaba en espera: vuelve por dentro a su nido
+            const n = nestPoint(s);
+            dive(trackDiff(tr, swimD, nearestD(tr, tr.L, n.y)), "hidden", true, 1.6);
+            diveToNest = true;
+            return;
+        }
+        if (force && nestPinned) {
+            nestPinned = false;
+            saveNest();
+        }
         dive(0, "hidden", true, 1.8);
         reacted("happy", 1200);
     }
@@ -1384,6 +1409,8 @@ ShellRoot {
         if (!watching) {
             if (phys !== "swim" && phys !== "nest" && phys !== "hidden")
                 return;
+            if (phys === "nest" && nestPinned)
+                return;   // en espera: no sale a ver el vídeo
             watching = true;
             if (phys !== "swim")
                 touch();
@@ -1608,8 +1635,13 @@ ShellRoot {
         woke();
         if (!present)
             return;
-        if (phys === "nest")
+        if (phys === "nest") {
+            if (nestPinned) {
+                reacted("excited", 1500);   // en espera: se alegra, pero no sale
+                return;
+            }
             leaveNest();
+        }
         coffeeTimer.restart();
     }
 
@@ -2191,6 +2223,10 @@ ShellRoot {
         };
     }
 
+    function saveNest(): void {
+        Quickshell.execDetached(["sh", "-c", 'mkdir -p "$1" && printf "%s %s" "$2" "$3" > "$1/nest"', "sh", stateDir, nestFrac.toFixed(4), nestPinned ? 1 : 0]);
+    }
+
     // Vuelve al nido buceando por el marco (sin que se le vea); si no está a la vista, aparece
     // directamente allí
     function goNest(): void {
@@ -2210,18 +2246,27 @@ ShellRoot {
         dive(trackDiff(tr, swimD, target), "hidden", false, Math.max(0.7, dayEnergy));
     }
 
-    function enterNest(s: var): void {
-        const n = nestPoint(s);
+    function resetNest(): void {
         hopsLeft = 0;
         swimTarget = NaN;
         diveMode = "";
         diveToNest = false;
+        diveStay = false;
         diveUnder = 0;
+        nestLeaving = false;
+        nestOutT = 0;
+        nestAim = false;
+    }
+
+    function enterNest(s: var): void {
+        const n = nestPoint(s);
+        resetNest();
         nestPeek = 0;
+        nestTuckT = 99;
         nestHover = false;
         // los ojos van al centro de la barra; el cuerpo, hundido en ella
-        const bodyX = s.x + barW - bodyRx + diveVisible("hidden", bodyRx);
-        bodyOffX = bodyX - n.x;
+        nestBodyX = s.x + barW - bodyRx + diveVisible("hidden", bodyRx);
+        bodyOffX = nestBodyX - n.x;
         bodyOffY = 0;
         gx = n.x;
         gy = n.y;
@@ -2229,28 +2274,102 @@ ShellRoot {
         savePos();
     }
 
-    // Sale del nido al interior (lo has llamado, le has hecho clic…)
+    // Lo sueltas encima de la barra de la izquierda: se mete él solo, fluyendo desde donde lo
+    // has dejado, a la altura que elijas dentro del hueco libre, y se queda en espera
+    function tuckIn(s: var): void {
+        const f = Math.max(nestMin, Math.min(nestMax, (gy - s.y) / s.height));
+        const wasBody = gx + bodyOffX;
+        resetNest();
+        inApp = false;
+        appOptOut = false;
+        nestFrac = f;
+        nestPinned = true;
+        saveNest();
+        mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;
+        nestBodyX = wasBody;
+        nestPeek = 1;   // entra asomado y se va hundiendo (nestStep lo suaviza todo)
+        nestTuckT = 0;
+        vx = vy = 0;
+        thrown = false;
+        phys = "nest";
+        kicked(2.6, -2);   // se estira hacia la barra al meterse
+        leaned(-120);
+        reacted("happy", 1400);
+        savePos();
+    }
+
+    // Sale del nido (lo has llamado, le has hecho clic…): primero se asoma, luego se va
+    // sacando de la barra poco a poco y se despega estirándose, sin saltos
     function leaveNest(): void {
-        const s = nearestScreen(gx, gy), tr = track(s);
-        swimD = nearestD(tr, tr.L, gy);
-        swimV = 0;
-        nestHover = false;
-        phys = "swim";
-        kicked(3, -1.5);   // sale estirándose hacia dentro
-        reacted("happy", 900);
+        if (phys !== "nest" || nestLeaving)
+            return;
+        if (nestPinned) {
+            nestPinned = false;
+            saveNest();
+        }
+        nestLeaving = true;
+        nestOutT = 0;
+        kicked(-1.2, 1.3);   // se recoge un poco antes (anticipación)
     }
 
     function nestStep(s: var, dt: real): void {
         const n = nestPoint(s);
-        nestPeek += ((nestHover ? 1 : 0) - nestPeek) * Math.min(1, dt * 7);
+        const tr = track(s), outD = nearestD(tr, tr.L, n.y), out = pointAt(tr, outD);
+        nestTuckT += dt;
+        // (recién metido se queda un momento asomado y luego se hunde despacio, a gusto)
+        const tucking = nestTuckT < 2.5;
+        const peekTo = nestHover || nestLeaving || nestTuckT < 0.45 ? 1 : 0;
+        nestPeek += (peekTo - nestPeek) * Math.min(1, dt * (nestLeaving ? 9 : tucking ? 2.6 : 7));
         // Ojos: del centro de la barra a su borde; cuerpo: de hundido a asomar media cara
-        const eyeX = n.x + (s.x + barW + 12 - n.x) * nestPeek;
+        let eyeX = n.x + (s.x + barW + 12 - n.x) * nestPeek;
         const vis = diveVisible("hidden", bodyRx) * (1 - nestPeek) + 48 * nestPeek;
-        const bodyX = s.x + barW - bodyRx + vis;
+        let bodyX = s.x + barW - bodyRx + vis;
+        let eyeY = n.y;
+        let bodyK = 9;
+        if (nestLeaving) {
+            // (cuando ya se ha asomado) se saca de la barra: el cuerpo tira y los ojos van detrás
+            if (nestPeek > 0.8)
+                nestOutT += dt;
+            const dur = 0.85 / Math.max(0.8, Math.min(1.25, dayEnergy));
+            const u = Math.min(1, nestOutT / dur);
+            const ub = smooth(u * 1.12), ue = smooth(u);
+            const over = Math.sin(Math.PI * Math.min(1, u * 1.15)) * 7 * (1 - u);   // se pasa un pelín
+            bodyX += (out.x - bodyX) * ub + over;
+            eyeX += (out.x - eyeX) * ue;
+            eyeY = n.y + (out.y - n.y) * ue;
+            bodyK = 30;
+            const prev = nestOutT - dt;
+            if (prev < 0.1 * dur && nestOutT >= 0.1 * dur)
+                kicked(2.8, -1.6);   // se estira hacia fuera
+            if (prev < 0.7 * dur && nestOutT >= 0.7 * dur) {
+                splatted(300, true);
+                reacted("happy", 1000);
+            }
+            if (u >= 1) {
+                nestLeaving = false;
+                nestHover = false;
+                nestPeek = 0;
+                swimD = outD;
+                swimV = 0;
+                gx = out.x;
+                gy = out.y;
+                bodyOffX = bodyX - gx;   // (lo que quede se suaviza fuera del nido)
+                bodyOffY = 0;
+                phys = "swim";
+                // y se aleja un poco nadando, como quien se despereza
+                energy = 0.9;
+                swimTarget = ((outD + (Math.random() < 0.5 ? -1 : 1) * (70 + Math.random() * 90)) % tr.len + tr.len) % tr.len;
+                savePos();
+                return;
+            }
+        }
         const k = Math.min(1, dt * 12);
         gx += (eyeX - gx) * k;
-        gy += (n.y - gy) * k;
-        bodyOffX = bodyX - gx;
+        // (verticalmente, a ritmo tranquilo si lo has soltado lejos del hueco)
+        const dy = eyeY - gy;
+        gy += Math.sign(dy) * Math.min(Math.abs(dy) * k, 520 * dt);
+        nestBodyX += (bodyX - nestBodyX) * Math.min(1, dt * bodyK);
+        bodyOffX = nestBodyX - gx;
         bodyOffY = 0;
         mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;   // la barra está en todos
     }
@@ -2445,6 +2564,16 @@ ShellRoot {
             hopAgain.restart();
     }
 
+    // Pantalla cuya barra izquierda tiene a Mochi encima (agarrado), o null
+    function nestDropScreen(): var {
+        if (!dragging)
+            return null;
+        const s = nearestScreen(gx, gy);
+        if (!s || gx > s.x + barW + bodyRx * 0.6 || screenAt(s.x - 4, gy))
+            return null;
+        return s;
+    }
+
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
         if (phys === "away")
@@ -2474,6 +2603,19 @@ ShellRoot {
                 if (lastDir !== 0)
                     reversals++;
                 lastDir = Math.sign(hvx);
+            }
+            // Encima de la barra de la izquierda: si lo sueltas ahí, se mete en el nido
+            const aim = nestDropScreen() !== null;
+            if (aim !== nestAim) {
+                nestAim = aim;
+                if (aim) {
+                    leaned(-90);
+                    kicked(1.6, -1.2);   // se estira hacia la barra, con ganas
+                }
+            }
+            if (aim && Date.now() - nestAimAt > 600) {
+                nestAimAt = Date.now();
+                reacted("happy", 700);
             }
             return;
         }
@@ -2640,6 +2782,17 @@ ShellRoot {
         if (gx < 0 && s) {
             gx = s.x + s.width - 120;
             gy = s.y + s.height - 140;
+        }
+    }
+
+    FileView {
+        path: shell.stateDir + "/nest"
+        printErrors: false
+        onLoaded: {
+            const [f, pin] = text().trim().split(" ").map(Number);
+            if (!isNaN(f))
+                shell.nestFrac = Math.max(shell.nestMin, Math.min(shell.nestMax, f));
+            shell.nestPinned = pin === 1;
         }
     }
 
@@ -2851,6 +3004,29 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
+        }
+        // Al nido "en espera" (botón del dashboard): va buceando y se queda hasta que lo saques
+        function waitNest(): void {
+            if (shell.phys === "away" || shell.locked)
+                return;
+            shell.nestPinned = true;
+            shell.saveNest();
+            if (shell.phys === "held" || shell.phys === "air")
+                shell.phys = "swim";
+            shell.goNest();
+        }
+        // Meterlo en el nido "en espera" como si lo soltaras en la barra a esa altura (px; 0 = la de siempre)
+        function tuck(y: real): void {
+            const s = shell.nearestScreen(shell.gx, shell.gy);
+            if (!s || shell.phys === "away" || shell.locked)
+                return;
+            shell.gx = s.x + shell.barW / 2 + 10;
+            shell.gy = y > 0 ? s.y + y : s.y + s.height * shell.nestFrac;
+            shell.bodyOffX = 0;
+            shell.tuckIn(s);
+        }
+        function nestState(): string {
+            return `phys=${shell.phys} pinned=${shell.nestPinned} frac=${shell.nestFrac.toFixed(3)} peek=${shell.nestPeek.toFixed(2)} leaving=${shell.nestLeaving}`;
         }
         // Imitar una forma: gear | claude | heart | star | arrow (ms, 0 = 2,5 s)
         function shape(name: string, ms: int): void {
@@ -4733,6 +4909,11 @@ ShellRoot {
                         py = mouse.y;
                         moved = false;
                         wasPhys = shell.phys;
+                        shell.nestLeaving = false;
+                        if (wasPhys === "nest" && shell.nestPinned) {
+                            shell.nestPinned = false;   // (si lo vuelves a soltar en la barra, vuelve a esperar)
+                            shell.saveNest();
+                        }
                         if (wasPhys !== "nest")
                             shell.touch();
                         else
@@ -4784,6 +4965,14 @@ ShellRoot {
                         if (mouse.button !== Qt.LeftButton)
                             return;
                         if (moved) {
+                            // Soltarlo encima de la barra izquierda: se mete en el nido y espera
+                            const ns = shell.nestDropScreen();
+                            if (ns && Math.abs(shell.hvx) < 2500) {
+                                shell.dragging = false;
+                                shell.tuckIn(ns);
+                                return;
+                            }
+                            shell.nestAim = false;
                             // Soltarlo: sale lanzado con la velocidad del ratón y cae
                             shell.dragging = false;
                             shell.vx = Math.max(-4500, Math.min(4500, shell.hvx));
