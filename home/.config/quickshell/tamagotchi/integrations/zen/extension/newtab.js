@@ -20,7 +20,7 @@ function apply(msg) {
         r.setProperty("--primary", c.primary);
         r.setProperty("--container", c.surfaceContainer);
     }
-    document.getElementById("status").textContent = st ? `${st.stageName ?? "Mochi"} · nivel ${st.level ?? 1} · ❤ ${st.bond} · ${st.text}` : "";
+    document.getElementById("status").textContent = st ? `${st.stageName ?? "Mochi"} · nivel ${st.level ?? 1} · ♥ ${st.bond} · ${st.text}` : "";
 }
 browser.runtime.sendMessage({ type: "getState" }).then(apply);
 browser.runtime.onMessage.addListener(msg => {
@@ -56,10 +56,38 @@ document.addEventListener("mousemove", e => {
     mx = e.clientX - (r.x + r.width / 2);
     my = e.clientY - (r.y + r.height * 0.6);
 });
-cv.addEventListener("click", () => {
+// Clic: se alegra y sale un corazoncito blanco (con el borde del color de sus ojos)
+const pops = [];
+cv.addEventListener("click", e => {
     reaction = Math.random() < 0.5 ? "happy" : "love";
     reactionUntil = performance.now() + 1400;
+    const r = cv.getBoundingClientRect();
+    pops.push({ x: e.clientX - r.x, t: performance.now() });
 });
+function drawPops(now) {
+    for (let i = pops.length - 1; i >= 0; i--) {
+        const p = pops[i], k = (now - p.t) / 1100;
+        if (k >= 1) {
+            pops.splice(i, 1);
+            continue;
+        }
+        heart(ctx, Math.min(330, Math.max(30, p.x)), 120 - k * 60, 11 * Math.min(1, 0.4 + k * 3), 1 - Math.max(0, k - 0.55) / 0.45);
+    }
+}
+function heart(ctx, x, y, s, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.moveTo(x, y + s * 0.9);
+    ctx.bezierCurveTo(x - s * 1.4, y, x - s * 0.8, y - s * 1.1, x, y - s * 0.4);
+    ctx.bezierCurveTo(x + s * 0.8, y - s * 1.1, x + s * 1.4, y, x, y + s * 0.9);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = st?.ink ?? "#1c1b1b";
+    ctx.stroke();
+    ctx.restore();
+}
 
 function frame(now) {
     const t = (now - t0) / 1000;
@@ -87,6 +115,7 @@ function frame(now) {
         breath: 0.5 + 0.5 * Math.sin(t * (face === "asleep" ? 1.6 : 2.6)),
         t: t
     });
+    drawPops(now);
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

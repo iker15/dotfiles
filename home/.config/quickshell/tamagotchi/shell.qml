@@ -400,6 +400,9 @@ ShellRoot {
     readonly property real seekYou: Bond.sulky ? 0 : Math.max(0, Math.min(1, (Bond.level - 0.6) / 0.4))
     readonly property real nestFactor: Bond.sulky ? 0.4 : Bond.level < 0.3 ? 0.6 : Bond.level > 0.7 ? 1.5 : 1
     property real lockedAt: 0
+    // Clic: sale un corazoncito blanco que sube y se desvanece
+    signal heartPop()
+
     // Dejando el ratón encima un momento se ve un corazoncito con su cariño (lleno = 100)
     property bool heartShown: false
     Connections {
@@ -653,12 +656,22 @@ ShellRoot {
         onTriggered: shell.reacted(face, ms)
     }
     Timer {
+        id: mcRestart
+
+        interval: 5000
+        onTriggered: mcWatch.running = true
+    }
+    Timer {
         id: peekHide
 
         onTriggered: shell.peekAmt = 0
     }
     Process {
+        id: mcWatch
+
         running: shell.shown
+        // (si se muere por lo que sea, vuelve a arrancar)
+        onExited: if (shell.shown) mcRestart.restart()
         command: ["python3", Quickshell.shellDir + "/integrations/minecraft/mc-watch.py"]
         stdout: SplitParser {
             onRead: data => {
@@ -2389,6 +2402,9 @@ ShellRoot {
             Bond.addXp(n);
             return `nivel ${Bond.lvl} · ${Math.round(Bond.xp)} XP (siguiente nivel: ${Bond.lvlEnd})`;
         }
+        function pop(): void {
+            shell.heartPop();
+        }
         function heart(): void {
             shell.heartShown = true;
             heartHide.restart();
@@ -3076,6 +3092,71 @@ ShellRoot {
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
                     }
 
+                    // Corazoncitos del clic (blancos, con el borde del color de sus ojos)
+                    Item {
+                        id: pops
+
+                        anchors.fill: parent
+
+                        Connections {
+                            target: shell
+
+                            function onHeartPop(): void {
+                                if (mochi.visible)
+                                    popHeart.createObject(pops, {
+                                        x: shell.gx - win.modelData.x - 11 + (Math.random() * 30 - 15),
+                                        y: shell.gy - win.modelData.y - shell.bodyRy - 26
+                                    });
+                            }
+                        }
+                        Component {
+                            id: popHeart
+
+                            Text {
+                                id: ph
+
+                                text: "♥"
+                                color: "#ffffff"
+                                style: Text.Outline
+                                styleColor: "#1c1b1b"
+                                font.pixelSize: 24
+                                transformOrigin: Item.Bottom
+                                scale: 0.4
+
+                                ParallelAnimation {
+                                    running: true
+                                    onFinished: ph.destroy()
+
+                                    NumberAnimation {
+                                        target: ph
+                                        property: "y"
+                                        to: ph.y - 55
+                                        duration: 1100
+                                        easing.type: Easing.OutQuad
+                                    }
+                                    NumberAnimation {
+                                        target: ph
+                                        property: "scale"
+                                        to: 1.1
+                                        duration: 350
+                                        easing.type: Easing.OutBack
+                                    }
+                                    SequentialAnimation {
+                                        PauseAnimation {
+                                            duration: 600
+                                        }
+                                        NumberAnimation {
+                                            target: ph
+                                            property: "opacity"
+                                            to: 0
+                                            duration: 500
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Corazoncito de cariño (encima de la cabeza, al dejar el ratón encima)
                     Canvas {
                         id: heart
@@ -3110,18 +3191,18 @@ ShellRoot {
                             };
                             // relleno de abajo arriba según el cariño
                             path();
-                            ctx.fillStyle = "rgba(255,255,255,0.85)";
+                            ctx.fillStyle = "rgba(255,255,255,0.25)";   // (vacío: blanco muy suave)
                             ctx.fill();
                             ctx.save();
                             path();
                             ctx.clip();
-                            ctx.fillStyle = sulky ? "#8a8fa8" : "#e8566c";
+                            ctx.fillStyle = sulky ? "#b9bcc4" : "#ffffff";   // blanco, como él
                             const top = 26 - level * 22;
                             ctx.fillRect(0, top, 30, 30);
                             ctx.restore();
                             path();
                             ctx.lineWidth = 1.8;
-                            ctx.strokeStyle = sulky ? "#5b5f73" : "#b8364c";
+                            ctx.strokeStyle = "#1c1b1b";   // borde del color de sus ojos (se ve en fondo claro)
                             ctx.stroke();
                         }
                     }
@@ -3560,6 +3641,137 @@ ShellRoot {
                 }
             }
 
+            // Animación de la terminal (fastfetch, ver ~/.config/fish/functions/fish_greeting.fish):
+            // se mete de un salto en el cuadrado, se aplasta al caer, mira a los lados y pone una
+            // cara (según cómo esté). 64 fotogramas → integrations/fetch-gif.sh → ~/.cache/mochi/fetch.gif
+            Canvas {
+                id: fetchCanvas
+
+                readonly property int count: 64
+                property int frame: -1
+                property var frames: []
+                property string face: "happy"
+                property bool pending: false
+                // (los colores se fijan al empezar: el del marco va cambiando mientras pinta)
+                property string body: "#d0d3d6"
+                property string ink: "#1c1b1b"
+
+                visible: win.modelData === Quickshell.screens[0]
+                x: -600
+                y: 0
+                width: 240
+                height: 240
+
+                function start(): void {
+                    if (frame >= 0 || !available)
+                        return;
+                    const f = shell.feeling;
+                    face = f === "asleep" || f === "sulky" || f === "hot" || f === "sleepy" ? f : Bond.level > 0.6 && Math.random() < 0.5 ? "love" : ["happy", "excited", "happy"][Math.floor(Math.random() * 3)];
+                    body = shell.avatarBody;
+                    ink = shell.avatarInk;
+                    frames = [];
+                    frame = 0;
+                    requestPaint();
+                }
+                Connections {
+                    target: shell
+
+                    function onAvatarPaint(): void {
+                        if (fetchCanvas.visible)
+                            fetchCanvas.start();
+                    }
+                }
+                onAvailableChanged: if (available) start()
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    if (frame < 0)
+                        return;
+                    const f = frame;
+                    ctx.fillStyle = Theme.surfaceContainerHigh;
+                    ctx.beginPath();
+                    Hats.RR(ctx, 6, 6, 228, 228, 44);
+                    ctx.fill();
+                    ctx.save();
+                    ctx.beginPath();
+                    Hats.RR(ctx, 6, 6, 228, 228, 44);
+                    ctx.clip();
+                    if (f >= 5) {
+                        let y = 0, sq = 0, face = "normal", lx = 0, ly = 0, blink = 0;
+                        if (f < 17) {
+                            const p = (f - 5) / 12;
+                            y = -190 * (1 - p * p);   // cae
+                            face = "surprised";
+                            ly = 0.5;
+                        } else {
+                            const k = f - 17;
+                            sq = 0.32 * Math.exp(-k / 4) * Math.cos(k * 0.95);   // se aplasta y rebota
+                        }
+                        if (f >= 17 && f < 23)
+                            face = "squint";
+                        else if (f >= 23 && f < 31)
+                            lx = -0.75;
+                        else if (f >= 31 && f < 37)
+                            lx = 0.75;
+                        else if (f >= 37 && f < 40)
+                            blink = [0.6, 1, 0.4][f - 37];
+                        else if (f >= 40) {
+                            face = this.face;
+                            if (f < 46)
+                                y -= 12 * Math.sin((f - 40) / 6 * Math.PI);   // saltito
+                        }
+                        const base = 224 + y;
+                        ctx.translate(120, base);
+                        ctx.scale(1 + sq * 0.6, 1 - sq);
+                        ctx.translate(-120, -base);
+                        Draw.avatar(ctx, {
+                            x: 120,
+                            y: base,
+                            s: 70,
+                            body: fetchCanvas.body,
+                            ink: fetchCanvas.ink,
+                            face: face === "asleep" && f < 40 ? "normal" : face,
+                            hat: shell.hat,
+                            stage: Bond.stage,
+                            lx: lx,
+                            ly: ly,
+                            blink: blink,
+                            breath: 0.5,
+                            outline: "rgba(0,0,0,0.13)",
+                            shadow: f < 17 ? Math.max(0, (f - 5) / 12) : 1,
+                            t: f / 25
+                        });
+                    }
+                    ctx.restore();
+                    pending = true;
+                }
+                onPainted: {
+                    // (toDataURL vuelve a emitir painted: solo una vez por fotograma)
+                    if (!pending || frame < 0)
+                        return;
+                    pending = false;
+                    const url = toDataURL("image/png");
+                    frames.push(url.slice(url.indexOf(",") + 1));
+                    frame++;
+                    if (frame < count) {
+                        Qt.callLater(requestPaint);
+                    } else {
+                        frame = -1;
+                        fetchB64.setText(frames.join("\n"));
+                        frames = [];
+                    }
+                }
+
+                FileView {
+                    id: fetchB64
+
+                    path: `${Quickshell.env("XDG_RUNTIME_DIR")}/mochi-fetch.b64`
+                    printErrors: false
+                    onSaved: Quickshell.execDetached([Quickshell.shellDir + "/integrations/fetch-gif.sh", path])
+                }
+            }
+
             Blob {
                 id: mochi
 
@@ -3754,6 +3966,7 @@ ShellRoot {
                         } else {
                             mochi.poke();   // toquecito: se menea contento (y cuenta como cariño)
                             Bond.gain("poke");
+                            shell.heartPop();
                             shell.openInput();   // (no hace nada: ya no es un chat)
                         }
                     }

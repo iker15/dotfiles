@@ -1,7 +1,9 @@
 function fish_greeting
-    # Fetch con el fondo de pantalla actual a la izquierda (recorte cuadrado, se actualiza solo al cambiar de fondo)
-    ~/.config/fastfetch/wall-logo.sh
+    # Mochi se mete de un salto en el cuadrado de la izquierda (animación que genera él, solo en
+    # kitty) y al lado, la info de fastfetch
+    set -l row (~/.config/fastfetch/mochi.sh row)
     fastfetch
+    ~/.config/fastfetch/mochi.sh play $row
 
     # Para volver al ojo del pin en Braille, cambia lo de arriba por:
     #   echo; python3 ~/.config/fish/art/eye.py

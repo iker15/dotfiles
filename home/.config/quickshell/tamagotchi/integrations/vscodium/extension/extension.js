@@ -61,7 +61,7 @@ function update() {
         const lv = state?.level ? ` Nv ${state.level}` : "";
         bar.text = `(${EYES[f] ?? "• •"})${lv}`;
         const langs = langSummary();
-        bar.tooltip = state ? `${state.stageName ?? "Mochi"} · nivel ${state.level} (${state.xp - state.levelStart}/${state.levelEnd - state.levelStart} XP)\n❤ ${state.bond} · ${state.text}${errors ? ` · ${errors} errores` : ""}${langs ? `\nProgramado: ${langs}` : ""}` : "Mochi";
+        bar.tooltip = state ? `${state.stageName ?? "Mochi"} · nivel ${state.level} (${state.xp - state.levelStart}/${state.levelEnd - state.levelStart} XP)\n♥ ${state.bond} · ${state.text}${errors ? ` · ${errors} errores` : ""}${langs ? `\nProgramado: ${langs}` : ""}` : "Mochi";
     }
     view?.webview.postMessage({ type: "state", state, face: f, langs: langSummary(), lang: langName(vscode.window.activeTextEditor?.document.languageId ?? "") });
 }

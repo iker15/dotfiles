@@ -47,7 +47,7 @@ function info() {
     document.getElementById("name").textContent = st?.stageName ?? "Mochi";
     document.getElementById("lvl").textContent = `Nivel ${lvl} · ${xp - a} / ${b - a} XP`;
     document.getElementById("fill").style.width = `${Math.max(0, Math.min(100, 100 * (xp - a) / Math.max(1, b - a)))}%`;
-    document.getElementById("mood").textContent = st ? `❤ ${st.bond} · ${st.text}` : "";
+    document.getElementById("mood").textContent = st ? `♥ ${st.bond} · ${st.text}` : "";
     document.getElementById("mood").title = langs ? `Programado: ${langs}` : "";
     document.getElementById("langs").textContent = langs;
     const away = document.getElementById("away");
@@ -63,6 +63,7 @@ document.addEventListener("mousemove", e => {
 });
 cv.addEventListener("click", () => {
     squashV -= 3;
+    pops.push({ heart: true, t: performance.now() });   // corazoncito blanco
     vscode.postMessage({ type: "poke" });
 });
 
@@ -131,6 +132,21 @@ function frame(now) {
         const p = pops[i], k = (now - p.t) / (p.big ? 2600 : 1400);
         if (k >= 1) {
             pops.splice(i, 1);
+            continue;
+        }
+        if (p.heart) {
+            const x = 62, y = 60 - k * 40, s = 8 * Math.min(1, 0.4 + k * 3);
+            ctx.globalAlpha = 1 - Math.max(0, k - 0.55) / 0.45;
+            ctx.beginPath();
+            ctx.moveTo(x, y + s * 0.9);
+            ctx.bezierCurveTo(x - s * 1.4, y, x - s * 0.8, y - s * 1.1, x, y - s * 0.4);
+            ctx.bezierCurveTo(x + s * 0.8, y - s * 1.1, x + s * 1.4, y, x, y + s * 0.9);
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = st?.ink ?? "#1c1b1b";
+            ctx.stroke();
+            ctx.globalAlpha = 1;
             continue;
         }
         ctx.globalAlpha = 1 - k * k;

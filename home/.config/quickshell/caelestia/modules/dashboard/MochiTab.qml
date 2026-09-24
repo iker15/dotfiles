@@ -86,7 +86,7 @@ Item {
                     icon: root.sulky ? "heart_broken" : "favorite"
                     label: "Cariño"
                     value: `${root.bond} / 100`
-                    colour: root.sulky ? Colours.palette.m3outline : Colours.palette.m3error
+                    colour: root.sulky ? Colours.palette.m3outline : Colours.palette.m3onSurface   // (corazones del color de Mochi, sin rojo)
                 }
 
                 Stat {
@@ -212,7 +212,7 @@ Item {
                         Layout.fillWidth: true
                         implicitHeight: Tokens.padding.small
                         value: root.bond / 100
-                        fgColour: root.sulky ? Colours.palette.m3outline : Colours.palette.m3error
+                        fgColour: root.sulky ? Colours.palette.m3outline : Colours.palette.m3onSurface
                     }
 
                     StyledText {

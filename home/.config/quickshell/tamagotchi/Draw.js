@@ -12,6 +12,8 @@
 //   sleepy | surprised | squint | hot | curious | excited
 //   lx, ly: hacia dónde mira (−1…1) · blink: 0 abierto → 1 cerrado · t: tiempo (s)
 //   breath: 0-1 (respira) · melt: 0-1 · hat: "" | witch | santa | party | crown · snow: 0-1
+//   outline: color del contorno (opcional; p. ej. sobre un fondo casi del mismo color)
+//   shadow: sombrita en el suelo (0-1, opcional)
 //   stage: evolución por nivel (0 bebé: más pequeño y ojos más grandes · 1 normal · 2 brillante:
 //   más brillo y un destello · 3 sabio: + una estrellita que le da vueltas · 4 legendario: + un
 //   brillo arcoíris en el borde)
@@ -23,6 +25,13 @@ function avatar(ctx, o) {
     const rx = s * (1 + 0.3 * m + 0.03 * b), ryT = s * (1.0 - 0.34 * m - 0.03 * b), ryB = s * (0.72 - 0.2 * m);
     const cx = o.x, cy = o.y - ryB;
 
+    // Sombrita en el suelo
+    if (o.shadow > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${(0.18 * o.shadow).toFixed(3)})`;
+        ctx.beginPath();
+        Hats.E(ctx, cx - rx * 0.95, o.y - s * 0.07, rx * 1.9, s * 0.16);
+        ctx.fill();
+    }
     // Cuerpo: cúpula (arriba) + base más plana, con un brillo arriba a la izquierda
     ctx.fillStyle = o.body;
     ctx.beginPath();
@@ -36,6 +45,11 @@ function avatar(ctx, o) {
     }
     ctx.closePath();
     ctx.fill();
+    if (o.outline) {
+        ctx.strokeStyle = o.outline;
+        ctx.lineWidth = Math.max(1, s * 0.035);
+        ctx.stroke();
+    }
     ctx.fillStyle = `rgba(255,255,255,${stage >= 2 ? 0.2 : 0.07})`;
     ctx.beginPath();
     Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
