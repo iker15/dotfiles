@@ -4,7 +4,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Cariño: lo que te quiere Mochi (0-100). Sube al hablarle, acariciarlo, cogerlo y, un poco,
+// Cariño: lo que te quiere Mochi (0-100). Sube al acariciarlo, darle toquecitos (clic), cogerlo y, un poco,
 // solo con estar en el PC con él cerca (con tope diario, para que no se pueda "farmear").
 // Si pasas días sin hacerle caso baja y se enfurruña (sulky) hasta que te reconcilias con él.
 // Se guarda en ~/.local/state/tamagotchi/bond.json.
@@ -61,12 +61,14 @@ Singleton {
 
     readonly property var gains: ({
             talk: 2,
+            poke: 0.6,
             pet: 1.5,
             hold: 0.5,
             presence: 0.25
         })
     readonly property var cooldown: ({
             talk: 20000,
+            poke: 20000,
             pet: 30000,
             hold: 20000,
             presence: 0

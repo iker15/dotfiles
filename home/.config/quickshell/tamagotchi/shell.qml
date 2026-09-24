@@ -35,8 +35,14 @@ ShellRoot {
     property real lookX: 0
     property real lookY: 0
 
+    // Decisión (2026-09-24): Mochi es una mascota integrada en el sistema, NO un chat. No se le
+    // escribe (clic = solo reacciona) y la voz está apagada. Se deja todo preparado para más
+    // adelante (controlarlo por voz y que ejecute cosas): encender voiceEnabled (y Brain.enabled).
+    readonly property bool chatEnabled: false
+    readonly property bool voiceEnabled: false
+
     // Voz: ears.py escucha el micro y avisa al oír "Mochi"
-    property bool earsOn: true
+    property bool earsOn: voiceEnabled
     property bool earsReady: false
     property bool earsCooling: false   // se ha caído: espera un poco antes de relanzarlo
     property bool voiceWaiting: false  // ha oído "Mochi" y espera la orden
@@ -2080,7 +2086,7 @@ ShellRoot {
     }
 
     function openInput(): void {
-        if (locked)
+        if (locked || !chatEnabled)
             return;
         touch();
         shown = true;
@@ -2227,7 +2233,7 @@ ShellRoot {
         command: [Quickshell.shellDir + "/ears.sh"]
         // (nunca con la pantalla bloqueada; el relanzamiento también pasa por aquí: asignar
         // `running` a mano rompía este enlace y lo volvía a encender estando bloqueado)
-        running: shell.earsOn && !shell.locked && !shell.earsCooling
+        running: shell.voiceEnabled && shell.earsOn && !shell.locked && !shell.earsCooling
 
         stdout: SplitParser {
             onRead: line => {
@@ -2267,13 +2273,14 @@ ShellRoot {
     IpcHandler {
         target: "pet"
 
-        // Doble +: si está a la vista se esconde; si no, aparece y escucha
+        // Doble +: si está a la vista se esconde; si no, aparece
         function toggle(): void {
             if (shell.shown) {
                 shell.asking = false;
                 shell.shown = false;
             } else {
-                shell.openInput();
+                shell.touch();
+                shell.shown = true;
             }
         }
         function appear(): void {
@@ -2288,7 +2295,8 @@ ShellRoot {
             shell.openInput();
         }
         function ears(): void {
-            shell.earsOn = !shell.earsOn;
+            if (shell.voiceEnabled)
+                shell.earsOn = !shell.earsOn;
         }
         function history(): void {
             Qt.openUrlExternally("file://" + Brain.historyDir);
@@ -3660,9 +3668,9 @@ ShellRoot {
 
                     // Clic derecho: historial · clic central: activar/silenciar el micro
                     onClicked: mouse => {
-                        if (mouse.button === Qt.RightButton)
+                        if (mouse.button === Qt.RightButton && shell.chatEnabled)
                             Qt.openUrlExternally("file://" + Brain.historyDir);
-                        else if (mouse.button === Qt.MiddleButton)
+                        else if (mouse.button === Qt.MiddleButton && shell.voiceEnabled)
                             shell.earsOn = !shell.earsOn;
                     }
 
@@ -3744,8 +3752,9 @@ ShellRoot {
                             mochi.poke();
                             shell.asking = false;
                         } else {
-                            mochi.poke();
-                            shell.openInput();
+                            mochi.poke();   // toquecito: se menea contento (y cuenta como cariño)
+                            Bond.gain("poke");
+                            shell.openInput();   // (no hace nada: ya no es un chat)
                         }
                     }
                 }
@@ -3753,7 +3762,7 @@ ShellRoot {
 
             // Micro silenciado
             Text {
-                visible: !shell.earsOn && mochi.visible
+                visible: shell.voiceEnabled && !shell.earsOn && mochi.visible
                 x: mochi.x + mochi.width - 18
                 y: mochi.y + mochi.height - 20
                 text: "mic_off"

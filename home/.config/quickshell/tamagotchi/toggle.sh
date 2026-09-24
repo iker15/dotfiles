@@ -16,7 +16,7 @@ if (( now - last < 400 )); then
         qs -c tamagotchi -n -d --log-rules "quickshell.io.socket.warning=false"
         for _ in $(seq 20); do
             sleep 0.1
-            qs -c tamagotchi ipc call pet talk 2>/dev/null && break
+            qs -c tamagotchi ipc call pet appear 2>/dev/null && break
         done
     fi
 else

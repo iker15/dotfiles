@@ -11,13 +11,12 @@ import qs.components.controls
 import qs.services
 
 // Pestaña de Mochi (~/.config/quickshell/tamagotchi) en el dashboard: su ficha. Cómo está y por
-// qué, el cariño que te tiene, su gorro, las últimas conversaciones y botones rápidos. Lee lo
+// qué, el cariño que te tiene, su nivel, su gorro y botones rápidos. (Ya no es un chat.) Lee lo
 // que él publica en $XDG_RUNTIME_DIR/mochi-state.json y habla con él por IPC.
 Item {
     id: root
 
     property var st: ({})
-    property var chat: []
 
     readonly property int bond: st.bond ?? 0
     readonly property bool sulky: st.sulky ?? false
@@ -44,26 +43,6 @@ Item {
             try {
                 root.st = JSON.parse(text());
             } catch (e) {}
-        }
-    }
-
-    // Últimas conversaciones de hoy (~/Documentos/Mochi/AAAA-MM-DD.md)
-    FileView {
-        path: `${Quickshell.env("HOME")}/Documentos/Mochi/${Qt.formatDate(new Date(), "yyyy-MM-dd")}.md`
-        watchChanges: true
-        printErrors: false
-        onFileChanged: reload()
-        onLoaded: {
-            const out = [];
-            const re = /\*\*(Tú[^*]*|Mochi[^*]*)\*\* · (\d\d:\d\d)\n\n([\s\S]*?)(?=\n\n\*\*|$)/g;
-            let m;
-            while ((m = re.exec(text())) !== null)
-                out.push({
-                    who: m[1].startsWith("Tú") ? "Tú" : "Mochi",
-                    time: m[2],
-                    text: m[3].trim().replace(/\s+/g, " ")
-                });
-            root.chat = out.slice(-4);
         }
     }
 
@@ -239,7 +218,7 @@ Item {
                     StyledText {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        text: root.sulky ? "Háblale o acarícialo: la primera vez te girará la cara, pero si insistes te perdona." : "Sube hablándole, acariciándolo (pasa el ratón de lado a lado por encima) o cogiéndolo; y un poco solo con estar con él."
+                        text: root.sulky ? "Acarícialo o cógelo: la primera vez te girará la cara, pero si insistes te perdona." : "Sube acariciándolo (pasa el ratón de lado a lado por encima) o cogiéndolo; y un poco solo con estar con él."
                         font: Tokens.font.body.small
                         color: Colours.palette.m3onSurfaceVariant
                     }
@@ -288,61 +267,6 @@ Item {
             }
         }
 
-        // Últimas conversaciones
-        StyledText {
-            Layout.topMargin: Tokens.spacing.small
-            Layout.leftMargin: Tokens.padding.medium
-            text: root.chat.length ? "Hoy habéis hablado de…" : "Hoy aún no habéis hablado"
-            font: Tokens.font.body.builders.medium.weight(Font.DemiBold).build()
-            color: Colours.palette.m3onSurface
-        }
-
-        Repeater {
-            model: root.chat
-
-            StyledRect {
-                id: msg
-
-                required property var modelData
-
-                Layout.fillWidth: true
-                implicitHeight: msgRow.implicitHeight + Tokens.padding.small * 2
-                radius: Tokens.rounding.medium
-                color: msg.modelData.who === "Tú" ? Colours.tPalette.m3surfaceContainerHigh : Colours.tPalette.m3surfaceContainer
-
-                RowLayout {
-                    id: msgRow
-
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: Tokens.padding.medium
-                    anchors.rightMargin: Tokens.padding.medium
-                    spacing: Tokens.spacing.medium
-
-                    StyledText {
-                        Layout.preferredWidth: 60
-                        text: msg.modelData.who
-                        font: Tokens.font.body.builders.small.weight(Font.DemiBold).build()
-                        color: msg.modelData.who === "Tú" ? Colours.palette.m3secondary : Colours.palette.m3primary
-                    }
-                    StyledText {
-                        Layout.fillWidth: true
-                        text: msg.modelData.text
-                        elide: Text.ElideRight
-                        maximumLineCount: 1
-                        font: Tokens.font.body.small
-                        color: Colours.palette.m3onSurface
-                    }
-                    StyledText {
-                        text: msg.modelData.time
-                        font: Tokens.font.body.small
-                        opacity: 0.6
-                    }
-                }
-            }
-        }
-
         // Botones rápidos
         RowLayout {
             Layout.topMargin: Tokens.spacing.small
@@ -355,13 +279,6 @@ Item {
                 isRound: true
                 type: IconTextButton.Tonal
                 onClicked: root.ipc("appear")
-            }
-            IconTextButton {
-                icon: "chat"
-                text: "Hablarle"
-                isRound: true
-                type: IconTextButton.Tonal
-                onClicked: root.ipc("talk")
             }
             IconTextButton {
                 icon: "coffee"

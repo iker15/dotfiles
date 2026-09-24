@@ -10,6 +10,10 @@ Singleton {
 
     readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/tamagotchi"
 
+    // Desde el 2026-09-24 Mochi es solo mascota: no se le escribe y Claude no está arrancado.
+    // (Todo esto se queda para cuando vuelva, p. ej. para controlarlo por voz: enabled = true)
+    property bool enabled: false
+
     property ListModel messages: ListModel {}
     property bool busy: false
     // Cara que pone Mochi: idle, thinking, talking, happy, sad, o una emoción (ver persona.md)
@@ -92,6 +96,8 @@ Singleton {
     property bool locked: false
 
     function send(text: string, byVoice = false): void {
+        if (!enabled)
+            return;
         text = text.trim();
         if (!text || busy || locked)
             return;
@@ -335,7 +341,7 @@ Singleton {
 
     // Arrancar Claude ya, para que la primera respuesta no espere al arranque
     Timer {
-        running: true
+        running: root.enabled
         interval: 1500
         onTriggered: if (!proc.running) proc.running = true
     }
