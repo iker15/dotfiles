@@ -2021,7 +2021,8 @@ ShellRoot {
             diveStage = 2;
             kickAlong(-1.4, 3.4);
             splatted(380, !gHoriz);
-            reacted(diveFromDeep ? "excited" : "happy", 900);
+            if (!birthQuiet)
+                reacted(diveFromDeep ? "excited" : "happy", 900);
         }
 
         // (los ojos se hunden con él: se recortan al interior del marco, como el cuerpo)
@@ -2157,6 +2158,8 @@ ShellRoot {
     // Si un panel le ha caído encima, se va buceando (rápido y sin que se le vea) al sitio libre
     // más cercano; si no hay ninguno, a su nido de la barra
     function avoidPanels(): void {
+        if (birthing)
+            return;
         if (!present || (phys !== "swim" && phys !== "hidden"))
             return;
         if (!inPanel(gx, gy, Math.max(bodyRx, bodyRy) + 10))
@@ -2454,8 +2457,18 @@ ShellRoot {
         }
     }
 
-    // Nace (lo acabas de crear en el dashboard): asoma del borde de arriba en medio de la
-    // pantalla, se queda colgando como una gota… y cae
+    // Nace (lo acabas de crear en el dashboard). Solo pasa una vez:
+    // 1. asoma una gota del borde de arriba en medio de la pantalla, con los ojos cerrados, y cae;
+    // 2. se queda hecha un charquito tembloroso que poco a poco se recoge y sube hasta su forma;
+    // 3. abre los ojos por primera vez, despacio; mira alrededor, ve tu ratón y te "adopta";
+    // 4. y hace una cosa por cada rasgo de su carácter (el tímido se esconde, el dormilón bosteza…).
+    property bool birthing: false
+    property string birthStage: ""    // hang · fall · puddle · wake · traits
+    property real birthPuddle: 0
+    readonly property bool birthQuiet: birthing && birthStage !== "traits"   // (sin caras automáticas)
+    property var birthSteps: []
+    signal firstLook()
+
     function birth(): void {
         const s = screenOfMonitor(Hyprland.focusedMonitor);
         if (!s)
@@ -2468,36 +2481,248 @@ ShellRoot {
         nestPinned = false;
         entering = false;
         thrown = false;
+        seeking = false;
         swimV = 0;
         bodyOffX = bodyOffY = 0;
+        birthing = true;
+        birthStage = "hang";
+        birthPuddle = 0;
+        reacted("asleep", 60000);   // aún no ha abierto los ojos
         swimD = nearestD(tr, s.x + s.width / 2, tr.T);
         const p = pointAt(tr, swimD), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
         gx = p.x + p.nx * deep;
         gy = p.y + p.ny * deep;
-        dive(0, "peek", true, 0.55);
-        idleHide.restart();
+        dive(0, "peek", true, 0.5);
         birthDrop.restart();
+        birthGuard.restart();
     }
     Timer {
         id: birthDrop
 
-        interval: 3300
+        interval: 3600
         onTriggered: {
             if (shell.phys === "swim") {
+                shell.birthStage = "fall";
                 shell.ceilingTime = 99;   // se suelta del techo
-                birthLove.restart();
+            } else {
+                restart();
             }
         }
     }
+    // (por si algo se tuerce: que no se quede a medias para siempre)
     Timer {
-        id: birthLove
+        id: birthGuard
 
-        interval: 1500
-        onTriggered: {
-            shell.reacted("love", 2800);
-            shell.heartPop();
+        interval: 40000
+        onTriggered: shell.birthEnd()
+    }
+
+    // Toca el suelo: splash y charco que tiembla; luego se recoge y sube
+    function birthPuddle_(): void {
+        birthStage = "puddle";
+        birthPuddle = 1;
+        splatted(1600, false);
+        puddleAnim.restart();
+    }
+    SequentialAnimation {
+        id: puddleAnim
+
+        // tiembla un rato hecho un charco
+        ParallelAnimation {
+            PauseAnimation {
+                duration: 1400
+            }
+            SequentialAnimation {
+                loops: 5
+
+                ScriptAction {
+                    script: shell.kicked((Math.random() - 0.5) * 0.9, (Math.random() - 0.5) * 0.6)
+                }
+                PauseAnimation {
+                    duration: 280
+                }
+            }
+        }
+        // se recoge poco a poco…
+        NumberAnimation {
+            target: shell
+            property: "birthPuddle"
+            to: 0.55
+            duration: 1300
+            easing.type: Easing.InOutSine
+        }
+        PauseAnimation {
+            duration: 250
+        }
+        // …y sube hasta tener su forma, con un último estirón
+        NumberAnimation {
+            target: shell
+            property: "birthPuddle"
+            to: 0
+            duration: 900
+            easing.type: Easing.InOutQuad
+        }
+        ScriptAction {
+            script: {
+                shell.kicked(-1.6, 2.6);
+                shell.birthWake();
+            }
         }
     }
+
+    // Pasos con su espera: [[ms hasta el siguiente, función], …]
+    function runBirth(steps: var): void {
+        birthSteps = steps;
+        nextBirthStep();
+    }
+    function nextBirthStep(): void {
+        if (!birthing || !birthSteps.length)
+            return;
+        const [ms, fn] = birthSteps[0];
+        birthSteps = birthSteps.slice(1);
+        fn();
+        birthStep.interval = ms;
+        birthStep.restart();
+    }
+    Timer {
+        id: birthStep
+
+        onTriggered: shell.nextBirthStep()
+    }
+
+    function birthGlance(x: real, y: real, ms: int): void {
+        glanceX = x;
+        glanceY = y;
+        glanceUntil = Date.now() + ms;
+    }
+
+    function birthWake(): void {
+        birthStage = "wake";
+        const s = nearestScreen(gx, gy);
+        const steps = [
+            [1100, () => {}],   // un momento más con los ojos cerrados
+            [3600, () => shell.firstLook()],   // los abre por primera vez
+            [900, () => birthGlance(s.x + s.width * 0.1, s.y + s.height * 0.15, 900)],
+            [900, () => birthGlance(s.x + s.width * 0.9, s.y + s.height * 0.2, 900)],
+            [700, () => birthGlance(gx, s.y, 700)],
+            // ve tu ratón: sorpresa… y te adopta
+            [900, () => {
+                    glanceUntil = 0;
+                    reacted("surprised", 800);
+                }],
+            [2400, () => {
+                    reacted("love", 2400);
+                    kicked(-1.2, 2);
+                    heartPop();
+                }]
+        ];
+        // su carácter, un rasgo detrás de otro
+        for (const id of Look.traits)
+            steps.push([2300, () => {
+                    birthStage = "traits";
+                    traitDebut(id);
+                }]);
+        steps.push([0, () => birthEnd()]);
+        runBirth(steps);
+    }
+
+    function birthEnd(): void {
+        if (!birthing)
+            return;
+        birthing = false;
+        birthStage = "";
+        birthPuddle = 0;
+        birthSteps = [];
+        birthStep.stop();
+        puddleAnim.stop();
+        birthGuard.stop();
+        if (phys === "air" || phys === "held")
+            return;
+        if (phys === "swim")
+            attached();
+        idleHide.restart();
+        savePos();
+    }
+
+    // Lo primero que hace según cada rasgo
+    function traitDebut(id: string): void {
+        const s = nearestScreen(gx, gy), tr = track(s), h = new Date().getHours();
+        const onFloor = phys === "swim" && pointAt(tr, swimD).ny > 0.9;
+        const hopTo = dir => {
+            if (!onFloor)
+                return;
+            vx = dir * 260;
+            vy = -720;
+            phys = "air";
+        };
+        switch (id) {
+        case "timido":   // se vuelve a meter un poco y te mira asomado
+            reacted("surprised", 900);
+            if (phys === "swim")
+                dive(0, "peek", false, 0.9);
+            break;
+        case "valiente":
+        case "inquieto":   // un salto hacia ti
+            reacted("excited", 1400);
+            hopTo(cursorX > gx ? 1 : -1);
+            break;
+        case "dormilon":
+            sleepTest("yawn");
+            break;
+        case "bailongo":
+            reacted("dance", 2200);
+            break;
+        case "jugueton":   // se esconde un segundo y vuelve a salir
+            reacted("wink", 700);
+            if (phys === "swim")
+                dive(0, "hidden", false, 1.5);
+            break;
+        case "curioso":   // mira a todas partes
+            reacted("curious", 2000);
+            birthGlance(s.x + s.width * (gx - s.x < s.width / 2 ? 0.95 : 0.05), s.y + s.height * 0.5, 1000);
+            break;
+        case "mimoso":   // se te acerca un poco
+            reacted("love", 1800);
+            if (phys === "swim")
+                swimTarget = nearestD(tr, cursorX + (cursorX > gx ? -220 : 220), tr.B);
+            break;
+        case "nadador":   // se da un chapuzón
+            if (phys === "swim")
+                dive((Math.random() < 0.5 ? -1 : 1) * 260, "peek", false, 1.3);
+            break;
+        case "presumido":
+            reacted("proud", 1800);
+            rainbow(1800);
+            break;
+        case "cafetero":
+            reacted("excited", 1500);
+            jitter.restart();
+            break;
+        case "friolero":
+            reacted("squint", 1400);
+            jitter.restart();
+            break;
+        case "caluroso":
+            reacted("sleepy", 1600);
+            kicked(1.6, -1.4);   // se desparrama un poco
+            break;
+        case "noctambulo":
+            if (h >= 21 || h < 6)
+                reacted("excited", 1500);
+            else
+                sleepTest("yawn");
+            break;
+        case "madrugador":
+            if (h >= 6 && h < 13) {
+                reacted("excited", 1500);
+                hopTo(Math.random() < 0.5 ? -1 : 1);
+            } else {
+                sleepTest("yawn");
+            }
+            break;
+        }
+    }
+
     Connections {
         target: Look
 
@@ -2743,7 +2968,7 @@ ShellRoot {
     // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
     // workspace, viene
     function touch(): void {
-        if (locked || phys === "away" || !Look.born)
+        if (locked || phys === "away" || !Look.born || birthing)
             return;
         if (seeking) {
             seekEnd("called");   // lo llamas: sale de su escondite
@@ -2825,11 +3050,15 @@ ShellRoot {
         const p = pointAt(tr, swimD);
         swimV = (vx * p.ny - vy * p.nx) * 0.45;   // conserva algo de la velocidad a lo largo
         vx = vy = 0;
-        if (impact > 1300)
+        if (impact > 1300 && !birthQuiet)
             reacted("squint", 500);
         if (impact > 250)
             splatted(impact, horizontal);
         phys = "swim";
+        if (birthing && birthStage === "fall") {
+            birthPuddle_();   // al nacer: se queda hecho un charco
+            return;
+        }
         attached();
     }
 
@@ -2980,7 +3209,8 @@ ShellRoot {
                     vy = 60;
                     gy += 14;
                     phys = "air";
-                    reacted("surprised", 700);
+                    if (!birthQuiet)
+                        reacted("surprised", 700);
                     return;
                 }
             } else {
@@ -3144,7 +3374,7 @@ ShellRoot {
         target: Mind
 
         function onReact(face: string, ms: int): void {
-            if (!shell.dnd && shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden")
+            if (!shell.dnd && shell.present && !Brain.busy && !shell.asking && !shell.dragging && shell.phys !== "hidden" && !shell.birthing)
                 shell.reacted(face, ms);
         }
         function onDance(ms: int): void {
@@ -3299,6 +3529,11 @@ ShellRoot {
         // Probar la llegada buceando por el borde de abajo ("left": como si vinieras de la izquierda)
         function nest(): void {
             shell.goNest();
+        }
+        // Repetir el nacimiento (para probarlo; no borra nada)
+        function birthTest(): void {
+            if (Look.born)
+                shell.birth();
         }
         // Empezar de cero (lo usa el dashboard tras avisar)
         function resetMochi(): void {
@@ -3604,7 +3839,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && !shell.watching && shell.melt < 0.6 && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && !shell.birthing && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && !shell.watching && shell.melt < 0.6 && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -4020,7 +4255,7 @@ ShellRoot {
     Timer {
         id: idleHide
 
-        running: shell.shown && shell.present && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.watching && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.birthing && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.watching && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         interval: shell.hideAfter * Math.max(0.5, Math.min(1.3, shell.dayEnergy)) * shell.nestFactor
         onTriggered: {
             if (shell.phys !== "swim") {
@@ -5128,6 +5363,7 @@ ShellRoot {
                 wide: Look.wide
                 jelly: Look.jelly
                 traits: Look.traits
+                puddle: shell.birthPuddle
                 y: shell.gy - win.modelData.y - height / 2
                 mood: shell.mood
                 dragging: shell.dragging
@@ -5150,7 +5386,7 @@ ShellRoot {
                 anchorNy: shell.nY
                 onDozingChanged: if (visible) shell.dozing = dozing
                 inkOverride: shell.lastShape === 2 && shell.morph > 0.5 ? "#1c1b1b" : "transparent"   // Clawd: ojos oscuros
-                eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4)
+                eyesOff: (shell.phys === "dive" && shell.diveUnder > 0.4) || (shell.phys === "nest" && shell.nestPeek < 0.4) || shell.birthPuddle > 0.25
                 // los ojos se recortan al interior del marco, como el cuerpo (así se sumergen),
                 // salvo por la barra de la izquierda (el nido)
                 clipRect: Qt.rect(-x, shell.frame - y, win.width - shell.frame, win.height - 2 * shell.frame)
@@ -5163,6 +5399,9 @@ ShellRoot {
 
                     function onSplatted(strength: real, horizontal: bool): void {
                         mochi.splat(strength, horizontal);
+                    }
+                    function onFirstLook(): void {
+                        mochi.firstOpen();
                     }
                     function onReacted(name: string, ms: int): void {
                         // su carácter: el valiente no se asusta; el tímido se asusta por todo;

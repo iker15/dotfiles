@@ -183,6 +183,9 @@ Item {
         look.save(traitsOnly ? Object.assign(look.data(), {
             traits: chosen
         }) : draft, true);
+        // (al nacer se cierra el dashboard, para verlo caer desde arriba)
+        if (!traitsOnly)
+            Quickshell.execDetached(["qs", "-c", "caelestia", "ipc", "call", "drawers", "toggle", "dashboard"]);
         done();
     }
 

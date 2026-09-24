@@ -87,6 +87,10 @@ Item {
     property real wide: 1         // ancho del cuerpo (el alto compensa)
     property real jelly: 1        // blandura: tiembla más y tarda más en calmarse
     property var traits: []       // rasgos de carácter (Traits.js): bailongo, curioso…
+    // Al nacer: charco (1 = aplastado del todo en el suelo, 0 = ya con su forma) y la primera
+    // vez que abre los ojos (despacio; mientras, no parpadea solo)
+    property real puddle: 0
+    property bool firstOpening: false
     readonly property real rx: 32 * u * wide       // semiejes del cuerpo en reposo
     readonly property real ry: 29 * u / Math.sqrt(wide)
 
@@ -602,13 +606,17 @@ Item {
             // aplasta una ventana se chafa en ese eje (y se ensancha en el otro)
             // (los dos, contra el marco: en el suelo se chafa hacia abajo, en una pared contra ella)
             const sq = root.press + 0.68 * root.melt, pv = root.pressVertical ? sq : 0, ph = root.pressVertical ? 0 : sq;
-            const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05 - 0.5 * ph + 0.45 * pv;
-            const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07 - 0.5 * pv + 0.45 * ph;
+            let tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05 - 0.5 * ph + 0.45 * pv;
+            let tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07 - 0.5 * pv + 0.45 * ph;
             const ks = 320, cs = 13 / jl;
+            // (charco: muy ancho y plano; al recogerse vuelve a su forma con el muelle)
+            const pud = root.puddle;
+            tsx = tsx * (1 - pud) + 2.3 * pud;
+            tsy = tsy * (1 - pud) + 0.24 * pud;
             svx += (-ks * (root.sx - tsx) - cs * svx) * dt;
             svy += (-ks * (root.sy - tsy) - cs * svy) * dt;
-            root.sx = Math.max(0.45, Math.min(1.6, root.sx + svx * dt));
-            root.sy = Math.max(0.45, Math.min(1.6, root.sy + svy * dt));
+            root.sx = Math.max(0.45, Math.min(1.6 + 0.9 * root.puddle, root.sx + svx * dt));
+            root.sy = Math.max(0.45 - 0.25 * root.puddle, Math.min(1.6, root.sy + svy * dt));
 
             hatRotV += (-90 * hatRot - 5 * hatRotV + mx * 60 - rotV * 0.3) * dt;
             hatRot = Math.max(-25, Math.min(25, hatRot + hatRotV * dt));
@@ -987,8 +995,60 @@ Item {
         onTriggered: root.doBlink()
     }
 
+    // La primera vez que abre los ojos (al nacer): los entreabre despacio, los vuelve a cerrar
+    // un momento, los abre del todo y parpadea dos veces
+    function firstOpen(): void {
+        reactionTimer.stop();
+        reaction = "";
+        idleExpr = "";
+        firstOpening = true;
+        blinkAnim.stop();
+        blink = 1;
+        firstOpenAnim.restart();
+    }
+    SequentialAnimation {
+        id: firstOpenAnim
+
+        NumberAnimation {
+            target: root
+            property: "blink"
+            to: 0.55
+            duration: 1400
+            easing.type: Easing.InOutSine
+        }
+        PauseAnimation {
+            duration: 450
+        }
+        NumberAnimation {
+            target: root
+            property: "blink"
+            to: 0.95
+            duration: 160
+        }
+        PauseAnimation {
+            duration: 250
+        }
+        NumberAnimation {
+            target: root
+            property: "blink"
+            to: 0
+            duration: 650
+            easing.type: Easing.OutQuad
+        }
+        PauseAnimation {
+            duration: 450
+        }
+        ScriptAction {
+            script: {
+                root.firstOpening = false;
+                root.doBlink();
+                doubleBlink.restart();
+            }
+        }
+    }
+
     Timer {
-        running: root.visible && !root.sleepy
+        running: root.visible && !root.sleepy && !root.firstOpening
         repeat: true
         interval: 3000
         onTriggered: {
