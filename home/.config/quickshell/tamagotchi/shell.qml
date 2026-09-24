@@ -820,10 +820,8 @@ ShellRoot {
     function pet(): void {
         if (phys === "nest")
             idleHide.restart();
-        else {
+        else
             touch();
-            shapeShift("heart", 2000);
-        }
         reacted("love", 2400);
         splatted(420, false);
     }
