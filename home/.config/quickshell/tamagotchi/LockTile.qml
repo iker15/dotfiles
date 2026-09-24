@@ -227,6 +227,12 @@ Item {
         x: root.width * (0.5 + root.eyes.x) - width / 2 + Math.sin(root.shake * Math.PI * 6) * 8 * (1 - root.shake)
         y: root.height * (0.5 + root.eyes.y) - height / 2
         u: 1.45 * root.width / 105   // ojos más grandes, dibujados a su tamaño (nítidos)
+        // (tus ojos: los que le diste al crearlo)
+        visible: Look.born
+        eyeSize: Look.eyeSize
+        eyeGap: Look.eyeGap
+        eyeY: Look.eyeY
+        eyeShape: Look.eyeShape
         worldX: 0
         worldY: 0
         bodyColor: Qt.alpha(root.tileColor, 1)

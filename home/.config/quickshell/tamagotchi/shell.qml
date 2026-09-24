@@ -8,6 +8,7 @@ import Quickshell.Wayland
 import Caelestia.Config
 import "Hats.js" as Hats
 import "Draw.js" as Draw
+import "Traits.js" as Traits
 
 // Mochi: burbujita negra que vive en el escritorio, con Claude Code como cerebro.
 // - Tiene gravedad: vive en el suelo de la pantalla, da saltitos y se le puede lanzar.
@@ -234,7 +235,7 @@ ShellRoot {
     property real heatT: 50
     property real heatTest: NaN      // (IPC `pet heat <grados>`, 0 = quitar)
     readonly property real heatNow: isNaN(heatTest) ? Math.max(cpuTemp, gpuTemp) : heatTest
-    property real melt: Math.max(meltExtra, Math.max(0, Math.min(1, (heatT - 72) / 20)), (isNaN(weatherTemp) ? 0 : 0.5 * Math.max(0, Math.min(1, (weatherTemp - 30) / 10))))
+    property real melt: Math.max(meltExtra, Math.max(0, Math.min(1, (heatT - (Look.has("caluroso") ? 62 : 72)) / 20)), (isNaN(weatherTemp) ? 0 : 0.5 * Math.max(0, Math.min(1, (weatherTemp - 30) / 10))))
     Behavior on melt {
         NumberAnimation {
             duration: 2500
@@ -248,7 +249,7 @@ ShellRoot {
     readonly property bool raining: (weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 82) || weatherCode >= 95
     readonly property bool snowing: (weatherCode >= 71 && weatherCode <= 77) || weatherCode === 85 || weatherCode === 86
     readonly property bool storm: weatherCode >= 95
-    readonly property bool cold: weatherTemp < 6
+    readonly property bool cold: weatherTemp < (Look.has("friolero") ? 12 : 6)
     property var weatherTest: null   // (IPC `pet weather <código> <grados>`; código −2 = quitar)
     function setWeather(w: var): void {
         const v = weatherTest ?? w;
@@ -410,8 +411,11 @@ ShellRoot {
     // ── Cariño (Bond.qml) ──
     // Con mucho cariño te busca (se pone cerca del ratón, sin taparlo); enfurruñado te gira
     // la cara y se va antes al nido. Te saluda al volver (arranque o desbloqueo tras un rato).
-    readonly property real seekYou: Bond.sulky ? 0 : Math.max(0, Math.min(1, (Bond.level - 0.6) / 0.4))
-    readonly property real nestFactor: Bond.sulky ? 0.4 : Bond.level < 0.3 ? 0.6 : Bond.level > 0.7 ? 1.5 : 1
+    // (rasgos: el mimoso te busca antes; el tímido nunca se te acerca; el dormilón y el tímido
+    // se van antes al nido)
+    readonly property real seekYou: Bond.sulky || Look.has("timido") ? 0 : Math.max(0, Math.min(1, (Bond.level - (Look.has("mimoso") ? 0.3 : 0.6)) / 0.4))
+    readonly property real nestFactor: (Bond.sulky ? 0.4 : Bond.level < 0.3 ? 0.6 : Bond.level > 0.7 ? 1.5 : 1) * (Look.has("dormilon") ? 0.7 : 1) * (Look.has("timido") ? 0.8 : 1)
+    readonly property real shyDist: Look.has("timido") ? 1.5 : 1   // cuánto se aparta del ratón
     property real lockedAt: 0
     // Clic: sale un corazoncito blanco que sube y se desvanece
     signal heartPop()
@@ -523,8 +527,12 @@ ShellRoot {
         outside: isNaN(weatherTemp) ? null : Math.round(weatherTemp),
         energy: Math.round(dayEnergy * 100) / 100,
         drowsy: Math.round(drowsy * 100) / 100,
-        where: inApp ? "app" : phys,
+        where: !Look.born ? "unborn" : inApp ? "app" : phys,
+        born: Look.born,
+        name: Look.name,
+        look: Look.data(),
         waiting: phys === "nest" && nestPinned,
+        seeking: seeking,
         nextHat: nextHat,
         xp: Math.round(Bond.xp),
         level: Bond.lvl,
@@ -566,7 +574,7 @@ ShellRoot {
     }
     // El retrato: se repinta si cambia la cara, el gorro o el color (con calma: el color del
     // marco va variando)
-    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3), Bond.stage].join("|")
+    readonly property string avatarKey: [feeling, hat, avatarBody, avatarInk, Math.round(melt * 4), Math.round(snowAmt * 3), Bond.stage, JSON.stringify(Look.data())].join("|")
     onAvatarKeyChanged: avatarRedraw.restart()
     Timer {
         id: avatarRedraw
@@ -836,7 +844,8 @@ ShellRoot {
         onTriggered: termWin.running = true
     }
     function doEnterTerm(o: var): bool {
-        if (phys === "away" || !o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
+        seeking = false;
+        if (!Look.born || phys === "away" || !o?.at || !/kitty/i.test(o.class ?? "") || o.fullscreen)
             return false;
         const tl = Hyprland.toplevels.values.find(w => "0x" + w.address === o.address || w.address === o.address) ?? Hyprland.activeToplevel;
         // Dónde queda la animación en la pantalla: 22 columnas de ancho (el alto, igual: es
@@ -966,6 +975,9 @@ ShellRoot {
         target: Bond
 
         function onLevelUp(level: int, evolved: bool): void {
+            // hueco nuevo para un rasgo de carácter (niveles 10, 20, 35): te lo dice
+            if (Traits.slots(level) > Traits.slots(level - 1))
+                Quickshell.execDetached(["notify-send", "-a", "Mochi", "-i", `${Quickshell.env("HOME")}/.cache/mochi/avatar.png`, "Mochi puede aprender un rasgo nuevo", "Elígelo en su pestaña del dashboard (pincel junto a su nombre)."]);
             if (shell.inApp || !shell.present || shell.locked)
                 return;
             shell.reacted(evolved ? "love" : "excited", 2600);
@@ -1573,8 +1585,8 @@ ShellRoot {
             duration: 400
         }
     }
-    readonly property real bodyRx: 32 * 1.45          // semiejes del cuerpo (como en Blob)
-    readonly property real bodyRy: 29 * 1.45 * 0.95
+    readonly property real bodyRx: 32 * 1.45 * Look.wide          // semiejes del cuerpo (como en Blob)
+    readonly property real bodyRy: 29 * 1.45 * 0.95 / Math.sqrt(Look.wide)
     readonly property real embed: 12                  // cuánto va hundido en el marco al nadar
     readonly property int hideAfter: 90000     // ms sin usarlo hasta que vuelve al nido
 
@@ -1629,7 +1641,7 @@ ShellRoot {
     // Cafeína: sale (si estaba en el nido), se toma un café y se queda despierto del todo
     onCaffeineChanged: {
         const d = new Date();
-        dayEnergy = caffeine ? Math.max(1.2, energyAt(d.getHours() + d.getMinutes() / 60)) : energyAt(d.getHours() + d.getMinutes() / 60);
+        dayEnergy = caffeine ? Math.max(Look.has("cafetero") ? 1.35 : 1.2, energyAt(d.getHours() + d.getMinutes() / 60)) : energyAt(d.getHours() + d.getMinutes() / 60);
         if (!caffeine || dnd || locked)
             return;
         woke();
@@ -1989,6 +2001,7 @@ ShellRoot {
         diveUnder = under;
         if (diveMode === "peek")
             vis += 2.5 * Math.sin(diveT * 8) * under;   // ondula al nadar
+        vis += seekBump;   // (escondite: se le escapa una burbujita)
         sink = surface - vis;
         const k = Math.min(1, dt * 14);
         gx += (p.x + p.nx * sink - gx) * k;
@@ -2041,13 +2054,24 @@ ShellRoot {
 
     // Energía según la hora (interpolando entre puntos del día)
     function energyAt(h: real): real {
+        // Su carácter: noctámbulo = el día desplazado (de noche como a media mañana)
+        if (Look.has("noctambulo"))
+            h = (h + 10) % 24;
         const pts = [[0, 0.55], [6, 0.5], [8, 1.2], [12, 1.25], [14, 1.05], [15.5, 0.85], [17, 1], [20, 1], [23, 0.7], [24, 0.55]];
+        let e = 1;
         for (let i = 1; i < pts.length; i++)
             if (h <= pts[i][0]) {
                 const [h0, e0] = pts[i - 1], [h1, e1] = pts[i];
-                return e0 + (e1 - e0) * (h - h0) / (h1 - h0);
+                e = e0 + (e1 - e0) * (h - h0) / (h1 - h0);
+                break;
             }
-        return 1;
+        if (Look.has("madrugador"))
+            e *= h >= 6 && h < 13 ? 1.15 : h >= 20 || h < 6 ? 0.8 : 1;
+        if (Look.has("dormilon"))
+            e *= 0.85;
+        if (Look.has("inquieto"))
+            e *= 1.15;
+        return e;
     }
 
     function setPanels(name: string, text: string): void {
@@ -2114,7 +2138,7 @@ ShellRoot {
         const dist = trackDiff(tr, swimD, best);
         focusUntil = Date.now() + 5000 + Math.abs(dist) * 2;
         if (Math.abs(dist) > 320)
-            dive(dist, "peek", false, 1.6);
+            dive(dist, "peek", false, Look.has("curioso") ? 2.3 : 1.6);   // (el curioso va volando)
         else if (Math.abs(dist) > 10) {
             energy = 1.6;
             swimTarget = best;
@@ -2161,6 +2185,7 @@ ShellRoot {
     // Se bloquea la pantalla: se hunde en el borde de abajo (en su x) y le cuenta a la pantalla de
     // bloqueo dónde está y cuánto sueño tiene
     function goLock(): void {
+        seeking = false;
         inApp = false;
         asking = false;
         voiceWaiting = false;
@@ -2213,6 +2238,233 @@ ShellRoot {
         gy = p.y + deep;
         dive(0, "hidden", true, 2);
         backHome.restart();
+    }
+
+    // Escondite: te guiña un ojo, se zambulle en el marco sin que se le vea y se queda escondido
+    // en algún sitio lejos del ratón. De vez en cuando se le escapa una burbujita (asoma un
+    // pelín el cuerpo, sin ojos). Si pasas el ratón por encima, lo has encontrado: sale de un
+    // salto, contento, y te coge cariño. Si en unos minutos no lo encuentras, sale él solo,
+    // orgulloso. Lo empieza él de vez en cuando (si andas por aquí) o `pet hideSeek`.
+    property bool seeking: false
+    property real showOffAt: 0   // (presumido: última vez que se puso arcoíris)
+    property bool seekHidden: false   // ya está en su escondite
+    property real seekAt: 0
+    property real seekBump: 0
+    property real seekNextHint: 0
+    readonly property int seekTimeout: 180000
+
+    function startSeek(): bool {
+        if (seeking || !Look.born || !present || locked || dnd || phys !== "swim" || asking || dragging || watching || inApp || Brain.busy || Bond.sulky)
+            return false;
+        const s = nearestScreen(gx, gy), tr = track(s);
+        // un sitio lejos del ratón (y de los paneles), mejor no en el techo
+        let best = NaN, bestScore = -Infinity;
+        for (let i = 0; i < 48; i++) {
+            const d = tr.len * i / 48, p = pointAt(tr, d);
+            if (inPanel(p.x, p.y, bodyRx + 40))
+                continue;
+            const far = Math.hypot(p.x - cursorX, p.y - cursorY), trip = Math.abs(trackDiff(tr, swimD, d));
+            const score = Math.min(far, 900) + (p.ny < -0.9 ? -250 : 0) + Math.min(trip, 600) * 0.3 + Math.random() * 260;
+            if (score > bestScore) {
+                bestScore = score;
+                best = d;
+            }
+        }
+        if (isNaN(best))
+            return false;
+        seeking = true;
+        seekHidden = false;
+        seekAt = Date.now();
+        seekBump = 0;
+        swimTarget = NaN;
+        reacted("wink", 1000);   // ¡a esconderse!
+        kicked(-1.4, 1.8);
+        seekGo.target = best;
+        seekGo.restart();
+        return true;
+    }
+    Timer {
+        id: seekGo
+
+        property real target: 0
+        interval: 1000
+        onTriggered: {
+            if (!shell.seeking || shell.phys !== "swim") {
+                shell.seeking = false;
+                return;
+            }
+            const tr = shell.track(shell.nearestScreen(shell.gx, shell.gy));
+            shell.dive(shell.trackDiff(tr, shell.swimD, target), "hidden", false, 1.5);
+            shell.diveToNest = false;
+            shell.diveStay = true;
+        }
+    }
+
+    // Termina: found (lo has encontrado) · timeout (no lo encuentras: sale orgulloso) · called
+    function seekEnd(why: string): void {
+        if (!seeking)
+            return;
+        seeking = false;
+        seekHidden = false;
+        seekGo.stop();
+        seekBump = 0;
+        seekBubble.stop();
+        if (phys !== "dive")
+            return;
+        diveStay = false;
+        dive(0, "hidden", true, why === "found" ? 2.4 : 1.6);   // sale de un salto (ya está hundido)
+        seekAfter.why = why;
+        seekAfter.restart();
+    }
+    Timer {
+        id: seekAfter
+
+        property string why
+        interval: 700
+        onTriggered: {
+            if (why === "found") {
+                shell.reacted("love", 2400);
+                shell.heartPop();
+                Bond.gain("seek");
+            } else if (why === "timeout") {
+                shell.reacted("proud", 2600);   // ¡no me has encontrado!
+                shell.kicked(-1.2, 2.6);
+            } else {
+                shell.reacted("happy", 1200);
+            }
+            idleHide.restart();
+        }
+    }
+
+    // Mientras está escondido: ¿le has pasado el ratón por encima? y alguna burbujita de pista
+    Timer {
+        running: shell.seeking
+        repeat: true
+        interval: 90
+        onTriggered: {
+            const now = Date.now();
+            if (!shell.present || shell.phys !== "dive") {
+                if (shell.phys !== "dive" && !seekGo.running)
+                    shell.seeking = false;
+                return;
+            }
+            if (!shell.seekHidden) {
+                if (shell.diveT >= shell.diveDur) {
+                    shell.seekHidden = true;
+                    shell.seekNextHint = now + 9000 + Math.random() * 8000;
+                }
+                return;
+            }
+            // (desde donde asomaría: su sitio en el recorrido, no el centro hundido)
+            const p = shell.pointAt(shell.track(shell.nearestScreen(shell.gx, shell.gy)), shell.swimD);
+            if (Math.hypot(shell.cursorX - p.x, shell.cursorY - p.y) < 80) {
+                shell.seekEnd("found");
+                return;
+            }
+            if (now - shell.seekAt > shell.seekTimeout) {
+                shell.seekEnd("timeout");
+                return;
+            }
+            if (now > shell.seekNextHint) {
+                shell.seekNextHint = now + 14000 + Math.random() * 12000;
+                seekBubble.restart();
+            }
+        }
+    }
+    SequentialAnimation {
+        id: seekBubble
+
+        NumberAnimation {
+            target: shell
+            property: "seekBump"
+            to: 30
+            duration: 260
+            easing.type: Easing.OutQuad
+        }
+        NumberAnimation {
+            target: shell
+            property: "seekBump"
+            to: 18
+            duration: 160
+            easing.type: Easing.InOutSine
+        }
+        NumberAnimation {
+            target: shell
+            property: "seekBump"
+            to: 26
+            duration: 160
+            easing.type: Easing.InOutSine
+        }
+        NumberAnimation {
+            target: shell
+            property: "seekBump"
+            to: 0
+            duration: 420
+            easing.type: Easing.InQuad
+        }
+    }
+    // Lo propone él solo de vez en cuando (si estás aquí, con él fuera y sin nada entre manos)
+    Timer {
+        running: Look.born && !shell.seeking
+        repeat: true
+        interval: 30 * 60000
+        onTriggered: {
+            interval = (Look.has("jugueton") ? 10 + Math.random() * 12 : 25 + Math.random() * 30) * 60000;
+            if (!awayMonitor.isIdle && Bond.level > 0.25 && shell.dayEnergy > 0.8 && !shell.nestPinned)
+                shell.startSeek();
+        }
+    }
+
+    // Nace (lo acabas de crear en el dashboard): asoma del borde de arriba en medio de la
+    // pantalla, se queda colgando como una gota… y cae
+    function birth(): void {
+        const s = screenOfMonitor(Hyprland.focusedMonitor);
+        if (!s)
+            return;
+        const tr = track(s);
+        mochiWs = Hyprland.focusedWorkspace?.id ?? mochiWs;
+        shown = true;
+        resetNest();
+        inApp = false;
+        nestPinned = false;
+        entering = false;
+        thrown = false;
+        swimV = 0;
+        bodyOffX = bodyOffY = 0;
+        swimD = nearestD(tr, s.x + s.width / 2, tr.T);
+        const p = pointAt(tr, swimD), rn = normalRadius(p), deep = 2 * rn - embed - diveVisible("hidden", rn);
+        gx = p.x + p.nx * deep;
+        gy = p.y + p.ny * deep;
+        dive(0, "peek", true, 0.55);
+        idleHide.restart();
+        birthDrop.restart();
+    }
+    Timer {
+        id: birthDrop
+
+        interval: 3300
+        onTriggered: {
+            if (shell.phys === "swim") {
+                shell.ceilingTime = 99;   // se suelta del techo
+                birthLove.restart();
+            }
+        }
+    }
+    Timer {
+        id: birthLove
+
+        interval: 1500
+        onTriggered: {
+            shell.reacted("love", 2800);
+            shell.heartPop();
+        }
+    }
+    Connections {
+        target: Look
+
+        function onBornNow(): void {
+            shell.birth();
+        }
     }
 
     // Punto del nido y del recorrido junto a él
@@ -2398,7 +2650,7 @@ ShellRoot {
         const ws = Hyprland.focusedWorkspace;
         if (!ws)
             return;
-        if (mochiWs < 0 || phys === "held" || phys === "nest") {   // agarrado o en el nido: está contigo
+        if (mochiWs < 0 || phys === "held" || phys === "nest" || seeking) {   // agarrado, en el nido o escondido en el marco: está contigo
             mochiWs = ws.id;
             return;
         }
@@ -2452,8 +2704,12 @@ ShellRoot {
     // Cualquier uso: reinicia la cuenta para esconderse y, si estaba escondido o en otro
     // workspace, viene
     function touch(): void {
-        if (locked || phys === "away")
+        if (locked || phys === "away" || !Look.born)
             return;
+        if (seeking) {
+            seekEnd("called");   // lo llamas: sale de su escondite
+            return;
+        }
         idleHide.restart();
         woke();
         if (inApp) {
@@ -2576,8 +2832,8 @@ ShellRoot {
 
     function physStep(dt: real): void {
         dt = Math.min(dt, 1 / 30);
-        if (phys === "away")
-            return;   // de visita en casa de un vecino
+        if (phys === "away" || !Look.born)
+            return;   // de visita en casa de un vecino, o aún no ha nacido
         if (phys !== "swim" && (nX || nY)) {
             nX = 0;
             nY = 0;
@@ -3005,6 +3261,19 @@ ShellRoot {
         function nest(): void {
             shell.goNest();
         }
+        // Escondite: se esconde ya (o sale si ya estaba escondido)
+        function hideSeek(): string {
+            if (shell.seeking) {
+                shell.seekEnd("called");
+                return "sale";
+            }
+            if (shell.phys === "nest")
+                shell.leaveNest();
+            return shell.startSeek() ? "escondiéndose" : `no puede ahora (${shell.phys})`;
+        }
+        function seekState(): string {
+            return `seeking=${shell.seeking} hidden=${shell.seekHidden} phys=${shell.phys} ${Math.round(shell.gx)},${Math.round(shell.gy)} cursor=${Math.round(shell.cursorX)},${Math.round(shell.cursorY)}`;
+        }
         // Al nido "en espera" (botón del dashboard): va buceando y se queda hasta que lo saques
         function waitNest(): void {
             if (shell.phys === "away" || shell.locked)
@@ -3299,17 +3568,19 @@ ShellRoot {
             interval = (7000 + Math.random() * 11000) / shell.dayEnergy;
             const s = shell.nearestScreen(shell.gx, shell.gy), tr = shell.track(s), p = shell.pointAt(tr, shell.swimD);
             const r = Math.random();
-            if (r >= 0.38 && r < 0.62) {
+            // (el nadador bucea la mitad de las veces; el inquieto da más saltos)
+            const walkP = Look.has("nadador") ? 0.2 : 0.38, diveP = Look.has("nadador") ? 0.7 : 0.62;
+            if (r >= walkP && r < diveP) {
                 // Se zambulle y sale más allá (a veces sin que se le vea nada, a veces asomando)
                 for (let i = 0; i < 6; i++) {
                     const dist = (Math.random() < 0.5 ? -1 : 1) * (350 + Math.random() * 700), q = shell.pointAt(tr, shell.swimD + dist);
-                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 * shell.shyDist && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
                         shell.dive(dist, Math.random() < 0.5 ? "hidden" : "peek", false, shell.dayEnergy);
                         return;
                     }
                 }
             }
-            if (r < 0.38) {
+            if (r < walkP) {
                 // A otro sitio (no muy lejos, y que no sea junto al ratón… salvo que te quiera
                 // mucho: entonces a veces se te acerca, sin ponerse debajo)
                 if (Math.random() < shell.seekYou * 0.6) {
@@ -3322,14 +3593,14 @@ ShellRoot {
                 }
                 for (let i = 0; i < 6; i++) {
                     const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
-                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 * (1 - 0.5 * shell.seekYou) && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 * shell.shyDist * (1 - 0.5 * shell.seekYou) && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
                         shell.energy = (0.75 + Math.random() * 0.6) * shell.dayEnergy;
                         shell.swimTarget = ((d % tr.len) + tr.len) % tr.len;
                         break;
                     }
                 }
             } else if (r < 0.8 && p.ny > 0.9) {
-                shell.hopsLeft = 1 + Math.floor(Math.random() * 3);
+                shell.hopsLeft = 1 + Math.floor(Math.random() * (Look.has("inquieto") || Look.has("jugueton") ? 5 : 3));
                 shell.hopDir = Math.random() < 0.5 ? -1 : 1;
                 shell.hop();
             } else if (r < 0.9 && Math.abs(p.nx) > 0.9) {
@@ -3346,7 +3617,7 @@ ShellRoot {
         onTriggered: {
             const d = new Date();
             const e = shell.energyAt(d.getHours() + d.getMinutes() / 60);
-            shell.dayEnergy = shell.caffeine ? Math.max(1.2, e) : e;
+            shell.dayEnergy = shell.caffeine ? Math.max(Look.has("cafetero") ? 1.35 : 1.2, e) : e;
             shell.today = d;
         }
     }
@@ -4204,6 +4475,9 @@ ShellRoot {
 
                 visible: mochi.visible && shell.phys === "nest" && opacity > 0
                 opacity: Math.max(0, 1 - shell.nestPeek * 2.5)
+                // su aspecto (Look), en pequeñito
+                readonly property string lookKey: JSON.stringify(Look.data())
+                onLookKeyChanged: requestPaint()
                 readonly property real hatRoom: 14   // sitio para el gorro
                 readonly property string hat: shell.hat
                 onHatChanged: requestPaint()
@@ -4247,6 +4521,11 @@ ShellRoot {
                     ctx.rotate(nod * 0.13 * mochi.nodDir);   // cabezada: se ladea
                     ctx.scale(sx, sy * (1 - 0.06 * nod));
                     ctx.translate(-15, -24);
+                    // (más ancho o más alto)
+                    const lw = Look.wide;
+                    ctx.translate(15, 24);
+                    ctx.scale(lw, 1 / Math.sqrt(lw));
+                    ctx.translate(-15, -24);
                     ctx.fillStyle = ink;
                     ctx.beginPath();
                     ctx.moveTo(4.2, 20.5);
@@ -4262,8 +4541,9 @@ ShellRoot {
                     ctx.globalCompositeOperation = "destination-out";
                     const ex = lx * 1.6 * (1 - nod), ey = ly * 1.3 + 1.2 * b + 1.6 * nod;
                     const happy = ["happy", "love", "excited", "dance", "proud"].includes(face);
-                    for (const cx of [11, 19]) {
-                        const x = cx + ex, y = 14 + ey;
+                    const es = Look.eyeSize, gap = 4 * Look.eyeGap * Math.max(0.9, Look.wide);
+                    for (const cx of [15 - gap, 15 + gap]) {
+                        const x = cx + ex, y = 14 + ey + Look.eyeY * 1.8;
                         if (asleep) {
                             // dormido: rayitas
                             ctx.fillStyle = "black";
@@ -4279,7 +4559,7 @@ ShellRoot {
                             ctx.quadraticCurveTo(x, y - 2.2, x + 2.1, y + 1.2);
                             ctx.stroke();
                         } else {
-                            const w = 3.5, h = Math.max(0.9, 4.7 * (1 - 0.85 * Math.max(blink, 0.9 * nod, 0.35 * shell.drowsy)));
+                            const w = 3.5 * es * (1 - 0.18 * Look.eyeShape), h = Math.max(0.9, 4.7 * es * (1 + 0.35 * Look.eyeShape) * (1 - 0.85 * Math.max(blink, 0.9 * nod, 0.35 * shell.drowsy)));
                             ctx.fillStyle = "black";
                             ctx.beginPath();
                             ctx.roundedRect(x - w / 2, y - h / 2, w, h, Math.min(w, h) / 2, Math.min(w, h) / 2);
@@ -4323,6 +4603,7 @@ ShellRoot {
                         ctx.scale(1 / st, st);
                         ctx.translate(-x, -y);
                         Draw.avatar(ctx, {
+                            look: m.look ?? null,
                             x: x,
                             y: y,
                             s: 36,
@@ -4527,6 +4808,7 @@ ShellRoot {
                     const ctx = getContext("2d");
                     ctx.reset();
                     Draw.avatar(ctx, {
+                        look: Look.data(),
                         x: 85,
                         y: 150,
                         s: 58,
@@ -4570,6 +4852,7 @@ ShellRoot {
                     const ctx = getContext("2d");
                     ctx.reset();
                     Draw.avatar(ctx, {
+                        look: Look.data(),
                         x: 128,
                         y: 240,
                         s: 78,
@@ -4743,6 +5026,7 @@ ShellRoot {
                         else
                             fc = this.face;
                         Draw.avatar(ctx, {
+                            look: Look.data(),
                             eyesOnly: true,
                             x: cx,
                             y: sy + sh * 0.5,
@@ -4792,8 +5076,15 @@ ShellRoot {
                 id: mochi
 
                 // Solo en el workspace donde vive, y se aparta si hay algo a pantalla completa
-                visible: shell.present && !shell.fsHide && shell.phys !== "away"
+                visible: Look.born && shell.present && !shell.fsHide && shell.phys !== "away"
                 x: shell.gx - win.modelData.x - width / 2
+                eyeSize: Look.eyeSize
+                eyeGap: Look.eyeGap
+                eyeY: Look.eyeY
+                eyeShape: Look.eyeShape
+                wide: Look.wide
+                jelly: Look.jelly
+                traits: Look.traits
                 y: shell.gy - win.modelData.y - height / 2
                 mood: shell.mood
                 dragging: shell.dragging
@@ -4831,6 +5122,16 @@ ShellRoot {
                         mochi.splat(strength, horizontal);
                     }
                     function onReacted(name: string, ms: int): void {
+                        // su carácter: el valiente no se asusta; el tímido se asusta por todo;
+                        // el presumido, muy contento, se pone arcoíris un momento
+                        if (name === "surprised" && Look.has("valiente"))
+                            name = "curious";
+                        else if (name === "curious" && Look.has("timido") && Math.random() < 0.5)
+                            name = "surprised";
+                        if (Look.has("presumido") && ["love", "excited", "proud"].includes(name) && Date.now() - shell.showOffAt > 240000 && win.modelData === Quickshell.screens[0]) {
+                            shell.showOffAt = Date.now();
+                            shell.rainbow(1600);
+                        }
                         mochi.react(name, ms);
                     }
                     function onKicked(ax: real, ay: real): void {

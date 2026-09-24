@@ -79,8 +79,16 @@ Item {
     readonly property real shiftY: anchorNy * (0.95 * ry - bodyRy)
 
     property real u: 1.45                          // escala respecto al Mochi original (la ficha del bloqueo lo sube: ojos nítidos)
-    readonly property real rx: 32 * u              // semiejes del cuerpo en reposo
-    readonly property real ry: 29 * u
+    // Su aspecto (Look.qml: lo eliges al crearlo). Sin singletons aquí: se lo pasa quien lo usa
+    property real eyeSize: 1      // tamaño de los ojos
+    property real eyeGap: 1       // separación
+    property real eyeY: 0         // altura (−1 arriba … 1 abajo)
+    property real eyeShape: 0     // −0.6 ovalados anchos · 0 redondos · 1 alargados
+    property real wide: 1         // ancho del cuerpo (el alto compensa)
+    property real jelly: 1        // blandura: tiembla más y tarda más en calmarse
+    property var traits: []       // rasgos de carácter (Traits.js): bailongo, curioso…
+    readonly property real rx: 32 * u * wide       // semiejes del cuerpo en reposo
+    readonly property real ry: 29 * u / Math.sqrt(wide)
 
     // Estado de la simulación
     property real ox: 0     // desplazamiento de la masa respecto al punto de agarre
@@ -112,7 +120,7 @@ Item {
     // Expresión: una reacción puntual manda sobre todo lo demás
     property string reaction: ""     // cualquier cara, durante un rato (react)
     property string idleExpr: ""     // gestos sueltos cuando está tranquilo
-    readonly property string face: reaction || (dragging ? "held" : falling ? "surprised" : mood !== "idle" ? mood : sleepy || dozing ? "asleep" : hidden ? "peek" : idleExpr)
+    readonly property string face: reaction || (dragging ? "held" : falling ? (traits.includes("valiente") ? "excited" : "surprised") : mood !== "idle" ? mood : sleepy || dozing ? "asleep" : hidden ? "peek" : idleExpr)
 
     implicitWidth: 2 * rx + 8
     implicitHeight: 2 * ry + 8
@@ -215,8 +223,9 @@ Item {
         if (face !== "dance")
             return;
         danceSide = -danceSide;
-        sim.svy -= 1.7;
-        sim.svx += 1.1;
+        const k = traits.includes("bailongo") ? 1.45 : 1;
+        sim.svy -= 1.7 * k;
+        sim.svx += 1.1 * k;
     }
 
     function react(name: string, ms: int): void {
@@ -535,7 +544,7 @@ Item {
             let ox = root.ox - mx * 0.75, oy = root.oy - my * 0.75;
 
             // Muelle de la masa hacia el centro (poco amortiguado → bambolea)
-            const k = 170, c = 9;
+            const jl = root.jelly, k = 170, c = 9 / jl;
             vx += (-k * ox - c * vx) * dt;
             vy += (-k * oy - c * vy) * dt;
             ox += vx * dt;
@@ -548,8 +557,8 @@ Item {
 
             // La cola: más blanda y más rezagada (estira el cuerpo como una gota)
             let ox2 = root.ox2 - mx * 0.95, oy2 = root.oy2 - my * 0.95;
-            vx2 += (-90 * ox2 - 6 * vx2) * dt;
-            vy2 += (-90 * oy2 - 6 * vy2) * dt;
+            vx2 += (-90 * ox2 - 6 / jl * vx2) * dt;
+            vy2 += (-90 * oy2 - 6 / jl * vy2) * dt;
             ox2 += vx2 * dt;
             oy2 += vy2 * dt;
             const lim2 = root.rx * 0.95, m2 = Math.hypot(ox2, oy2);
@@ -562,7 +571,7 @@ Item {
 
             // Ondas en la superficie: cada punto del borde es un muelle unido a sus vecinos,
             // y el movimiento empuja el fluido hacia atrás
-            const kw = 260, cw = 7, kc = 200, g = 0.045;
+            const kw = 260, cw = 7 / jl, kc = 200, g = 0.045 * Math.sqrt(jl);
             const fx = Math.max(-12, Math.min(12, mx)), fy = Math.max(-12, Math.min(12, my));
             const nw = w.slice(), nv = wv.slice();
             for (let i = 0; i < n; i++) {
@@ -595,7 +604,7 @@ Item {
             const sq = root.press + 0.68 * root.melt, pv = root.pressVertical ? sq : 0, ph = root.pressVertical ? 0 : sq;
             const tsx = root.dragging ? 0.93 : 1 + root.bob * 0.04 + root.nod * 0.05 - 0.5 * ph + 0.45 * pv;
             const tsy = root.dragging ? 1.1 : 1 - root.bob * 0.04 - root.nod * 0.07 - 0.5 * pv + 0.45 * ph;
-            const ks = 320, cs = 13;
+            const ks = 320, cs = 13 / jl;
             svx += (-ks * (root.sx - tsx) - cs * svx) * dt;
             svy += (-ks * (root.sy - tsy) - cs * svy) * dt;
             root.sx = Math.max(0.45, Math.min(1.6, root.sx + svx * dt));
@@ -716,7 +725,7 @@ Item {
         }
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int): void {
-            const d = 9.5 * root.u;
+            const d = 9.5 * root.u * root.eyeSize;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
                 ctx.fillStyle = root.ink;
@@ -727,7 +736,7 @@ Item {
                 ctx.fill();
                 return;
             }
-            const w = d * e.w, h = Math.max(1.9 * root.u, d * e.h * (1 - 0.92 * root.blink));
+            const w = d * e.w * (1 - 0.18 * root.eyeShape), h = Math.max(1.9 * root.u, d * e.h * (1 + 0.45 * root.eyeShape) * (1 - 0.92 * root.blink));
             const r = Math.min(w, h) / 2;
 
             ctx.fillStyle = root.ink;
@@ -798,11 +807,11 @@ Item {
             ctx.rect(cr.x + root.rx, cr.y + padTop, cr.width, cr.height);
             ctx.clip();
             ctx.save();
-            ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.oy * 0.5);
+            ctx.translate(cx + root.ox * 0.5, cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u + root.oy * 0.5);
             ctx.rotate(sim.rot * Math.PI / 180);
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                drawEye(ctx, side * 11.5 * root.u * Math.max(0.78, root.sx) + e.x, e.y, e, side);   // (aplastado de lado, que no se junten)
+                drawEye(ctx, side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx) + e.x, e.y, e, side);   // (aplastado de lado, que no se junten)
             }
             // Sudor: una gotita que le resbala por la frente
             if (root.melt > 0.3 && sim.sweat >= 0) {
@@ -882,7 +891,7 @@ Item {
                 return;
             }
             root.nods = 0;
-            const pick = root.music && Math.random() < 0.5 ? "dance" : root.sulky ? ["sorry", "sad", "lookaround", "calm"][Math.floor(Math.random() * 4)] : root.affection > 0.5 && Math.random() < 0.2 * root.affection ? "love" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
+            const pick = root.music && (root.traits.includes("bailongo") || Math.random() < 0.5) ? "dance" : root.traits.includes("curioso") && Math.random() < 0.3 ? "curious" : root.sulky ? ["sorry", "sad", "lookaround", "calm"][Math.floor(Math.random() * 4)] : root.affection > 0.5 && Math.random() < 0.2 * root.affection ? "love" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
             if (pick === "doubleblink") {
                 root.doBlink();
                 doubleBlink.restart();

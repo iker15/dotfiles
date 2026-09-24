@@ -17,13 +17,28 @@
 //   stage: evolución por nivel (0 bebé: más pequeño y ojos más grandes · 1 normal · 2 brillante:
 //   más brillo y un destello · 3 sabio: + una estrellita que le da vueltas · 4 legendario: + un
 //   brillo arcoíris en el borde)
+//   look: su aspecto (Look.qml: eyeSize, eyeGap, eyeY, eyeShape, wide; opcional)
 // }
+
+// Aspecto con valores por defecto
+function lookOf(o) {
+    const l = o.look || {};
+    const n = (v, d) => (typeof v === "number" && !isNaN(v) ? v : d);
+    return {
+        eyeSize: n(l.eyeSize, 1),
+        eyeGap: n(l.eyeGap, 1),
+        eyeY: n(l.eyeY, 0),
+        eyeShape: n(l.eyeShape, 0),
+        wide: n(l.wide, 1)
+    };
+}
 
 function avatar(ctx, o) {
     // Solo los ojos (p. ej. sobre otra forma hecha de su material: el cuadrado de la terminal):
     // centrados en (x, y), con la cara que toque
+    const L = lookOf(o);
     if (o.eyesOnly) {
-        const u = o.s / 32, d = 9.5 * u, f = o.face || "normal";
+        const u = o.s / 32, d = 9.5 * u * L.eyeSize, f = o.face || "normal";
         let lx = o.lx || 0;
         if (f === "sulky")
             lx = -0.8;
@@ -32,12 +47,18 @@ function avatar(ctx, o) {
         ctx.strokeStyle = o.ink;
         ctx.lineCap = "round";
         for (const side of [-1, 1])
-            eye(ctx, f, o.x + side * 13 * u + lx * 6 * u, o.y + ly * 5 * u, d, side, o.blink || 0, u);
+            eye(ctx, f, o.x + side * 13 * u * L.eyeGap + lx * 6 * u, o.y + ly * 5 * u + L.eyeY * 6 * u, d, side, o.blink || 0, u, L.eyeShape);
         return;
     }
     const stage = o.stage ?? 1;
     const s = o.s * (stage === 0 ? 0.82 : 1), t = o.t || 0, m = o.melt || 0, b = o.breath || 0;
-    const rx = s * (1 + 0.3 * m + 0.03 * b), ryT = s * (1.0 - 0.34 * m - 0.03 * b), ryB = s * (0.72 - 0.2 * m);
+    const lw = L.wide, lh = 1 / Math.sqrt(L.wide);
+    const rx = s * lw * (1 + 0.3 * m + 0.03 * b), ryT = s * lh * (1.0 - 0.34 * m - 0.03 * b), ryB = s * lh * (0.72 - 0.2 * m);
+    // (punto del contorno en el ángulo a: cúpula arriba, base más plana)
+    const rim = a => {
+        const sn = Math.sin(a);
+        return [o.x + rx * Math.cos(a), o.y - ryB + (sn < 0 ? ryT : ryB) * sn];
+    };
     const cx = o.x, cy = o.y - ryB;
 
     // Sombrita en el suelo
@@ -50,9 +71,8 @@ function avatar(ctx, o) {
     // Cuerpo: cúpula (arriba) + base más plana, con un brillo arriba a la izquierda
     ctx.fillStyle = o.body;
     ctx.beginPath();
-    for (let i = 0; i <= 64; i++) {
-        const a = 2 * Math.PI * i / 64, sn = Math.sin(a);
-        const px = cx + rx * Math.cos(a), py = cy + (sn < 0 ? ryT : ryB) * sn;
+    for (let i = 0; i <= 96; i++) {
+        const [px, py] = rim(2 * Math.PI * i / 96);
         if (i)
             ctx.lineTo(px, py);
         else
@@ -79,8 +99,7 @@ function avatar(ctx, o) {
             ctx.strokeStyle = `hsla(${hue}, 90%, 65%, 0.55)`;
             ctx.beginPath();
             for (let k = 0; k <= 4; k++) {
-                const a = a0 + (a1 - a0) * k / 4, sn = Math.sin(a);
-                const px = cx + rx * Math.cos(a), py = cy + (sn < 0 ? ryT : ryB) * sn;
+                const [px, py] = rim(a0 + (a1 - a0) * k / 4);
                 if (k)
                     ctx.lineTo(px, py);
                 else
@@ -92,19 +111,19 @@ function avatar(ctx, o) {
     }
 
     // Ojos
-    const u = s / 32, d = 9.5 * u * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
+    const u = s / 32, d = 9.5 * u * L.eyeSize * (stage === 0 ? 1.12 : 1), f = o.face || "normal";
     let lx = o.lx || 0, ly = o.ly || 0;
     if (f === "sulky")
         lx = -0.8;
     if (f === "curious")
         ly = -0.3;
-    const ey = cy - 0.12 * ryT + ly * 5 * u;
+    const ey = cy - 0.12 * ryT + ly * 5 * u + L.eyeY * 7 * u;
     ctx.fillStyle = o.ink;
     ctx.strokeStyle = o.ink;
     ctx.lineCap = "round";
     for (const side of [-1, 1]) {
-        const ex = cx + side * 11.5 * u * Math.max(0.8, rx / s) + lx * 6 * u;
-        eye(ctx, f, ex, ey, d, side, o.blink || 0, u);
+        const ex = cx + side * 11.5 * u * L.eyeGap * Math.max(0.8, rx / s) + lx * 6 * u;
+        eye(ctx, f, ex, ey, d, side, o.blink || 0, u, L.eyeShape);
     }
     // Sudor (calor)
     if (f === "hot" || m > 0.3) {
@@ -153,7 +172,7 @@ function avatar(ctx, o) {
     }
 }
 
-function eye(ctx, f, x, y, d, side, blink, u) {
+function eye(ctx, f, x, y, d, side, blink, u, shape) {
     ctx.beginPath();
     if (f === "happy" || f === "excited") {
         // ^ ^
@@ -184,7 +203,8 @@ function eye(ctx, f, x, y, d, side, blink, u) {
         ctx.stroke();
         return;
     }
-    let w = d, h = d * (1 - 0.9 * blink);
+    const sh = shape || 0;
+    let w = d * (1 - 0.18 * sh), h = d * (1 + 0.45 * sh) * (1 - 0.9 * blink);
     if (f === "surprised" || f === "excited") {
         w *= 1.3;
         h *= 1.3;

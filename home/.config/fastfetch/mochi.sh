@@ -27,6 +27,7 @@ row)
 play)
     gif=~/.cache/mochi/fetch.gif
     [[ -n $KITTY_WINDOW_ID && -f $gif ]] || exit 0
+    [[ -f ~/.local/state/tamagotchi/look.json ]] || exit 0   # aún no ha nacido (se crea en el dashboard)
     # Mochi viene a su ritmo y deja caer una gota desde el marco (por encima de todo, en el
     # escritorio): dice en mochi-term-eta cuándo llega esa gota al cuadrado (ms). En el GIF entra
     # en el fotograma 22 (0,88 s): se arranca para que coincida. Sin bloquear el prompt.

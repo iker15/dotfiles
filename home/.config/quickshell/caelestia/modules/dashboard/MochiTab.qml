@@ -1,6 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import "mochi/Draw.js" as Draw
+import "mochi/Traits.js" as Traits
+import "../lock/mochi" as Mochi
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
@@ -17,6 +19,9 @@ Item {
     id: root
 
     property var st: ({})
+    // Crear a Mochi (si aún no ha nacido) o retocarlo: se muestra el creador en vez de su ficha
+    property bool editing: false
+    readonly property bool creating: Mochi.Look.loaded && (!Mochi.Look.born || editing)
 
     readonly property int bond: st.bond ?? 0
     readonly property bool sulky: st.sulky ?? false
@@ -32,7 +37,17 @@ Item {
     }
 
     implicitWidth: 840
-    implicitHeight: layout.implicitHeight
+    implicitHeight: creating ? creator.implicitHeight : layout.implicitHeight
+
+    MochiCreator {
+        id: creator
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        visible: root.creating
+        level: root.st.level ?? 1
+        onDone: root.editing = false
+    }
 
     // «Pegar código»: lee el portapapeles y se une como vecino
     Process {
@@ -65,6 +80,7 @@ Item {
 
         anchors.left: parent.left
         anchors.right: parent.right
+        visible: !root.creating
         spacing: Tokens.spacing.medium
 
         // Cabecera: nombre y cómo está
@@ -76,16 +92,42 @@ Item {
             Column {
                 spacing: Tokens.spacing.extraSmall
 
-                StyledText {
-                    text: "Mochi"
-                    font: Tokens.font.body.builders.large.size(28).weight(Font.DemiBold).build()
-                    color: Colours.palette.m3onSurface
+                Row {
+                    spacing: Tokens.spacing.small
+
+                    StyledText {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Mochi"
+                        font: Tokens.font.body.builders.large.size(28).weight(Font.DemiBold).build()
+                        color: Colours.palette.m3onSurface
+                    }
+                    StyledText {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: !!Mochi.Look.nick
+                        text: `«${Mochi.Look.nick}»`
+                        font: Tokens.font.body.large
+                        color: Colours.palette.m3primary
+                    }
+                    IconButton {
+                        anchors.verticalCenter: parent.verticalCenter
+                        icon: "brush"
+                        type: IconButton.Text
+                        onClicked: root.editing = true
+                    }
                 }
 
                 StyledText {
                     text: root.st.text ? root.st.text.charAt(0).toUpperCase() + root.st.text.slice(1) : "…"
                     font: Tokens.font.body.small
                     color: Colours.palette.m3onSurfaceVariant
+                }
+
+                // Su carácter (y si ha desbloqueado un rasgo nuevo, avisa)
+                StyledText {
+                    readonly property int free: Traits.slots(root.st.level ?? 1) - Mochi.Look.traits.length
+                    text: Mochi.Look.traits.map(id => Traits.byId(id)?.name).filter(Boolean).join(" · ") + (free > 0 ? `  ·  ¡rasgo nuevo para elegir! (pincel)` : "")
+                    font: Tokens.font.body.small
+                    color: free > 0 ? Colours.palette.m3tertiary : Colours.palette.m3primary
                 }
             }
 
@@ -202,6 +244,7 @@ Item {
                             melt: root.st.melt ?? 0,
                             snow: root.st.snow ?? 0,
                             stage: root.st.stage ?? 1,
+                            look: Mochi.Look.data(),
                             blink: f === "asleep" ? 0 : blink,
                             lx: lx,
                             ly: ly,

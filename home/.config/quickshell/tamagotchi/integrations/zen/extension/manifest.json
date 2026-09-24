@@ -1,7 +1,7 @@
 {
     "manifest_version": 2,
     "name": "Mochi",
-    "version": "1.3",
+    "version": "1.4",
     "description": "Mochi ve los vídeos contigo (sabe dónde está el vídeo, si va, si es un anuncio y los momentos más vistos) y vive en la nueva pestaña.",
     "browser_specific_settings": {
         "gecko": {

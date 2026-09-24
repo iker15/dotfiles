@@ -64,14 +64,16 @@ Singleton {
             poke: 0.6,
             pet: 1.5,
             hold: 0.5,
-            presence: 0.25
+            presence: 0.25,
+            seek: 3            // encontrarlo jugando al escondite
         })
     readonly property var cooldown: ({
             talk: 20000,
             poke: 20000,
             pet: 30000,
             hold: 20000,
-            presence: 0
+            presence: 0,
+            seek: 60000
         })
     property var lastGain: ({})
 
@@ -102,7 +104,7 @@ Singleton {
         if (t - (lastGain[kind] ?? 0) < cooldown[kind])
             return;
         lastGain[kind] = t;
-        let g = Math.min(gains[kind], 14 - gainedToday);   // tope diario
+        let g = Math.min(gains[kind] * (Look.has("mimoso") && kind !== "presence" ? 1.25 : 1), 14 - gainedToday);   // tope diario (el mimoso coge cariño antes)
         if (kind === "presence")
             g = Math.min(g, 3 - presenceToday);            // estar cerca cuenta, pero poco
         if (g <= 0)

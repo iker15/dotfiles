@@ -100,7 +100,7 @@ function frame(now) {
     squash += squashV * dt;
 
     ctx.clearRect(0, 0, W, H);
-    if (here > 0.02) {
+    if (here > 0.02 && st?.born !== false) {
         const f = now < celebrateUntil ? celebrateFace : face;
         const hop = now < celebrateUntil ? Math.abs(Math.sin((now - celebrateUntil) / 180)) * 10 : 0;
         ctx.save();
@@ -119,6 +119,7 @@ function frame(now) {
             melt: st?.melt ?? 0,
             snow: st?.snow ?? 0,
             stage: st?.stage ?? 0,
+            look: st?.look,
             blink: f === "asleep" ? 0 : blink,
             lx: lx,
             ly: ly,

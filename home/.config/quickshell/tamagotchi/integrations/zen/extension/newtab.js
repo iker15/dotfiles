@@ -98,7 +98,7 @@ function frame(now) {
     const face = now < reactionUntil ? reaction : st?.feeling ?? "normal";
     const bodyCss = getComputedStyle(document.documentElement);
     ctx.clearRect(0, 0, 360, 300);
-    MochiDraw.avatar(ctx, {
+    if (st?.born !== false) MochiDraw.avatar(ctx, {
         x: 180,
         y: 285,
         s: 88,
@@ -109,6 +109,7 @@ function frame(now) {
         melt: st?.melt ?? 0,
         snow: st?.snow ?? 0,
         stage: st?.stage ?? 1,
+        look: st?.look,
         blink: face === "asleep" ? 0 : blink,
         lx: lx,
         ly: ly,
