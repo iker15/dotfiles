@@ -16,4 +16,4 @@ application/pdf=zen.desktop;
 x-scheme-handler/http=zen.desktop;
 x-scheme-handler/https=zen.desktop;
 x-scheme-handler/chrome=zen.desktop;
-text/html=codium.desktop;
+text/html=codium.desktop;micro.desktop;

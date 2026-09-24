@@ -121,6 +121,20 @@ command -v codium >/dev/null && codium --install-extension detachhead.basedpyrig
 log "Integrando a Mochi en las apps"
 "$HOME/.config/quickshell/tamagotchi/integrations/install-all.sh" || echo "  (ejecuta ~/.config/quickshell/tamagotchi/integrations/install-all.sh más tarde)"
 
+# --- 4d. Wallpapers (repo aparte, ~300 MB) -----------------------------------
+WALLS="$HOME/Pictures/Wallpapers"
+if [ -d "$WALLS/.git" ]; then
+    log "Actualizando wallpapers"
+    git -C "$WALLS" pull --ff-only || echo "  (no se pudieron actualizar los wallpapers)"
+elif [ -z "$(ls -A "$WALLS" 2>/dev/null)" ]; then
+    log "Descargando wallpapers"
+    mkdir -p "$WALLS"
+    git clone --depth 1 https://github.com/iker15/wallpapers.git "$WALLS" \
+        || echo "  (sin wallpapers: git clone https://github.com/iker15/wallpapers.git $WALLS)"
+else
+    echo "  ($WALLS ya tiene imágenes: no descargo los wallpapers)"
+fi
+
 # --- 5. Shell ----------------------------------------------------------------
 if [ "$(getent passwd "$USER" | cut -d: -f7)" != "/bin/fish" ]; then
     log "Poniendo fish como shell"
