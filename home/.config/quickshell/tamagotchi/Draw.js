@@ -20,8 +20,7 @@
 //   brillo arcoíris en el borde)
 //   look: su aspecto (Look.qml: eyeSize, eyeGap, eyeY, eyeShape, wide; opcional)
 //   skin: id de una transformación (Skins.js; opcional) · skinAmt: 0-1 cuánto se ha transformado
-//   skinMono: con su color de siempre (solo la forma y la cara) · skinAccents: aun así, los
-//   toques de color (mofletes, puntas de las orejas…)
+//   (transformado va siempre del color de Mochi: los colores del personaje son tonos del suyo)
 // }
 
 // Aspecto con valores por defecto
@@ -66,8 +65,9 @@ function avatar(ctx, o) {
     const cx = o.x, cy = o.y - ryB;
     // Transformado en otro personaje (Skins.js): su silueta, su color, sus ojos y sus detalles
     const skin = o.skin ? Skins.byId(o.skin) : null, amt = skin ? Math.max(0, Math.min(1, o.skinAmt ?? 1)) : 0;
-    const mono = !!(skin && o.skinMono);
-    const bodyCol = skin && !mono ? mixHex(o.body, skin.color, amt) : o.body;
+    // (transformado va siempre de su color: los del personaje son tonos del suyo; ver Skins.js)
+    const mono = !!skin;
+    const bodyCol = o.body;
     const g = {
         x: cx,
         y: cy,
@@ -78,8 +78,8 @@ function avatar(ctx, o) {
         face: o.face || "normal",
         amt: amt,
         ink: o.ink,
+        body: o.body,
         mono: mono,
-        accents: !mono || !!o.skinAccents,
         // (para la silueta: el suelo del cuerpo y px por semiancho de la silueta)
         base: o.y,
         k: skin ? rx * skin.sil.size : rx
@@ -148,7 +148,7 @@ function avatar(ctx, o) {
     // Ojos (transformado: los suyos, a partir de la mitad de la transformación)
     if (skin)
         Skins.drawUnder(ctx, skin, g, bodyPath);   // (en su color: solo la cara, salvo accents)
-    const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L) : null;
+    const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L, o.body, o.ink) : null;
     const eyeSize = SE ? SE.eyeSize : L.eyeSize, eyeGap = SE ? SE.eyeGap : L.eyeGap, eyeY = SE ? SE.eyeY : L.eyeY;
     const u = s / 32, f = o.face || "normal";
     // (transformado: en el sitio de los ojos del personaje y de su tamaño)
@@ -159,14 +159,17 @@ function avatar(ctx, o) {
         lx = -0.8;
     if (f === "curious")
         ly = -0.3;
-    const ink = mono ? o.ink : SE?.ink || o.ink;
-    const ey0 = at ? g.base + (at.y - 1) * g.k : cy - 0.12 * ryT + eyeY * 7 * u, ey = ey0 + ly * 5 * u;
+    const ink = o.ink;
+    const eyY = at ? g.base + (at.y - 1) * g.k : cy - 0.12 * ryT + eyeY * 7 * u;
     ctx.fillStyle = ink;
     ctx.strokeStyle = ink;
     ctx.lineCap = "round";
     g.eyes = [];
+    const drawn = [];
     for (const side of [-1, 1]) {
         const ex0 = at ? cx + (at.x + side * at.g) * g.k : cx + side * 11.5 * u * eyeGap * Math.max(0.8, rx / s), ex = ex0 + lx * 6 * u;
+        // (de tres cuartos, cada ojo a su altura)
+        const ey0 = eyY + (at?.dy ? side * at.dy * g.k : 0), ey = ey0 + ly * 5 * u;
         g.eyes.push([ex0 + lx * 3 * u, ey0 + ly * 2.5 * u]);
         if (SE?.white && !["happy", "excited", "love", "asleep", "squint"].includes(f)) {
             // esclerótica: se queda en su sitio y la pupila mira
@@ -179,7 +182,11 @@ function avatar(ctx, o) {
             ctx.fillStyle = ink;
         }
         eye(ctx, f, ex, ey, d, side, o.blink || 0, u, SE ? SE.eyeShape : L.eyeShape, SE);
+        drawn.push([ex, ey]);
     }
+    // Baymax: la raya de un ojo al otro
+    if (SE?.link)
+        Skins.drawLink(ctx, drawn[0], drawn[1], SE.link * g.k, ink);
     if (skin)
         Skins.drawOver(ctx, skin, g, amt);
     // Sudor (calor)

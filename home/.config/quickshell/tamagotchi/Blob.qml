@@ -751,7 +751,7 @@ Item {
             }
         }
 
-        function drawEye(ctx: var, x: real, y: real, e: var, side: int, bx: real): void {
+        function drawEye(ctx: var, x: real, y: real, e: var, side: int, bx: real, by: real): void {
             const d = root.silEyes ? root.silEyes.d * root.silKx : 9.5 * root.u * root.eyeSize;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
@@ -769,7 +769,7 @@ Item {
             // Con esclerótica: se queda casi en su sitio y la pupila mira dentro de ella
             if (root.eyeWhite.a > 0 && e.lb < 0.3 && h > d * 0.25) {
                 const k = root.eyeWhiteScale, ws = d * k * (1 - 0.18 * root.eyeShape), hs = d * k * (1 + 0.45 * root.eyeShape) * Math.max(0.12, 1 - 0.92 * root.blink) * Math.min(1.15, e.h);
-                const sx = bx + (x - bx) * 0.3, sy = y * 0.3;
+                const sx = bx + (x - bx) * 0.3, sy = by + (y - by) * 0.3;
                 ctx.fillStyle = root.eyeWhite;
                 ctx.beginPath();
                 ctx.ellipse(sx - ws / 2, sy - hs / 2, ws, hs);
@@ -879,7 +879,8 @@ Item {
                 t: root.skinT,
                 face: root.face,
                 amt: skA,
-                ink: root.ink
+                ink: root.ink,
+                body: root.bodyColor
             } : null;
             ctx.save();
             // (transformado: en el sitio de los ojos del personaje)
@@ -890,15 +891,21 @@ Item {
             ctx.rotate(rot);
             if (g)
                 g.eyes = [];
+            const drawn = [];
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
                 const bx = se ? side * se.g * root.silKx : side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
-                drawEye(ctx, bx + e.x, e.y, e, side, bx);
+                const dyE = se?.dy ? side * se.dy * root.silKy : 0;   // (de tres cuartos, cada ojo a su altura)
+                drawEye(ctx, bx + e.x, e.y + dyE, e, side, bx, dyE);
+                drawn.push([bx + e.x, e.y + dyE]);
                 if (g) {
                     const lx = bx + e.x * 0.3, ly = e.y * 0.3;
                     g.eyes.push([ex0 + lx * Math.cos(rot) - ly * Math.sin(rot), ey0 + lx * Math.sin(rot) + ly * Math.cos(rot)]);
                 }
             }
+            // Baymax: la raya de un ojo al otro (se muevan como se muevan)
+            if (se?.link)
+                Skins.drawLink(ctx, drawn[0], drawn[1], se.link * root.silKx, root.ink);
             // Sudor: una gotita que le resbala por la frente
             if (root.melt > 0.3 && sim.sweat >= 0) {
                 const k = sim.sweat, x = sim.sweatSide * 17 * root.u * root.sx, y = -root.bodyRy * 0.62 + k * root.bodyRy * 0.55;

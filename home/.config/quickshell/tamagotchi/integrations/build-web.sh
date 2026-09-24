@@ -17,7 +17,7 @@ bundle() {
     echo "})();"
     echo "const Skins = (function () {"
     grep -v '^\.pragma\|^\.import' "$root/Skins.js"
-    echo "return { list, byId, milestones, nextAt, roll, outline, drawUnder, drawOver, eyesOf, rgb };"
+    echo "return { list, byId, milestones, nextAt, roll, outline, drawUnder, drawOver, drawLink, eyesOf, tone, sclera, rgb };"
     echo "})();"
     grep -v '^\.pragma\|^\.import' "$root/Draw.js"
     echo "g.MochiDraw = { avatar };"

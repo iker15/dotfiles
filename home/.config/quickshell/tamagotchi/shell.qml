@@ -1014,7 +1014,7 @@ ShellRoot {
     readonly property var skinDef: Skins.byId(skinShown)
     readonly property real skinK: Math.max(0, Math.min(1, skinAmt))
     // sus ojos (a partir de la mitad de la transformación)
-    readonly property var skinEyes: skinDef && skinAmt > 0.5 ? Skins.eyesOf(skinDef, Look.data()) : null
+    readonly property var skinEyes: skinDef && skinAmt > 0.5 ? Skins.eyesOf(skinDef, Look.data(), avatarBody, avatarInk) : null
     // (lo que le brota se esconde con él al bucear o en el nido: nada de orejas asomando)
     readonly property real skinPartsVis: phys === "dive" ? Math.max(0, 1 - diveUnder * 1.6) : phys === "nest" ? nestPeek : 1
     // (para el shader)
@@ -1452,8 +1452,8 @@ ShellRoot {
             m: m,
             look: look,
             def: def,
-            eyes: def ? Skins.eyesOf(def, look) : null,
-            col: def ? def.color : (m.body || "#d0d3d6"),
+            eyes: def ? Skins.eyesOf(def, look, m.body || "#d0d3d6", m.ink || "#1c1b1b") : null,
+            col: m.body || "#d0d3d6",   // (el color de su casa, también transformado)
             u: u,
             rx: 32 * u * wide,
             ry: 29 * u / Math.sqrt(wide),
@@ -5165,7 +5165,8 @@ ShellRoot {
                         // bracito hasta el asa de la taza (o el mango del paraguas)
                         property vector4d arm: Qt.vector4d(shell.armTip.x - win.modelData.x - x, shell.armTip.y - win.modelData.y - y, Math.max(0, shell.armTip.z), 6)
                         // transformado (Skins.js): color, silueta y lo que le brota
-                        property vector4d skinTint: shell.skinDef ? Qt.vector4d(shell.skinRgb[0], shell.skinRgb[1], shell.skinRgb[2], shell.skinK) : Qt.vector4d(0, 0, 0, 0)
+                        // (no se tiñe: transformado sigue siendo de su color; la forma la da silInfo)
+                        property vector4d skinTint: Qt.vector4d(0, 0, 0, 0)
                         property vector4d skinForm: shell.skinFormV
                         property vector4d skinMisc: Qt.vector4d(shell.skinT, Math.max(0, shell.skinAmt) * shell.skinPartsVis, 0, 0)
                         property vector4d pa0: shell.skinPA[0]
