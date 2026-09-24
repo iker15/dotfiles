@@ -32,18 +32,16 @@ play)
     # en el fotograma 22 (0,88 s): se arranca para que coincida. Sin bloquear el prompt.
     eta_file=$XDG_RUNTIME_DIR/mochi-term-eta
     for _ in $(seq 15); do [[ -s $eta_file ]] && break; sleep 0.1; done
-    delay=0
-    if [[ -s $eta_file ]]; then
-        eta=$(<"$eta_file")
-        now=$(date +%s%3N)
-        (( eta - now - 880 > 0 )) && delay=$(awk -v d=$(( eta - now - 880 )) 'BEGIN { printf "%.2f", d / 1000 }')
-    fi
+    start=0
+    [[ -s $eta_file ]] && start=$(( $(<"$eta_file") - 880 ))   # el fotograma 22, cuando toca
     (
-        sleep "$delay"
         if [[ -f ~/.cache/mochi/fetch.b64 ]]; then
-            # fotogramas con transparencia suave, por el protocolo de kitty
-            python3 ~/.config/fastfetch/kitty-anim.py ~/.cache/mochi/fetch.b64 2 "${2:-1}" 22
+            # fotogramas con transparencia suave, por el protocolo de kitty; manda todo ya y
+            # arranca justo cuando toca
+            python3 ~/.config/fastfetch/kitty-anim.py ~/.cache/mochi/fetch.b64 2 "${2:-1}" 22 "$start"
         else
+            now=$(date +%s%3N)
+            (( start > now )) && sleep "$(awk -v d=$(( start - now )) 'BEGIN { printf "%.2f", d / 1000 }')"
             printf '\e7'
             kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null </dev/tty
             printf '\e8'

@@ -820,7 +820,8 @@ ShellRoot {
         pourX = gifX + 120 * pourScale;   // el centro del cuadrado en el GIF está en x = 120
         const target = nearestD(tr, pourX, tr.T);
         pourTop = s.y + frame;
-        pourBottom = gifY;
+        pourGifY = gifY;
+        pourBottom = gifY + 228 * pourScale;   // fondo del cuadrado en el GIF (y = 38 + 194 − 4)
         appLeave.stop();
         appHost = tl?.address ?? "";
         appSpot = pointAt(tr, target);
@@ -898,15 +899,19 @@ ShellRoot {
     property real pourTop: 0
     property real pourBottom: 0
     property real pourAt: 0        // cuándo empieza a hincharse la gota (ms de época)
-    property real pourFall: 0.3    // s que tarda en caer
+    property real pourFall: 0.3    // s que tarda en caer hasta el fondo del cuadrado
+    property real pourGifY: 0      // borde de arriba de la animación de kitty (pantalla)
+    property string pourColor: "#d0d3d6"   // el color con el que se pintó la animación
     property bool pouring: false
     readonly property real pourG: 1600
     function schedulePour(etaMs: real): void {
         pourAt = Date.now() + etaMs;
-        pourFall = Math.sqrt(2 * Math.max(10, pourBottom - pourTop - 20) / pourG);
-        publishEta(etaMs + 500 + pourFall * 1000);   // cuándo llega al cuadrado
+        pourFall = Math.sqrt(2 * Math.max(10, pourBottom - pourTop - 14) / pourG);
+        // (el GIF empieza a llenarse en su fotograma 31 = cuando la gota toca el fondo; se publica
+        // cuándo toca su fotograma 22, 0,36 s antes)
+        publishEta(etaMs + 500 + pourFall * 1000 - 360);
         pouring = true;
-        pourEnd.interval = etaMs + 500 + pourFall * 1000 + 3000;
+        pourEnd.interval = etaMs + 500 + pourFall * 1000 + 1800;
         pourEnd.restart();
     }
     Timer {
@@ -3723,17 +3728,19 @@ ShellRoot {
                 }
             }
 
-            // La gota y el chorro que caen del marco al cuadrado de kitty (ver schedulePour)
+            // La gota y el chorro que caen del marco hasta el líquido del cuadrado de kitty (ver
+            // schedulePour): los pinta todo el escritorio, por encima de la terminal, para que sea
+            // un solo fluido; la animación de kitty solo se llena, salpica y abre los ojos
             Canvas {
                 id: pourFx
 
                 property real t: -1
 
                 visible: shell.pouring && shell.pourX >= win.modelData.x && shell.pourX < win.modelData.x + win.modelData.width
-                x: shell.pourX - win.modelData.x - 30
-                y: shell.pourTop - win.modelData.y - 4
-                width: 60
-                height: Math.max(10, shell.pourBottom - shell.pourTop + 14)
+                x: shell.pourX - win.modelData.x - 40
+                y: shell.pourTop - win.modelData.y - 10
+                width: 80
+                height: Math.max(20, shell.pourBottom - shell.pourTop + 24)
                 onTChanged: requestPaint()
 
                 FrameAnimation {
@@ -3745,40 +3752,49 @@ ShellRoot {
                     ctx.reset();
                     if (t < 0)
                         return;
-                    const cx = 30, top = 4, bottom = height - 10, g = shell.pourG, fall = shell.pourFall;
-                    const arrive = 0.5 + fall;
-                    ctx.fillStyle = shell.frameColor;
-                    // se hincha una gota colgando del marco
-                    if (t < 0.5) {
-                        const k = t / 0.5, r = 20 * shell.pourScale * (1 - Math.pow(1 - k, 2));
+                    const sc = shell.pourScale, cx = 40, top = 10, g = shell.pourG;
+                    const Y = y => y - (shell.pourTop - 10);        // pantalla → lienzo
+                    const tb = 0.5 + shell.pourFall;                  // toca el fondo del cuadrado
+                    const fr = 31 + (t - tb) * 25;                    // fotograma del GIF que se ve
+                    const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
+                    const fill = fr < 31 ? 0 : ease((fr - 31) / 44);
+                    const surf = Y(shell.pourGifY + (38 + 194 * (1 - fill) + 6) * sc);   // (se mete un poco en el líquido)
+                    // del color del marco arriba al de la animación abajo
+                    const grad = ctx.createLinearGradient(0, top, 0, height);
+                    grad.addColorStop(0, String(shell.frameColor));
+                    grad.addColorStop(Math.min(1, Math.max(0.05, (Y(shell.pourGifY) - top) / (height - top))), shell.pourColor);
+                    grad.addColorStop(1, shell.pourColor);
+                    ctx.fillStyle = grad;
+                    const W0 = 24 * sc, w = fr < 31 ? W0 : fr < 69 ? W0 * (1 - Math.pow((fr - 31) / 38, 1.3)) : 0;
+                    // un chorro (o la gota colgando) que sale del marco con una curva suave
+                    const neck = (wd, bottomY) => {
+                        const fl = Math.max(wd * 1.7, 8);
                         ctx.beginPath();
-                        ctx.moveTo(cx - r * 1.4, top - 4);
-                        ctx.quadraticCurveTo(cx - r, top, cx - r, top + r * 0.9);
-                        ctx.arc(cx, top + r * 0.9, r, Math.PI, 0, true);
-                        ctx.quadraticCurveTo(cx + r, top, cx + r * 1.4, top - 4);
+                        ctx.moveTo(cx - fl, top - 10);
+                        ctx.lineTo(cx - fl, top - 3);
+                        ctx.quadraticCurveTo(cx - wd / 2, top - 1, cx - wd / 2, top + wd * 1.4);
+                        ctx.lineTo(cx - wd / 2, bottomY);
+                        ctx.lineTo(cx + wd / 2, bottomY);
+                        ctx.lineTo(cx + wd / 2, top + wd * 1.4);
+                        ctx.quadraticCurveTo(cx + wd / 2, top - 1, cx + fl, top - 3);
+                        ctx.lineTo(cx + fl, top - 10);
                         ctx.closePath();
+                        ctx.fill();
+                    };
+                    if (t < 0.5) {
+                        // se hincha una gota colgando del marco
+                        const k = t / 0.5, r = 20 * sc * (1 - Math.pow(1 - k, 2));
+                        neck(r * 0.9, top + r * 0.6);
+                        ctx.beginPath();
+                        Hats.E(ctx, cx - r, top + r * 0.2, 2 * r, 2 * r * 1.05);
                         ctx.fill();
                         return;
                     }
-                    // cae (y detrás, el chorro)
-                    const tf = t - 0.5, head = Math.min(bottom, top + 14 + 0.5 * g * tf * tf);
-                    // grosor del chorro: como en el GIF (se afina a partir de ~0,36 s de llegar, hasta ~2,2 s)
-                    const sc = shell.pourScale, W0 = 24 * sc;   // (mismo grosor que el chorro del GIF)
-                    const ta = t - arrive, w = ta < 0.36 ? W0 : W0 * Math.max(0, 1 - Math.pow((ta - 0.36) / 1.52, 1.3));
-                    if (w > 0.5) {
-                        ctx.beginPath();
-                        Hats.RR(ctx, cx - w / 2, top - 4, w, Math.max(w, head - top + 8), w / 2);
-                        ctx.fill();
-                        // unión suave con el marco
-                        ctx.beginPath();
-                        ctx.moveTo(cx - w * 1.2, top - 4);
-                        ctx.quadraticCurveTo(cx - w / 2, top, cx - w / 2, top + w);
-                        ctx.lineTo(cx + w / 2, top + w);
-                        ctx.quadraticCurveTo(cx + w / 2, top, cx + w * 1.2, top - 4);
-                        ctx.closePath();
-                        ctx.fill();
-                    }
-                    if (ta < 0) {
+                    const tf = t - 0.5;
+                    const head = Math.min(Y(shell.pourBottom), top + 14 + 0.5 * g * tf * tf);
+                    if (w > 0.6)
+                        neck(w, Math.min(head, surf) + w / 2);
+                    if (t < tb) {
                         // la gota de delante, alargada al caer
                         const r = 20 * sc, st = 1 + Math.min(0.5, tf * 2);
                         ctx.beginPath();
@@ -3918,6 +3934,7 @@ ShellRoot {
                     face = f === "asleep" || f === "sulky" || f === "hot" || f === "sleepy" ? f : Bond.level > 0.6 && Math.random() < 0.5 ? "love" : ["happy", "excited", "happy"][Math.floor(Math.random() * 3)];
                     body = shell.avatarBody;
                     ink = shell.avatarInk;
+                    shell.pourColor = body;
                     frames = [];
                     frame = 0;
                     requestPaint();
@@ -3968,25 +3985,7 @@ ShellRoot {
                     ctx.fillStyle = body;
                     const surfY = sy + sh * (1 - fill);
 
-                    // Cae desde arriba (de donde está él, en el borde): una gota que se descuelga
-                    // despacio, se estira y cae con gravedad, y detrás el chorro, cada vez más fino
-                    if (f >= T0 && f < T2 - 6) {
-                        // (llega ya cayendo: viene del marco, por encima del escritorio)
-                        const hang = 1, tf = f - T0;
-                        const headY = Math.min(surfY - 4, -20 + 9 * tf + 0.5 * 4.2 * tf * tf);
-                        const w = 24 * (1 - Math.pow(Math.max(0, (f - T1) / (T2 - 6 - T1)), 1.3)) * (0.6 + 0.4 * hang);
-                        ctx.fillStyle = body;
-                        ctx.beginPath();
-                        Hats.RR(ctx, cx - w / 2, -12, w, Math.max(w, headY + 12), w / 2);
-                        ctx.fill();
-                        if (f < T1) {
-                            // la gota de delante, algo más gorda y alargada al caer
-                            const r = 15 + 5 * hang, st = 1 + Math.min(0.5, tf * 0.06);
-                            ctx.beginPath();
-                            Hats.E(ctx, cx - r / st, headY - r * st, 2 * r / st, 2 * r * st);
-                            ctx.fill();
-                        }
-                    }
+                    // (la gota y el chorro que caen los pinta el escritorio por encima: pourFx)
 
                     // El fluido dentro del cuadrado, con la superficie ondulando
                     if (fill > 0) {

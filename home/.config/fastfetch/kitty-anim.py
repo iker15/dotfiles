@@ -2,10 +2,12 @@
 # Pone la animación de Mochi en kitty con su protocolo de imágenes (sin kitten icat ni GIF):
 # fotogramas PNG con transparencia suave (el GIF solo tiene todo-o-nada y los bordes salían a
 # escalones). Se reproduce una vez y se queda en el último fotograma.
-#   kitty-anim.py FOTOGRAMAS COL FILA [COLUMNAS]
+#   kitty-anim.py FOTOGRAMAS COL FILA [COLUMNAS] [EMPEZAR]
+# EMPEZAR: momento (ms de época) en que debe arrancar; primero se mandan todos los fotogramas
+# (tarda un poco) y se espera hasta entonces, para que vaya a la par con Mochi.
 # FOTOGRAMAS: un PNG en base64 por línea (los pinta Mochi: ~/.cache/mochi/fetch.b64).
 # COL/FILA: celda de arriba a la izquierda (0 = primera). COLUMNAS: ancho (22).
-import os, sys
+import os, sys, time
 
 GAP = 40   # ms por fotograma (25 fps)
 
@@ -24,6 +26,7 @@ def cmd(out, keys, payload=""):
 def main():
     path, col, row = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     cols = int(sys.argv[4]) if len(sys.argv) > 4 else 22
+    start = float(sys.argv[5]) / 1000 if len(sys.argv) > 5 else 0
     frames = [l.strip() for l in open(path) if l.strip()]
     if not frames:
         return
@@ -36,10 +39,14 @@ def main():
         cmd(out, f"a=T,f=100,i={img},q=2,C=1,c={cols}", frames[0])
         for fr in frames[1:]:
             cmd(out, f"a=f,f=100,i={img},q=2,z={GAP}", fr)
-        # hueco del primer fotograma y a reproducir una sola vez (v=2: una vuelta)
-        cmd(out, f"a=a,i={img},q=2,r=1,z={GAP}")
-        cmd(out, f"a=a,i={img},q=2,s=3,v=2")
+        cmd(out, f"a=a,i={img},q=2,r=1,z={GAP}")     # hueco del primer fotograma
         out.write("\x1b8")                            # volver a dejar el cursor donde estaba
+        out.flush()
+        # esperar al momento justo y a reproducir una sola vez (v=2: una vuelta)
+        wait = start - time.time()
+        if wait > 0:
+            time.sleep(min(wait, 15))
+        cmd(out, f"a=a,i={img},q=2,s=3,v=2")
         out.flush()
 
 
