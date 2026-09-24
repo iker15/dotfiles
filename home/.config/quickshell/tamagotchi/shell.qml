@@ -759,13 +759,15 @@ ShellRoot {
     // ahí cae; se queda dentro mientras uses esa kitty. Lo llama ~/.config/fastfetch/mochi.sh con
     // dónde está el centro del cuadrado (px desde la esquina de la ventana).
     property real termOffX: 0
+    property real termTop: 0
     property real termOffY: 0
     property int termTries: 0
-    function enterTerm(offX: real, offY: real): void {
+    function enterTerm(offX: real, offY: real, top: real): void {
         if (locked || dnd || asking || dragging || !shown)
             return;
         termOffX = offX;
         termOffY = offY;
+        termTop = top > 0 ? top : offY - 100;
         termTries = 0;
         termWin.running = true;
     }
@@ -799,6 +801,10 @@ ShellRoot {
         // (por el borde de ARRIBA, justo encima del cuadrado: el fluido cae desde ahí)
         const s = nearestScreen(o.at[0] + termOffX, o.at[1] + termOffY), tr = track(s);
         const target = nearestD(tr, o.at[0] + termOffX, tr.T);
+        // por dónde cae su fluido: del borde de arriba del marco al cuadrado (en la pantalla)
+        pourX = o.at[0] + termOffX;
+        pourTop = s.y + frame;
+        pourBottom = o.at[1] + termTop;
         appLeave.stop();
         appHost = tl?.address ?? "";
         appSpot = pointAt(tr, target);
@@ -814,7 +820,7 @@ ShellRoot {
             gy = p.y + p.ny * deep;
             dive(0, "hidden", true, 3);
             diveStay = true;
-            publishEta(0);
+            schedulePour(300);
             return true;
         }
         if (phys === "nest") {
@@ -829,7 +835,7 @@ ShellRoot {
             const dist = trackDiff(tr, swimD, target);
             dive(dist, "hidden", true, 1.2 * dayEnergy);
             diveStay = true;
-            publishEta(diveDur * 1000);
+            schedulePour(diveDur * 1000);
             return true;
         }
         // Se da cuenta de la ventana nueva: la mira con curiosidad un momento…
@@ -842,7 +848,7 @@ ShellRoot {
         termGo.restart();
         // (llegará cuando acabe de mirar y bucee hasta allí: se calcula ya para el cuadrado)
         const dist = trackDiff(tr, swimD, target), sp = termSpeed();
-        publishEta(termGo.interval + (1 + Math.abs(dist) / (Math.abs(dist) > 1200 ? 620 : 380)) / sp * 1000);
+        schedulePour(termGo.interval + (1 + Math.abs(dist) / (Math.abs(dist) > 1200 ? 620 : 380)) / sp * 1000);
         return true;
     }
     // …y va buceando a su ritmo, asomando la cabeza, y al llegar se hunde del todo
@@ -869,7 +875,30 @@ ShellRoot {
             shell.diveStay = true;
         }
     }
-    // Cuándo llega (ms de época): lo lee mochi.sh para empezar a rellenar el cuadrado justo entonces
+    // La gota que cae del marco al cuadrado (por encima de todo, en el escritorio): al llegar
+    // (etaMs) se hincha una gota en el borde de arriba (0,5 s), cae con gravedad hasta el cuadrado
+    // y le sigue un chorro fino que se va afinando al ritmo del GIF (que sigue dentro de kitty).
+    property real pourX: 0
+    property real pourTop: 0
+    property real pourBottom: 0
+    property real pourAt: 0        // cuándo empieza a hincharse la gota (ms de época)
+    property real pourFall: 0.3    // s que tarda en caer
+    property bool pouring: false
+    readonly property real pourG: 1600
+    function schedulePour(etaMs: real): void {
+        pourAt = Date.now() + etaMs;
+        pourFall = Math.sqrt(2 * Math.max(10, pourBottom - pourTop - 20) / pourG);
+        publishEta(etaMs + 500 + pourFall * 1000);   // cuándo llega al cuadrado
+        pouring = true;
+        pourEnd.interval = etaMs + 500 + pourFall * 1000 + 3000;
+        pourEnd.restart();
+    }
+    Timer {
+        id: pourEnd
+
+        onTriggered: shell.pouring = false
+    }
+    // Cuándo llega la gota al cuadrado (ms de época): lo lee mochi.sh para arrancar el GIF a tiempo
     function publishEta(ms: real): void {
         termEta.setText(String(Math.round(Date.now() + ms)));
     }
@@ -2539,8 +2568,8 @@ ShellRoot {
         function pop(): void {
             shell.heartPop();
         }
-        function enterTerm(offX: real, offY: real): void {
-            shell.enterTerm(offX, offY);
+        function enterTerm(offX: real, offY: real, top: real): void {
+            shell.enterTerm(offX, offY, top);
         }
         function heart(): void {
             shell.heartShown = true;
@@ -3678,6 +3707,70 @@ ShellRoot {
                 }
             }
 
+            // La gota y el chorro que caen del marco al cuadrado de kitty (ver schedulePour)
+            Canvas {
+                id: pourFx
+
+                property real t: -1
+
+                visible: shell.pouring && shell.pourX >= win.modelData.x && shell.pourX < win.modelData.x + win.modelData.width
+                x: shell.pourX - win.modelData.x - 30
+                y: shell.pourTop - win.modelData.y - 4
+                width: 60
+                height: Math.max(10, shell.pourBottom - shell.pourTop + 14)
+                onTChanged: requestPaint()
+
+                FrameAnimation {
+                    running: pourFx.visible
+                    onTriggered: pourFx.t = (Date.now() - shell.pourAt) / 1000
+                }
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    if (t < 0)
+                        return;
+                    const cx = 30, top = 4, bottom = height - 10, g = shell.pourG, fall = shell.pourFall;
+                    const arrive = 0.5 + fall;
+                    ctx.fillStyle = shell.frameColor;
+                    // se hincha una gota colgando del marco
+                    if (t < 0.5) {
+                        const k = t / 0.5, r = 15 * (1 - Math.pow(1 - k, 2));
+                        ctx.beginPath();
+                        ctx.moveTo(cx - r * 1.4, top - 4);
+                        ctx.quadraticCurveTo(cx - r, top, cx - r, top + r * 0.9);
+                        ctx.arc(cx, top + r * 0.9, r, Math.PI, 0, true);
+                        ctx.quadraticCurveTo(cx + r, top, cx + r * 1.4, top - 4);
+                        ctx.closePath();
+                        ctx.fill();
+                        return;
+                    }
+                    // cae (y detrás, el chorro)
+                    const tf = t - 0.5, head = Math.min(bottom, top + 14 + 0.5 * g * tf * tf);
+                    // grosor del chorro: como en el GIF (se afina a partir de ~0,36 s de llegar, hasta ~2,2 s)
+                    const ta = t - arrive, w = ta < 0.36 ? 22 : 22 * Math.max(0, 1 - Math.pow((ta - 0.36) / 1.52, 1.3));
+                    if (w > 0.5) {
+                        ctx.beginPath();
+                        Hats.RR(ctx, cx - w / 2, top - 4, w, Math.max(w, head - top + 8), w / 2);
+                        ctx.fill();
+                        // unión suave con el marco
+                        ctx.beginPath();
+                        ctx.moveTo(cx - w * 1.2, top - 4);
+                        ctx.quadraticCurveTo(cx - w / 2, top, cx - w / 2, top + w);
+                        ctx.lineTo(cx + w / 2, top + w);
+                        ctx.quadraticCurveTo(cx + w / 2, top, cx + w * 1.2, top - 4);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    if (ta < 0) {
+                        // la gota de delante, alargada al caer
+                        const r = 17, st = 1 + Math.min(0.5, tf * 2);
+                        ctx.beginPath();
+                        Hats.E(ctx, cx - r / st, head - r * st, 2 * r / st, 2 * r * st);
+                        ctx.fill();
+                    }
+                }
+            }
+
             // Asomándose por la esquina de abajo (juego a pantalla completa): solo en la pantalla
             // con el foco
             Canvas {
@@ -3786,7 +3879,7 @@ ShellRoot {
             Canvas {
                 id: fetchCanvas
 
-                readonly property int count: 140
+                readonly property int count: 131
                 property int frame: -1
                 property var frames: []
                 property string face: "happy"
@@ -3839,10 +3932,10 @@ ShellRoot {
                     ctx.reset();
                     if (frame < 0)
                         return;
-                    // Línea de tiempo (25 fps): 0-21 margen (el GIF empieza cuando Mochi ya está
-                    // llegando por el borde de arriba) · 22-40 se descuelga una gota desde arriba y
-                    // cae · 40-84 llena · luego gelatina, abre los ojos, mira a los lados, parpadea y cara
-                    const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 40, T2 = 84;
+                    // Línea de tiempo (25 fps): 0-21 margen · 22 llega la gota que cae del marco (la
+                    // dibuja el escritorio hasta aquí) · 31 toca el fondo · 31-75 llena · luego
+                    // gelatina, abre los ojos, mira a los lados, parpadea y cara
+                    const f = frame, cx = sx + sw / 2, T0 = 22, T1 = 31, T2 = 75;
                     const E0 = T2 + 6, EL = E0 + 7, ER = EL + 10, EB = ER + 10, EF = EB + 5;   // ojos: abre, izq., der., parpadeo, cara
                     const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
                     const fill = f < T1 ? 0 : ease((f - T1) / (T2 - T1));
@@ -3861,9 +3954,9 @@ ShellRoot {
                     // Cae desde arriba (de donde está él, en el borde): una gota que se descuelga
                     // despacio, se estira y cae con gravedad, y detrás el chorro, cada vez más fino
                     if (f >= T0 && f < T2 - 6) {
-                        const hang = Math.min(1, (f - T0) / 8);                  // se descuelga
-                        const tf = Math.max(0, f - T0 - 8);                      // y cae
-                        const headY = Math.min(surfY - 4, -26 + 30 * hang + 0.5 * 4.2 * tf * tf);
+                        // (llega ya cayendo: viene del marco, por encima del escritorio)
+                        const hang = 1, tf = f - T0;
+                        const headY = Math.min(surfY - 4, -20 + 9 * tf + 0.5 * 4.2 * tf * tf);
                         const w = 24 * (1 - Math.pow(Math.max(0, (f - T1) / (T2 - 6 - T1)), 1.3)) * (0.6 + 0.4 * hang);
                         ctx.fillStyle = body;
                         ctx.beginPath();

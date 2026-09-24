@@ -20,17 +20,18 @@ row)
             # centro del cuadrado (columnas 2-23, filas r..r+9), en px desde la esquina de la ventana
             offx=$(( 13 * w / cols + 8 ))
             offy=$(( (r + 5) * h / rows + 8 ))
+            top=$(( r * h / rows + 8 ))   # borde de arriba del cuadrado
             rm -f "$XDG_RUNTIME_DIR/mochi-term-eta"
-            (qs -c tamagotchi ipc call pet enterTerm "$offx" "$offy" >/dev/null 2>&1 &)
+            (qs -c tamagotchi ipc call pet enterTerm "$offx" "$offy" "$top" >/dev/null 2>&1 &)
         fi
     fi
     ;;
 play)
     gif=~/.cache/mochi/fetch.gif
     [[ -n $KITTY_WINDOW_ID && -f $gif ]] || exit 0
-    # Mochi viene a su ritmo: dice cuándo llega (ms) en mochi-term-eta. El fluido empieza a
-    # asomar en el fotograma 22 (0,88 s): se arranca la animación para que coincida. Sin
-    # bloquear el prompt (en segundo plano).
+    # Mochi viene a su ritmo y deja caer una gota desde el marco (por encima de todo, en el
+    # escritorio): dice en mochi-term-eta cuándo llega esa gota al cuadrado (ms). En el GIF entra
+    # en el fotograma 22 (0,88 s): se arranca para que coincida. Sin bloquear el prompt.
     eta_file=$XDG_RUNTIME_DIR/mochi-term-eta
     for _ in $(seq 15); do [[ -s $eta_file ]] && break; sleep 0.1; done
     delay=0
