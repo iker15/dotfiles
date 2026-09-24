@@ -254,8 +254,6 @@ Item {
                     property real tly: 0
                     property real sq: 0      // squash (muelle, más blando cuanta más gelatina)
                     property real sqV: 0
-                    readonly property var faces: ["normal", "happy", "love", "surprised", "sleepy", "curious", "sad"]
-                    property int faceIdx: 0
                     // ritmo según su carácter
                     readonly property real pace: root.chosen.includes("inquieto") ? 1.25 : root.chosen.includes("dormilon") ? 0.75 : 1
 
@@ -307,18 +305,6 @@ Item {
                         }
                     }
 
-                    // Clic: prueba otra cara
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            preview.faceIdx = (preview.faceIdx + 1) % preview.faces.length;
-                            root.face = preview.faces[preview.faceIdx];
-                            faceBack.stop();
-                            root.jiggle(1);
-                        }
-                    }
-
                     onPaint: {
                         const ctx = getContext("2d");
                         ctx.reset();
@@ -344,15 +330,6 @@ Item {
                             t: t
                         });
                     }
-                }
-
-                StyledText {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.topMargin: Tokens.padding.medium
-                    text: "clic: otra cara"
-                    font: Tokens.font.body.small
-                    color: Colours.palette.m3outline
                 }
 
                 // Siempre es Mochi; el mote, a dados (el dashboard no recibe teclado)
