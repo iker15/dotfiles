@@ -47,7 +47,13 @@ Item {
         Quickshell.execDetached(["qs", "-c", "tamagotchi", "ipc", "call", "pet", ...args]);
     }
 
-    implicitWidth: 840
+    // Tamaños a medida de la pantalla: pensados para 1080 de alto; en pantallas más bajas
+    // (1366x768…) todo encoge en proporción para que la ficha quepa entera
+    readonly property real screenH: (QsWindow.window as QsWindow)?.screen?.height ?? 1080
+    readonly property real k: Math.max(0.6, Math.min(1, screenH / 1080))
+    readonly property real maxH: Math.min(900, screenH * 0.82)   // (con las pestañas y el marco, cabe)
+
+    implicitWidth: Math.round(840 * k)
     implicitHeight: creating ? creatorFlick.height : mainFlick.height
 
     // El creador, con barra para bajar si no cabe (ancho fijo: todo se reparte en líneas)
@@ -56,7 +62,7 @@ Item {
 
         visible: root.creating
         width: root.implicitWidth
-        height: Math.min(creator.implicitHeight, 900)
+        height: Math.min(creator.implicitHeight, root.maxH)
         contentWidth: width
         contentHeight: creator.implicitHeight
         flickableDirection: Flickable.VerticalFlick
@@ -107,7 +113,7 @@ Item {
 
         visible: !root.creating
         width: root.implicitWidth
-        height: Math.min(layout.implicitHeight, 900)
+        height: Math.min(layout.implicitHeight, root.maxH)
         contentWidth: width
         contentHeight: layout.implicitHeight
         flickableDirection: Flickable.VerticalFlick
@@ -206,7 +212,7 @@ Item {
             // Retrato grande + cariño
             StyledRect {
                 Layout.fillWidth: true
-                implicitHeight: 230
+                implicitHeight: 230 * root.k
 
                 radius: Tokens.rounding.extraLarge * 2
                 color: Colours.tPalette.m3surfaceContainer
@@ -228,7 +234,7 @@ Item {
                         property real tlx: 0
                         property real tly: 0
 
-                        Layout.preferredWidth: 230
+                        Layout.preferredWidth: 230 * root.k
                         Layout.fillHeight: true
 
                         onTChanged: requestPaint()
@@ -277,8 +283,8 @@ Item {
                             const f = root.st.feeling ?? "normal";
                             Draw.avatar(ctx, {
                                 x: width / 2,
-                                y: height - 22,
-                                s: 70,
+                                y: height - 22 * root.k,
+                                s: 70 * root.k,
                                 body: root.st.body ?? "#d0d3d6",
                                 ink: root.st.ink ?? "#1c1b1b",
                                 face: f,
@@ -440,7 +446,7 @@ Item {
                             SkinTile {
                                 required property string modelData
 
-                                width: 104
+                                width: 104 * root.k
                                 skin: modelData
                                 selected: Mochi.Wardrobe.wearing === modelData
                                 onClicked: root.ipc("skinWear", modelData || "none")
@@ -767,12 +773,13 @@ Item {
         id: tile
 
         property string skin
+        readonly property real k: Math.max(0.6, Math.min(1, ((QsWindow.window as QsWindow)?.screen?.height ?? 1080) / 1080))
         property bool big: false
         property bool selected: false
         readonly property var def: Skins.byId(skin)
         signal clicked
 
-        implicitHeight: big ? 212 : 118
+        implicitHeight: (big ? 212 : 118) * k
         radius: Tokens.rounding.medium
         color: selected ? Colours.palette.m3secondaryContainer : tileHover.hovered ? Colours.tPalette.m3surfaceContainerHigh : "transparent"
         border.width: selected ? 2 : 0
@@ -796,8 +803,8 @@ Item {
             anchors.top: parent.top
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.topMargin: tile.big ? 4 : 2
-            width: tile.big ? 190 : 100
-            height: tile.big ? 160 : 90
+            width: (tile.big ? 190 : 100) * tile.k
+            height: (tile.big ? 160 : 90) * tile.k
 
             onTChanged: requestPaint()
             Component.onCompleted: requestPaint()
@@ -818,8 +825,8 @@ Item {
                 const f = tile.selected ? "happy" : tileHover.hovered ? "excited" : "normal";
                 Draw.avatar(ctx, {
                     x: width / 2,
-                    y: height - 8,
-                    s: tile.big ? 46 : 27,
+                    y: height - 8 * tile.k,
+                    s: (tile.big ? 46 : 27) * tile.k,
                     body: root.st.body ?? "#d0d3d6",
                     ink: root.st.ink ?? "#1c1b1b",
                     face: f,
@@ -888,13 +895,15 @@ Item {
     component DetailCard: StyledRect {
         id: detailRoot
 
+        readonly property real k: Math.max(0.6, Math.min(1, ((QsWindow.window as QsWindow)?.screen?.height ?? 1080) / 1080))
+
         property string icon
         property string label
         property string value
         property color colour
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 60
+        Layout.preferredHeight: 60 * k
         radius: Tokens.rounding.medium
         color: Colours.tPalette.m3surfaceContainer
 

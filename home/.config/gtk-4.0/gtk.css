@@ -19,4 +19,3 @@
 @define-color theme_selected_fg_color @primary;
 
 @import "thunar.css";
-@import 'colors.css';

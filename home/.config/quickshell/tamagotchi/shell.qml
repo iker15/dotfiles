@@ -1754,14 +1754,19 @@ ShellRoot {
             duration: 400
         }
     }
-    readonly property real bodyRx: 32 * 1.45 * Look.wide          // semiejes del cuerpo (como en Blob)
-    readonly property real bodyRy: 29 * 1.45 * 0.95 / Math.sqrt(Look.wide)
+    // Tamaño a medida de la pantalla: pensado para 1080 de alto; en pantallas más bajas
+    // (1366x768…) encoge en proporción (la más baja manda, para que no cambie al cruzar)
+    readonly property real sizeK: Math.max(0.7, Math.min(1, Math.min(...Quickshell.screens.map(s => s.height)) / 1080))
+    readonly property real u: 1.45 * sizeK
+    readonly property real bodyRx: 32 * u * Look.wide          // semiejes del cuerpo (como en Blob)
+    readonly property real bodyRy: 29 * u * 0.95 / Math.sqrt(Look.wide)
     readonly property real embed: 12                  // cuánto va hundido en el marco al nadar
     readonly property int hideAfter: 90000     // ms sin usarlo hasta que vuelve al nido
 
     // Marco de Caelestia (barra a la izquierda y borde alrededor): Mochi vive dentro,
     // está hecho del mismo material y se funde con él al tocarlo
-    readonly property real barW: 60            // ancho de la barra de Caelestia (medido)
+    // ancho de la barra de Caelestia (como en su BarWrapper; 60 con la config por defecto)
+    readonly property real barW: cfg.Tokens.sizes.bar.innerWidth + Math.max(cfg.Tokens.padding.small, frame) * 2
     readonly property real frame: cfg.Config.border.thickness
     readonly property real frameRounding: cfg.Config.border.rounding
     readonly property real frameSmoothing: cfg.Config.border.smoothing
@@ -3470,7 +3475,7 @@ ShellRoot {
         hideTimer.restart();
     }
 
-    // Para leer la configuración de Caelestia (propiedad adjunta Config)
+    // Para leer la configuración de Caelestia (propiedades adjuntas Config y Tokens)
     Item {
         id: cfg
     }
@@ -5593,6 +5598,7 @@ ShellRoot {
 
                 // Solo en el workspace donde vive, y se aparta si hay algo a pantalla completa
                 visible: Look.born && shell.present && !shell.fsHide && shell.phys !== "away"
+                u: shell.u
                 x: shell.gx - win.modelData.x - width / 2
                 // (transformado: sus ojos, los del personaje)
                 eyeSize: shell.skinEyes ? shell.skinEyes.eyeSize : Look.eyeSize

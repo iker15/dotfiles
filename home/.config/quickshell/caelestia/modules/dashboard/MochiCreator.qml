@@ -21,6 +21,8 @@ Item {
 
     readonly property var look: Mochi.Look
     readonly property bool born: look.born
+    // Tamaños a medida de la pantalla (como en MochiTab)
+    readonly property real k: Math.max(0.6, Math.min(1, ((QsWindow.window as QsWindow)?.screen?.height ?? 1080) / 1080))
     property int level: 1                        // su nivel (de mochi-state.json)
     readonly property int slots: Traits.slots(level)
     property var draft: look.data()
@@ -239,10 +241,10 @@ Item {
 
             // Vista previa, viva
             StyledRect {
-                Layout.preferredWidth: 280
+                Layout.preferredWidth: 280 * root.k
                 Layout.fillWidth: root.traitsOnly
                 Layout.fillHeight: true
-                Layout.minimumHeight: root.traitsOnly ? 230 : 330
+                Layout.minimumHeight: (root.traitsOnly ? 230 : 330) * root.k
                 radius: Tokens.rounding.extraLarge * 2
                 color: Colours.tPalette.m3surfaceContainer
 
@@ -312,7 +314,7 @@ Item {
                         const ctx = getContext("2d");
                         ctx.reset();
                         const f = root.face;
-                        const x = width / 2, y = height - 26;
+                        const x = width / 2, y = height - 26 * root.k;
                         // aplastado/estirado desde la base
                         ctx.translate(x, y);
                         ctx.scale(1 + sq * 0.05, 1 - sq * 0.07);
@@ -320,7 +322,7 @@ Item {
                         Draw.avatar(ctx, {
                             x: x,
                             y: y,
-                            s: 70,
+                            s: 70 * root.k,
                             body: Colours.palette.m3surfaceContainerHighest,
                             ink: Colours.palette.m3onSurface,
                             face: f,
