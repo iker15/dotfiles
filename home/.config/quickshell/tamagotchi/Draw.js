@@ -20,6 +20,21 @@
 // }
 
 function avatar(ctx, o) {
+    // Solo los ojos (p. ej. sobre otra forma hecha de su material: el cuadrado de la terminal):
+    // centrados en (x, y), con la cara que toque
+    if (o.eyesOnly) {
+        const u = o.s / 32, d = 9.5 * u, f = o.face || "normal";
+        let lx = o.lx || 0;
+        if (f === "sulky")
+            lx = -0.8;
+        const ly = (o.ly || 0) + (f === "curious" ? -0.3 : 0);
+        ctx.fillStyle = o.ink;
+        ctx.strokeStyle = o.ink;
+        ctx.lineCap = "round";
+        for (const side of [-1, 1])
+            eye(ctx, f, o.x + side * 13 * u + lx * 6 * u, o.y + ly * 5 * u, d, side, o.blink || 0, u);
+        return;
+    }
     const stage = o.stage ?? 1;
     const s = o.s * (stage === 0 ? 0.82 : 1), t = o.t || 0, m = o.melt || 0, b = o.breath || 0;
     const rx = s * (1 + 0.3 * m + 0.03 * b), ryT = s * (1.0 - 0.34 * m - 0.03 * b), ryB = s * (0.72 - 0.2 * m);

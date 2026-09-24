@@ -3642,12 +3642,14 @@ ShellRoot {
             }
 
             // Animación de la terminal (fastfetch, ver ~/.config/fish/functions/fish_greeting.fish):
-            // se mete de un salto en el cuadrado, se aplasta al caer, mira a los lados y pone una
-            // cara (según cómo esté). 64 fotogramas → integrations/fetch-gif.sh → ~/.cache/mochi/fetch.gif
+            // Mochi es un fluido: cae un chorro de su material, salpica y va llenando el cuadrado
+            // (con la superficie ondulando) hasta que el cuadrado ES él; tiembla como gelatina, abre
+            // los ojos, mira a los lados, parpadea y pone una cara (según cómo esté).
+            // 80 fotogramas a 25 fps → integrations/fetch-gif.sh → ~/.cache/mochi/fetch.gif
             Canvas {
                 id: fetchCanvas
 
-                readonly property int count: 64
+                readonly property int count: 80
                 property int frame: -1
                 property var frames: []
                 property string face: "happy"
@@ -3683,65 +3685,129 @@ ShellRoot {
                 }
                 onAvailableChanged: if (available) start()
 
+                // El cuadrado (con sitio arriba para el gorro)
+                readonly property real sx: 16
+                readonly property real sy: 38
+                readonly property real sw: 208
+                readonly property real sh: 194
+                readonly property real sr: 46
+
+                function squarePath(ctx: var): void {
+                    ctx.beginPath();
+                    Hats.RR(ctx, sx, sy, sw, sh, sr);
+                }
+
                 onPaint: {
                     const ctx = getContext("2d");
                     ctx.reset();
                     if (frame < 0)
                         return;
-                    const f = frame;
-                    ctx.fillStyle = Theme.surfaceContainerHigh;
-                    ctx.beginPath();
-                    Hats.RR(ctx, 6, 6, 228, 228, 44);
-                    ctx.fill();
+                    const f = frame, cx = sx + sw / 2;
+                    const ease = x => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 2.2);
+                    const fill = f < 9 ? 0 : ease((f - 9) / 31);   // lo lleno que está (0-1)
+                    // gelatina al llenarse del todo
+                    const k = f - 40, jel = f >= 40 ? 0.07 * Math.exp(-k / 4) * Math.cos(k * 0.95) : 0;
+                    // saltito al poner la cara
+                    const hop = f >= 67 && f < 73 ? Math.sin((f - 67) / 6 * Math.PI) : 0;
+                    const hopSq = f >= 73 && f < 80 ? 0.05 * Math.exp(-(f - 73) / 2.5) * Math.cos((f - 73) * 1.1) : 0;
+
                     ctx.save();
-                    ctx.beginPath();
-                    Hats.RR(ctx, 6, 6, 228, 228, 44);
-                    ctx.clip();
-                    if (f >= 5) {
-                        let y = 0, sq = 0, face = "normal", lx = 0, ly = 0, blink = 0;
-                        if (f < 17) {
-                            const p = (f - 5) / 12;
-                            y = -190 * (1 - p * p);   // cae
-                            face = "surprised";
-                            ly = 0.5;
-                        } else {
-                            const k = f - 17;
-                            sq = 0.32 * Math.exp(-k / 4) * Math.cos(k * 0.95);   // se aplasta y rebota
+                    const base = sy + sh;
+                    ctx.translate(cx, base - hop * 10);
+                    ctx.scale(1 + (jel + hopSq) * 0.8, 1 - jel - hopSq);
+                    ctx.translate(-cx, -base);
+
+                    // Chorro que cae desde arriba (se va afinando) y la gota que va delante
+                    const surfY = sy + sh * (1 - fill);
+                    if (f >= 3 && f < 34) {
+                        const w = 26 * (1 - Math.pow((f - 3) / 31, 1.5));
+                        const headY = Math.min(surfY, -20 + (f - 3) * 34);
+                        ctx.fillStyle = body;
+                        ctx.beginPath();
+                        Hats.RR(ctx, cx - w / 2, f < 9 ? headY - 60 : -10, w, (f < 9 ? 60 : headY + 10) + 8, w / 2);
+                        ctx.fill();
+                        if (f < 9) {
+                            ctx.beginPath();
+                            Hats.E(ctx, cx - 17, headY - 14, 34, 36);
+                            ctx.fill();
                         }
-                        if (f >= 17 && f < 23)
-                            face = "squint";
-                        else if (f >= 23 && f < 31)
+                    }
+
+                    // El fluido dentro del cuadrado, con la superficie ondulando
+                    if (fill > 0) {
+                        ctx.save();
+                        squarePath(ctx);
+                        ctx.clip();
+                        const amp = 12 * (1 - fill) + (f >= 40 ? 0 : 3);
+                        ctx.fillStyle = body;
+                        ctx.beginPath();
+                        ctx.moveTo(sx - 2, sy + sh + 2);
+                        for (let x = sx - 2; x <= sx + sw + 2; x += 6) {
+                            const y = surfY + amp * Math.sin(x * 0.045 + f * 0.55) + amp * 0.5 * Math.sin(x * 0.11 - f * 0.35)
+                                    - (f < 34 ? 16 * (1 - fill) * Math.exp(-Math.pow((x - cx) / 26, 2)) : 0);   // bulto donde cae el chorro
+                            ctx.lineTo(x, y);
+                        }
+                        ctx.lineTo(sx + sw + 2, sy + sh + 2);
+                        ctx.closePath();
+                        ctx.fill();
+                        // brillo arriba a la izquierda, cuando ya está casi lleno
+                        if (fill > 0.8) {
+                            ctx.fillStyle = `rgba(255,255,255,${(0.1 * (fill - 0.8) / 0.2).toFixed(3)})`;
+                            ctx.beginPath();
+                            Hats.E(ctx, sx + 22, sy + 16, sw * 0.42, sh * 0.2);
+                            ctx.fill();
+                        }
+                        ctx.restore();
+                    }
+                    // Salpicaduras al llegar el chorro abajo
+                    if (f >= 9 && f < 18) {
+                        const t = (f - 9) / 9;
+                        ctx.fillStyle = body;
+                        for (const [dx, v] of [[-1, 1], [1, 0.8], [-0.5, 1.3], [0.6, 1.2]]) {
+                            const px = cx + dx * 70 * t, py = sy + sh - 20 - v * 110 * t + 150 * t * t, r = 7 * (1 - t) + 2;
+                            ctx.beginPath();
+                            Hats.E(ctx, px - r, py - r, 2 * r, 2 * r);
+                            ctx.fill();
+                        }
+                    }
+                    // Contorno suave (por si el fondo es casi del mismo color)
+                    if (fill >= 1) {
+                        squarePath(ctx);
+                        ctx.strokeStyle = "rgba(0,0,0,0.13)";
+                        ctx.lineWidth = 2.4;
+                        ctx.stroke();
+                    }
+
+                    // Ojos: se abren, mira a un lado y a otro, parpadea y pone la cara
+                    if (f >= 43) {
+                        let fc = "normal", lx = 0, blink = 0;
+                        if (f < 48)
+                            blink = 1 - (f - 43) / 5;
+                        else if (f < 55)
                             lx = -0.75;
-                        else if (f >= 31 && f < 37)
+                        else if (f < 62)
                             lx = 0.75;
-                        else if (f >= 37 && f < 40)
-                            blink = [0.6, 1, 0.4][f - 37];
-                        else if (f >= 40) {
-                            face = this.face;
-                            if (f < 46)
-                                y -= 12 * Math.sin((f - 40) / 6 * Math.PI);   // saltito
-                        }
-                        const base = 224 + y;
-                        ctx.translate(120, base);
-                        ctx.scale(1 + sq * 0.6, 1 - sq);
-                        ctx.translate(-120, -base);
+                        else if (f < 66)
+                            blink = [0.5, 1, 1, 0.4][f - 62];
+                        else
+                            fc = this.face;
                         Draw.avatar(ctx, {
-                            x: 120,
-                            y: base,
-                            s: 70,
-                            body: fetchCanvas.body,
-                            ink: fetchCanvas.ink,
-                            face: face === "asleep" && f < 40 ? "normal" : face,
-                            hat: shell.hat,
-                            stage: Bond.stage,
+                            eyesOnly: true,
+                            x: cx,
+                            y: sy + sh * 0.5,
+                            s: 76,
+                            ink: ink,
+                            face: fc === "asleep" && f < 66 ? "normal" : fc,
                             lx: lx,
-                            ly: ly,
-                            blink: blink,
-                            breath: 0.5,
-                            outline: "rgba(0,0,0,0.13)",
-                            shadow: f < 17 ? Math.max(0, (f - 5) / 12) : 1,
-                            t: f / 25
+                            blink: blink
                         });
+                        // el gorro de temporada, en lo alto del cuadrado
+                        if (shell.hat) {
+                            ctx.save();
+                            ctx.translate(cx, sy + 12);
+                            Hats.draw(ctx, shell.hat, 44, f / 25, 0);
+                            ctx.restore();
+                        }
                     }
                     ctx.restore();
                     pending = true;

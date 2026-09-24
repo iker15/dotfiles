@@ -16,5 +16,5 @@ done < "$src"
 (( i > 0 )) || exit 1
 # 25 fps; transparencia a 1 bit (las esquinas redondeadas del cuadrado)
 # (fotogramas completos: kitty no anima bien los GIF "optimizados" de ImageMagick)
-magick -delay 4 "$tmp"/f*.png -channel A -threshold 50% +channel -loop 1 "$tmp/out.gif"
+magick -delay 4 -dispose Background "$tmp"/f*.png -channel A -threshold 50% +channel -loop 1 "$tmp/out.gif"
 mv "$tmp/out.gif" "$out"
