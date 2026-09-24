@@ -387,6 +387,201 @@ ShellRoot {
     }
     property bool idleDrowsy: false
 
+    // ── Cariño (Bond.qml) ──
+    // Con mucho cariño te busca (se pone cerca del ratón, sin taparlo); enfurruñado te gira
+    // la cara y se va antes al nido. Te saluda al volver (arranque o desbloqueo tras un rato).
+    readonly property real seekYou: Bond.sulky ? 0 : Math.max(0, Math.min(1, (Bond.level - 0.6) / 0.4))
+    readonly property real nestFactor: Bond.sulky ? 0.4 : Bond.level < 0.3 ? 0.6 : Bond.level > 0.7 ? 1.5 : 1
+    property real lockedAt: 0
+    // Dejando el ratón encima un momento se ve un corazoncito con su cariño (lleno = 100)
+    property bool heartShown: false
+    Connections {
+        target: Bond
+
+        function onPouted(): void {
+            shell.reacted("sad", 1800);
+            shell.glanceX = shell.gx + (shell.gx < shell.cursorX ? -600 : 600);   // mira hacia el otro lado
+            shell.glanceY = shell.gy - 40;
+            shell.glanceUntil = Date.now() + 1800;
+            shell.leaned(shell.gx < shell.cursorX ? -120 : 120);
+        }
+        function onReconciled(): void {
+            shell.reacted("love", 2600);
+            shell.kicked(-1.4, 2.6);
+        }
+        function onLoadedChanged(): void {
+            if (Bond.loaded && Bond.awayHours > 0.5)
+                greetTimer.restart();
+        }
+    }
+    function greet(): void {
+        if (locked || dnd || !shown)
+            return;
+        if (Bond.sulky) {
+            // no sale: se queda en su sitio mirando mal
+            reacted("sad", 2000);
+            return;
+        }
+        if (Bond.level > 0.45) {
+            touch();
+            reacted("love", 2400);
+            kicked(-1.6, 2.8);
+        } else {
+            reacted("happy", 1200);
+        }
+    }
+    Timer {
+        id: greetTimer
+
+        interval: 3500
+        onTriggered: shell.greet()
+    }
+    // Estar en el PC con él a la vista (sin estar ausente) también cuenta, un poco
+    IdleMonitor {
+        id: awayMonitor
+
+        timeout: 300
+        respectInhibitors: false
+    }
+    Timer {
+        running: Bond.loaded && !shell.locked
+        repeat: true
+        interval: 600000
+        onTriggered: if (!awayMonitor.isIdle && shell.present && !shell.dnd) Bond.gain("presence")
+    }
+
+    // ── Ver vídeos contigo ──
+    // Si estás viendo un vídeo (YouTube, Twitch…; no música) en la pestaña visible, le pica la
+    // curiosidad: se acerca por el borde de abajo, se queda debajo mirándolo y reacciona de vez
+    // en cuando (y a veces te mira, como "¿has visto eso?"). Si lo pausas, te mira a ti.
+    property bool watching: false
+    property var videoRect: null
+    function isVideo(p: var): bool {
+        const url = String(p?.metadata?.["xesam:url"] ?? "");
+        return /youtube\.com\/(watch|shorts|live)|youtu\.be\/|twitch\.tv\/|vimeo\.com\/|netflix\.com\/watch|primevideo|disneyplus|max\.com|crunchyroll|dailymotion/.test(url);
+    }
+    // La ventana del navegador con esa pestaña delante (su título lleva el del vídeo)
+    property var videoTest: null   // (IPC `pet watchTest <ms>`: finge un vídeo en la ventana activa)
+    function findVideo(): var {
+        if (videoTest)
+            return videoTest;
+        const p = Mind.player;
+        if (!p || Mind.musicPlaying || !isVideo(p) || !p.trackTitle)
+            return null;
+        const t = p.trackTitle.slice(0, 40);
+        const tl = Hyprland.toplevels.values.find(w => (w.title ?? "").includes(t));
+        const o = tl?.lastIpcObject;
+        if (!o?.at || !o?.size || tl.workspace?.id !== mochiWs || o.fullscreen)
+            return null;
+        return [o.at[0], o.at[1], o.size[0], o.size[1]];
+    }
+    // Dónde estará el vídeo en la página (aprox.: arriba a la izquierda en YouTube, o
+    // centrado si la ventana es estrecha/shorts)
+    function videoCenter(r: var): var {
+        const shorts = /shorts/.test(String(Mind.player?.metadata?.["xesam:url"] ?? ""));
+        const wide = r[2] > 1100 && !shorts;
+        const vw = wide ? r[2] * 0.64 : r[2] * 0.9;
+        return {
+            x: wide ? r[0] + r[2] * 0.035 + vw / 2 : r[0] + r[2] / 2,
+            y: r[1] + 150 + (shorts ? 280 : vw * 9 / 32)
+        };
+    }
+    function watchStep(): void {
+        Hyprland.refreshToplevels();
+        const r = present && !dnd && !locked && !asking && !Brain.busy ? findVideo() : null;
+        if (!r) {
+            if (watching) {
+                watching = false;
+                videoRect = null;
+                if (present && !locked)
+                    reacted("curious", 1400);   // ¿ya no lo vemos?
+            }
+            return;
+        }
+        videoRect = r;
+        const c = videoCenter(r);
+        if (!watching) {
+            if (phys !== "swim" && phys !== "nest" && phys !== "hidden")
+                return;
+            watching = true;
+            if (phys !== "swim")
+                touch();
+            reacted("curious", 1800);
+            watchPlace.restart();
+        }
+        focusX = c.x;
+        focusY = c.y;
+        if (Date.now() > lookAtYouUntil)
+            focusUntil = Date.now() + 2500;
+    }
+    property real lookAtYouUntil: 0
+    // Se pone debajo del vídeo (en el suelo), un poco a un lado para no tapar los controles
+    function goWatch(): void {
+        if (!watching || !videoRect || phys !== "swim")
+            return;
+        const c = videoCenter(videoRect), s = nearestScreen(c.x, c.y), tr = track(s);
+        const x = Math.max(tr.L + tr.c, Math.min(tr.R - tr.c, c.x + (c.x > s.x + s.width / 2 ? -1 : 1) * 60));
+        const d = nearestD(tr, x, tr.B);
+        const dist = trackDiff(tr, swimD, d);
+        if (Math.abs(dist) > 900)
+            dive(dist, "peek", false, 1.6);
+        else if (Math.abs(dist) > 20) {
+            energy = 1.5;
+            swimTarget = d;
+        }
+    }
+    Timer {
+        id: heartHide
+
+        interval: 3000
+        onTriggered: shell.heartShown = false
+    }
+    Timer {
+        id: heartDelay
+
+        interval: 900
+        onTriggered: shell.heartShown = !shell.dragging && shell.phys !== "nest" && shell.phys !== "dive"
+    }
+    Timer {
+        id: watchTestEnd
+
+        onTriggered: shell.videoTest = null
+    }
+    Timer {
+        id: watchPlace
+
+        interval: 700
+        onTriggered: shell.goWatch()
+    }
+    Timer {
+        running: Mind.player !== null || shell.watching || shell.videoTest !== null
+        repeat: true
+        interval: 700
+        onTriggered: shell.watchStep()
+    }
+    // Viendo el vídeo: alguna reacción de vez en cuando, y a veces te mira a ti
+    Timer {
+        running: shell.watching && shell.phys === "swim"
+        repeat: true
+        interval: 15000
+        onTriggered: {
+            interval = 12000 + Math.random() * 25000;
+            const r = Math.random();
+            if (r < 0.3) {
+                shell.lookAtYouUntil = Date.now() + 1600;
+                shell.focusUntil = 0;
+                shell.reacted(Bond.level > 0.6 ? "happy" : "curious", 1400);
+            } else {
+                const faces = ["surprised", "happy", "curious", "excited", "confused"];
+                if (Bond.level > 0.6)
+                    faces.push("love");
+                shell.reacted(faces[Math.floor(Math.random() * faces.length)], 1300);
+                if (Math.random() < 0.4)
+                    shell.kicked(-0.9, 1.3);
+            }
+        }
+    }
+
     function shapeShift(name: string, ms: int): void {
         tempShape = name;
         tempShapeTimer.interval = ms > 0 ? ms : 2500;
@@ -496,6 +691,10 @@ ShellRoot {
 
     onLockedChanged: {
         Brain.locked = locked;
+        if (locked)
+            lockedAt = Date.now();
+        else if (lockedAt && Date.now() - lockedAt > 30 * 60000)
+            greetTimer.restart();
         if (locked)
             goLock();
         else
@@ -726,7 +925,9 @@ ShellRoot {
             const d = tr.len * i / 24, p = pointAt(tr, d);
             if ((accept && !accept(d)) || inPanel(p.x, p.y, bodyRx + 60))
                 continue;
-            let score = (onScreen ? Math.min(900, Math.hypot(p.x - cursorX, p.y - cursorY)) : 500) + Math.random() * 250;
+            // (con mucho cariño prefiere estar a media distancia del ratón, no lejos)
+            const dc = Math.hypot(p.x - cursorX, p.y - cursorY);
+            let score = (onScreen ? (1 - seekYou) * Math.min(900, dc) + seekYou * (800 - 2 * Math.abs(dc - 280)) : 500) + Math.random() * 250;
             if (p.nx !== 0 && Math.abs(p.ny) < 0.5)
                 score += 250 + 150 * (p.y - tr.T) / (tr.B - tr.T);   // paredes, mejor abajo
             else if (p.ny > 0.5)
@@ -1179,6 +1380,7 @@ ShellRoot {
             touch();
         reacted("love", 2400);
         splatted(420, false);
+        Bond.gain("pet");
     }
 
     // Se hunde en el marco (donde esté) dejando solo los ojos fuera
@@ -1519,6 +1721,7 @@ ShellRoot {
             shell.touch();
             shell.remark = "";
             if (Brain.busy) {
+                Bond.gain("talk");
                 shell.bubbleShown = true;
                 hideTimer.stop();
             } else {
@@ -1730,6 +1933,29 @@ ShellRoot {
         function hat(name: string): void {
             shell.hatChoice = name || "auto";
         }
+        // Cariño: ver/poner (0-100, −1 = solo ver) y simular días sin hacerle caso
+        function bond(v: real): string {
+            if (v >= 0)
+                Bond.bond = Math.min(100, v);
+            return `cariño ${Bond.bond.toFixed(1)} · hoy +${Bond.gainedToday.toFixed(1)} (estar cerca +${Bond.presenceToday.toFixed(2)}) · sin caso ${((Date.now() - Bond.lastTouch) / 3600000).toFixed(1)} h · enfurruñado ${Bond.sulky} · viendo vídeo ${shell.watching}`;
+        }
+        function ignoreDays(days: real): void {
+            Bond.lastTouch = Date.now() - days * 86400000;
+            Bond.now = Date.now();
+        }
+        function greet(): void {
+            shell.greet();
+        }
+        function heart(): void {
+            shell.heartShown = true;
+            heartHide.restart();
+        }
+        function watchTest(ms: int): void {
+            const o = Hyprland.activeToplevel?.lastIpcObject;
+            shell.videoTest = o?.at ? [o.at[0], o.at[1], o.size[0], o.size[1]] : null;
+            watchTestEnd.interval = ms > 0 ? ms : 20000;
+            watchTestEnd.restart();
+        }
         function world(): string {
             return `cpu ${shell.cpuTemp}° gpu ${shell.gpuTemp}° media ${shell.heatT.toFixed(1)}° derretido ${shell.melt.toFixed(2)} · tiempo ${shell.weatherCode} ${shell.weatherTemp}° lluvia ${shell.raining} nieve ${shell.snowing} (${shell.snowAmt.toFixed(2)}) frío ${shell.cold} · aplastado ${shell.press.toFixed(2)} · gorro «${shell.hat}» · reposo ${shell.idleFirst} s · ventana activa ${JSON.stringify(Hyprland.activeToplevel?.lastIpcObject?.at)} ${JSON.stringify(Hyprland.activeToplevel?.lastIpcObject?.size)} flotante ${Hyprland.activeToplevel?.lastIpcObject?.floating}`;
         }
@@ -1803,7 +2029,9 @@ ShellRoot {
                     const dx = tx - shell.gx, dy = ty - shell.gy;
                     const d = Math.hypot(dx, dy);
                     shell.cursorNear = Math.hypot(p.x - shell.gx, p.y - shell.gy) < 220;
-                    shell.lookX = d < 20 ? 0 : dx / (d + 60);
+                    // enfurruñado no te mira (salvo que algo le llame la atención)
+                    const away = Bond.sulky && !focusing && !glancing ? -0.8 : 1;
+                    shell.lookX = d < 20 ? 0 : away * dx / (d + 60);
                     shell.lookY = d < 20 ? 0 : dy / (d + 60);
                 } catch (e) {}
             }
@@ -1863,7 +2091,7 @@ ShellRoot {
     // Paseos: de vez en cuando nada a otro sitio del marco, da saltitos por el suelo o se
     // impulsa desde una pared (y la gravedad lo devuelve al marco)
     Timer {
-        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && shell.melt < 0.6 && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        running: shell.shown && shell.present && !shell.fsHide && !shell.dozing && !shell.dnd && shell.phys === "swim" && isNaN(shell.swimTarget) && !shell.sipping && !shell.watching && shell.melt < 0.6 && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
         repeat: true
         interval: 9000
         onTriggered: {
@@ -1881,10 +2109,19 @@ ShellRoot {
                 }
             }
             if (r < 0.38) {
-                // A otro sitio (no muy lejos, y que no sea junto al ratón)
+                // A otro sitio (no muy lejos, y que no sea junto al ratón… salvo que te quiera
+                // mucho: entonces a veces se te acerca, sin ponerse debajo)
+                if (Math.random() < shell.seekYou * 0.6) {
+                    const d = shell.nearestD(tr, shell.cursorX + (Math.random() < 0.5 ? -1 : 1) * (170 + Math.random() * 120), shell.cursorY), q = shell.pointAt(tr, d);
+                    if (q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60) && Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 140) {
+                        shell.energy = (0.9 + Math.random() * 0.4) * shell.dayEnergy;
+                        shell.swimTarget = d;
+                        return;
+                    }
+                }
                 for (let i = 0; i < 6; i++) {
                     const d = shell.swimD + (Math.random() * 2 - 1) * 700, q = shell.pointAt(tr, d);
-                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
+                    if (Math.hypot(q.x - shell.cursorX, q.y - shell.cursorY) > 300 * (1 - 0.5 * shell.seekYou) && q.ny > -0.9 && !shell.inPanel(q.x, q.y, shell.bodyRx + 60)) {
                         shell.energy = (0.75 + Math.random() * 0.6) * shell.dayEnergy;
                         shell.swimTarget = ((d % tr.len) + tr.len) % tr.len;
                         break;
@@ -2268,8 +2505,8 @@ ShellRoot {
     Timer {
         id: idleHide
 
-        running: shell.shown && shell.present && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
-        interval: shell.hideAfter * Math.max(0.5, Math.min(1.3, shell.dayEnergy))
+        running: shell.shown && shell.present && shell.phys !== "hidden" && shell.phys !== "nest" && shell.phys !== "dive" && !shell.watching && !shell.asking && !shell.bubbleShown && !shell.voiceWaiting && !Brain.busy
+        interval: shell.hideAfter * Math.max(0.5, Math.min(1.3, shell.dayEnergy)) * shell.nestFactor
         onTriggered: {
             if (shell.phys !== "swim") {
                 restart();
@@ -2394,6 +2631,56 @@ ShellRoot {
                         property vector4d arm: Qt.vector4d(shell.armTip.x - win.modelData.x - x, shell.armTip.y - win.modelData.y - y, Math.max(0, shell.armTip.z), 6)
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")
+                    }
+
+                    // Corazoncito de cariño (encima de la cabeza, al dejar el ratón encima)
+                    Canvas {
+                        id: heart
+
+                        readonly property real level: Bond.level
+                        readonly property bool sulky: Bond.sulky
+                        onLevelChanged: requestPaint()
+                        onSulkyChanged: requestPaint()
+
+                        visible: mochi.visible && opacity > 0
+                        opacity: shell.heartShown && !shell.dragging ? 1 : 0
+                        scale: 0.6 + 0.4 * opacity
+                        width: 30
+                        height: 28
+                        x: shell.gx - win.modelData.x - width / 2
+                        y: shell.gy - win.modelData.y - shell.bodyRy - (shell.hat ? 78 : 44) - height / 2
+
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: 250
+                            }
+                        }
+
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            const path = () => {
+                                ctx.beginPath();
+                                ctx.moveTo(15, 25);
+                                ctx.bezierCurveTo(-2, 14, 3, 1, 15, 8);
+                                ctx.bezierCurveTo(27, 1, 32, 14, 15, 25);
+                            };
+                            // relleno de abajo arriba según el cariño
+                            path();
+                            ctx.fillStyle = "rgba(255,255,255,0.85)";
+                            ctx.fill();
+                            ctx.save();
+                            path();
+                            ctx.clip();
+                            ctx.fillStyle = sulky ? "#8a8fa8" : "#e8566c";
+                            const top = 26 - level * 22;
+                            ctx.fillRect(0, top, 30, 30);
+                            ctx.restore();
+                            path();
+                            ctx.lineWidth = 1.8;
+                            ctx.strokeStyle = sulky ? "#5b5f73" : "#b8364c";
+                            ctx.stroke();
+                        }
                     }
 
                     // El paraguas (lloviendo de verdad) y la lluvia a su alrededor; o copos si nieva
@@ -2748,6 +3035,8 @@ ShellRoot {
                 // verdad salen al asomarse)
                 drowsy: shell.caffeine ? 0 : Math.max(shell.drowsy, shell.idleDrowsy ? 0.8 : 0)
                 melt: shell.melt
+                affection: Bond.level
+                sulky: Bond.sulky
                 press: shell.press
                 pressVertical: Math.abs(shell.nY) >= Math.abs(shell.nX)
                 snow: shell.snowAmt
@@ -2821,8 +3110,11 @@ ShellRoot {
                             mochi.wake();   // pasarle el ratón lo despierta
                             shell.nestHover = true;
                             nestLeave.stop();
+                            heartDelay.restart();
                         } else {
                             nestLeave.restart();
+                            heartDelay.stop();
+                            shell.heartShown = false;
                         }
                         if (containsMouse && shell.phys === "hidden")
                             shell.touch();
@@ -2882,6 +3174,8 @@ ShellRoot {
                         }
                         if (!moved && Math.hypot(mouse.x - px, mouse.y - py) < 4)
                             return;
+                        if (!moved)
+                            Bond.gain("hold");
                         moved = true;
                         shell.dragging = true;
                         // Al moverse Mochi, el ratón vuelve a quedar en (px, py) relativo a él

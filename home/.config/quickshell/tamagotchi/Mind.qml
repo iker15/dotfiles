@@ -90,6 +90,8 @@ Singleton {
             parts.push(`ventana activa: ${activeClass} «${activeTitle.slice(0, 80)}»`);
         if (player)
             parts.push(`${musicPlayer ? "suena la canción" : "se está reproduciendo (vídeo/audio, no música)"} «${player.trackTitle}»${player.trackArtist ? " de " + player.trackArtist : ""}`);
+        if (Bond.loaded)
+            parts.push(`tu cariño hacia Iker: ${Math.round(Bond.bond)}/100${Bond.sulky ? " (estás algo dolido: lleva días sin hacerte caso)" : ""}`);
         if (batteryLevel >= 0)
             parts.push(`batería ${Math.round(batteryLevel * 100)}%${UPower.onBattery ? "" : " (enchufado)"}`);
         return parts.join("; ");

@@ -55,6 +55,8 @@ Item {
     // una ventana que lo aplasta (press, en el eje de la normal del marco), nieve que se le
     // acumula en la cabeza (snow 0-1) y el gorro de temporada (Hats.js)
     property real melt: 0
+    property real affection: 0.3     // cariño (0-1): con mucho, a veces pone ojos de amor
+    property bool sulky: false       // enfurruñado: gestos tristes, nada de alegrías
     property real press: 0
     property bool pressVertical: true   // apoyado en suelo/techo (si no, en una pared)
     property real snow: 0
@@ -867,7 +869,7 @@ Item {
                 return;
             }
             root.nods = 0;
-            const pick = root.music && Math.random() < 0.5 ? "dance" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
+            const pick = root.music && Math.random() < 0.5 ? "dance" : root.sulky ? ["sorry", "sad", "lookaround", "calm"][Math.floor(Math.random() * 4)] : root.affection > 0.5 && Math.random() < 0.2 * root.affection ? "love" : ["lookaround", "wink", "smile", "curious", "doubleblink", "wiggle", "roll", "calm"][Math.floor(Math.random() * 8)];
             if (pick === "doubleblink") {
                 root.doBlink();
                 doubleBlink.restart();
