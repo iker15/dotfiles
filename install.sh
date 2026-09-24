@@ -66,6 +66,10 @@ systemctl --user enable --now caelestia-dark.path pipewire.socket pipewire-pulse
 log "Preparando el oído de Mochi"
 "$HOME/.config/quickshell/tamagotchi/setup-voice.sh" || echo "  (sin voz: ejecuta setup-voice.sh más tarde)"
 
+# --- 4b. Mochi: pantalla de arranque (Plymouth) -----------------------------
+log "Poniendo a Mochi en el arranque"
+"$HOME/dotfiles/system/plymouth/mochi/install.sh" || echo "  (sin tema de arranque: ejecuta system/plymouth/mochi/install.sh más tarde)"
+
 # --- 5. Shell ----------------------------------------------------------------
 if [ "$(getent passwd "$USER" | cut -d: -f7)" != "/bin/fish" ]; then
     log "Poniendo fish como shell"
