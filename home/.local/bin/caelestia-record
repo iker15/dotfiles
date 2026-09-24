@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# Wrapper de `caelestia record` que pide un nombre al parar la grabación.
-# Uso: caelestia-record [args de caelestia record]
+# Wrapper de `caelestia record` que pide un nombre al parar la grabación y avisa al pausar.
+# Uso: caelestia-record [args de caelestia record]   (-p: pausar / seguir)
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -11,10 +13,27 @@ from caelestia.utils.notify import close_notification, notify
 from caelestia.utils.paths import recording_notif_path, recording_path, recordings_dir
 
 RECORDER = "gpu-screen-recorder"
+# (en pausa o no: gpu-screen-recorder no lo dice, así que lo apuntamos aquí)
+PAUSED = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "caelestia-record-paused")
+
+
+def pids() -> list[int]:
+    p = subprocess.run(["pidof", RECORDER], capture_output=True, text=True)
+    return [int(x) for x in p.stdout.split()]
 
 
 def running() -> bool:
-    return subprocess.run(["pidof", RECORDER], stdout=subprocess.DEVNULL).returncode == 0
+    return bool(pids())
+
+
+# (por número de proceso: `pkill -f` también le daría a cualquier terminal cuyo comando
+# contenga "gpu-screen-recorder")
+def signal_recorder(sig: int) -> None:
+    for pid in pids():
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            pass
 
 
 def ask_name(default: str) -> str:
@@ -37,8 +56,31 @@ def ask_name(default: str) -> str:
     return name or default
 
 
+def toast(title: str, body: str, icon: str) -> None:
+    # (se sustituyen entre sí: pausa ↔ sigue)
+    subprocess.run([
+        "notify-send", "-a", "Grabación", "-i", icon, "-t", "2500",
+        "-h", "string:x-canonical-private-synchronous:caelestia-record-pause", title, body,
+    ])
+
+
+def pause() -> None:
+    if not running():
+        toast("No estás grabando", "Empieza con Ctrl + Alt + R", "media-record")
+        return
+    signal_recorder(signal.SIGUSR2)
+    if os.path.exists(PAUSED):
+        os.remove(PAUSED)
+        toast("Grabación reanudada", "Sigue grabando", "media-record")
+    else:
+        open(PAUSED, "w").close()
+        toast("Grabación en pausa", "Ctrl + Alt + P para seguir", "media-playback-pause")
+
+
 def stop() -> None:
-    subprocess.run(["pkill", "-f", RECORDER], stdout=subprocess.DEVNULL)
+    if os.path.exists(PAUSED):
+        os.remove(PAUSED)
+    signal_recorder(signal.SIGINT)
     while running():
         time.sleep(0.1)
 
@@ -81,7 +123,11 @@ def stop() -> None:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    if running() and "-p" not in args and "--pause" not in args:
+    if "-p" in args or "--pause" in args:
+        pause()
+    elif running():
         stop()
     else:
+        if os.path.exists(PAUSED):
+            os.remove(PAUSED)
         sys.exit(subprocess.run(["caelestia", "record", *args]).returncode)

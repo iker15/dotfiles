@@ -11,6 +11,9 @@ hl.window_rule({ match = { class = "kitty" }, opaque = true })
 -- VS Code: un poco más transparente que el resto (activa / inactiva)
 hl.window_rule({ match = { class = "code-oss", fullscreen = false }, opacity = "0.88 override 0.82 override" })
 
+-- CTRL + ALT + P: pausar / seguir la grabación de pantalla (avisa con una notificación)
+hl.bind("CTRL + ALT + P", hl.dsp.exec_cmd("~/.local/bin/caelestia-record -p"))
+
 -- SUPER + L: bloquear con los colores de la foto de perfil (~/.face)
 hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
 
