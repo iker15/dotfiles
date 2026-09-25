@@ -1,8 +1,8 @@
 {
     "name": "mochi-companion",
     "displayName": "Mochi",
-    "description": "Mochi (tu mascota de Quickshell) en el editor: se preocupa con los errores y se alegra cuando los arreglas.",
-    "version": "1.3.1",
+    "description": "Mochi (tu mascota de Quickshell) en el editor: te mira programar, gana experiencia, se agobia con los errores y celebra tus commits.",
+    "version": "1.4.0",
     "publisher": "iker",
     "license": "MIT",
     "engines": {

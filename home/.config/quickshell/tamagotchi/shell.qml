@@ -4395,6 +4395,10 @@ ShellRoot {
         function pop(): void {
             shell.heartPop();
         }
+        // Lo tocas en el panel del editor: cuenta como cariño (como tocarlo en el escritorio)
+        function codePoke(): void {
+            Bond.gain("poke");
+        }
         function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
             shell.enterTerm(row, cols, rows, w, h);
         }

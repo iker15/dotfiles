@@ -1,0 +1,122 @@
+/* Panel de Mochi: él abajo a la izquierda (el lienzo ocupa todo el panel) y su ficha a la derecha;
+   si el panel es estrecho, la ficha va arriba y él debajo */
+html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+    color: var(--vscode-foreground);
+}
+canvas {
+    position: absolute;
+    inset: 0;
+}
+#info {
+    position: absolute;
+    left: var(--info-left, 150px);
+    right: 10px;
+    bottom: 12px;
+    display: none;
+}
+body.here #info { display: block; }
+body.narrow #info {
+    left: 10px;
+    bottom: auto;
+    top: 8px;
+}
+#name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#stage { font-weight: 400; opacity: .6; font-size: 11px; }
+#lvl { display: flex; justify-content: space-between; opacity: .85; margin: 3px 0 4px; font-size: 11px; }
+#lvlXp { opacity: .75; font-variant-numeric: tabular-nums; }
+#bar {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--vscode-editorWidget-border, rgba(128, 128, 128, .3));
+    overflow: hidden;
+}
+#fill {
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background: var(--vscode-progressBar-background, #4d8);
+    transition: width .6s;
+}
+#today, #mood, #langs {
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#today { opacity: .8; font-variant-numeric: tabular-nums; }
+#mood { opacity: .65; }
+#langs { opacity: .5; font-size: 11px; margin-top: 2px; }
+#row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+button {
+    font: inherit;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    cursor: pointer;
+    color: var(--vscode-foreground);
+    background: transparent;
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, .35));
+    opacity: .75;
+}
+button:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .15)); }
+button:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+#errs {
+    display: none;
+    color: var(--vscode-errorForeground, #f48771);
+    border-color: currentColor;
+    opacity: .9;
+}
+#errs.on { display: inline-block; }
+/* (si la ficha no cabe, va quitando lo menos importante: ver fitInfo) */
+body.fit1 #langs { display: none; }
+body.fit2 #mood { display: none; }
+body.fit3 #today { display: none; }
+/* (bajito, sin sitio: solo lo esencial) */
+body.short #mood, body.short #langs, body.short #row { display: none; }
+body.short #today { display: none; }
+
+#away {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    padding: 10px 14px;
+    opacity: .65;
+    line-height: 1.45;
+}
+body.gone #away { display: flex; }
+
+/* Bocadillo blanco de cómic (como el del escritorio) */
+#bubble {
+    position: absolute;
+    max-width: 180px;
+    padding: 5px 9px;
+    border-radius: 11px;
+    background: #fff;
+    color: #1c1b1b;
+    font-size: 11.5px;
+    line-height: 1.3;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+    opacity: 0;
+    transform: translateY(4px) scale(.96);
+    transform-origin: 20px 100%;
+    transition: opacity .18s, transform .18s;
+    pointer-events: none;
+}
+#bubble.on { opacity: 1; transform: none; }
+#bubble::after {
+    content: "";
+    position: absolute;
+    left: 16px;
+    bottom: -5px;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    transform: rotate(45deg);
+}

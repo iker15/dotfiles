@@ -24,7 +24,7 @@ manifest = f"""<?xml version="1.0" encoding="utf-8"?>
 types = """<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension=".json" ContentType="application/json"/><Default Extension=".js" ContentType="application/javascript"/>
-<Default Extension=".png" ContentType="image/png"/><Default Extension=".vsixmanifest" ContentType="text/xml"/>
+<Default Extension=".png" ContentType="image/png"/><Default Extension=".css" ContentType="text/css"/><Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>"""
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("[Content_Types].xml", types)
