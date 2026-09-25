@@ -1438,7 +1438,7 @@ ShellRoot {
     }
     function guestEnergy(g: var): real {
         const t = g.look?.traits ?? [];
-        return (t.includes("inquieto") ? 1.25 : 1) * (t.includes("dormilon") ? 0.8 : 1);
+        return (t.includes("inquieto") ? 1.25 : 1) * (t.includes("dormilon") ? 0.8 : 1) * (g.boost ?? 1);
     }
     function guestFace(g: var, name: string, ms: int): void {
         guestReacted(g.slot, name, ms);
@@ -1633,6 +1633,7 @@ ShellRoot {
         g.vx = g.vy = 0;
         g.stride = null;
         g.goal = NaN;
+        g.hopping = false;
         g.onSideSince = Date.now();
         g.pauseUntil = Date.now() + 500;
         g.next = Date.now() + 900 + Math.random() * 1500;
@@ -1666,6 +1667,517 @@ ShellRoot {
             return d;
         }
         return NaN;
+    }
+    // ── Los visitantes entre ellos ──
+    // Cada pocos segundos dos que estén libres en el suelo se juntan y hacen algo, según su
+    // carácter (Traits.js), la hora, la música y el frío. Un encuentro (`socials`) es un guion por
+    // fases entre el que lo propone (a) y el otro (b); mientras dura, ninguno de los dos elige
+    // adónde ir (g.act). Tipos:
+    //   saludo (cualquiera) · mimos (mimoso; un tímido huye) · pillapilla (juguetón, inquieto;
+    //   noctámbulo de noche) · siesta (dormilón; madrugador de noche) y despertar (inquieto a
+    //   uno que duerme) · baile (bailongo, con música) · curiosear (curioso) · presumir
+    //   (presumido; otro presumido se pica) · proteger (valiente a un tímido) · acurrucarse
+    //   (friolero, con frío)
+    property var socials: []
+    property real socialNext: 0
+    function gHas(g: var, id: string): bool {
+        return (g?.look?.traits ?? []).includes(id);
+    }
+    function guestByFrom(name: string): var {
+        return guests.find(o => o.from === name) ?? null;
+    }
+    // libre para un encuentro: en el suelo, quieto y sin nada entre manos
+    function guestFree(g: var, now: real): bool {
+        return g.phys === "swim" && !g.leaving && !g.entering && !g.act && g.greeted && isNaN(g.goal) && !g.stride && g.ny > 0.5 && now > (g.socialAfter ?? 0) && !guestHidden(g);
+    }
+    // ir a una x del suelo (dentro del marco)
+    function guestGoX(g: var, x: real): void {
+        const tr = guestTrack(g);
+        if (!tr)
+            return;
+        g.goal = nearestD(tr, Math.max(tr.L + g.rx + 12, Math.min(tr.R - g.rx - 12, x)), tr.B);
+        g.stride = null;
+    }
+    function guestArrived(g: var): bool {
+        return isNaN(g.goal) && !g.stride;
+    }
+    // a su lado (por el lado en el que ya está)
+    function besideX(g: var, o: var, gap: real): real {
+        const side = g.x < o.x ? -1 : 1;
+        return o.x + side * (o.rx + g.rx + gap);
+    }
+    function guestHop(g: var, vy: real, vx: real): void {
+        if (g.phys !== "swim" || g.ny < 0.5)
+            return;
+        g.phys = "air";
+        g.hopping = true;
+        g.vx = vx;
+        g.vy = -vy;
+        g.y -= 6;
+        g.stride = null;
+    }
+    function guestLookAt(g: var, x: real, y: real): void {
+        const dx = x - g.x, dy = y - g.y, dd = Math.hypot(dx, dy);
+        g.lx = dd < 20 ? 0 : dx / (dd + 60);
+        g.ly = dd < 20 ? 0 : dy / (dd + 60);
+        g.lookUntil = Date.now() + 400;
+    }
+    function isNight(): bool {
+        const h = new Date().getHours();
+        return h >= 23 || h < 6;
+    }
+
+    // Qué le apetece hacer a `a` con `b` (pesos según los dos caracteres)
+    function socialPick(a: var, b: var): string {
+        const opts = [["saludo", 2]];
+        const add = (k, w) => opts.push([k, w]);
+        const night = isNight();
+        if (gHas(a, "mimoso"))
+            add("mimos", 5);
+        if (gHas(a, "jugueton") || gHas(a, "inquieto") || (night && gHas(a, "noctambulo")))
+            add("pillapilla", gHas(b, "dormilon") ? 1 : 4);
+        if (gHas(a, "dormilon") || (night && gHas(a, "madrugador")))
+            add("siesta", gHas(b, "dormilon") || gHas(b, "mimoso") ? 6 : 2);
+        if (Mind.musicPlaying && gHas(a, "bailongo"))
+            add("baile", gHas(b, "bailongo") ? 9 : 5);
+        if (gHas(a, "curioso"))
+            add("curiosear", 4);
+        if (gHas(a, "presumido"))
+            add("presumir", 4);
+        if (gHas(a, "valiente") && gHas(b, "timido"))
+            add("proteger", 7);
+        if (cold && gHas(a, "friolero"))
+            add("acurrucarse", 8);
+        if (gHas(a, "timido") && !gHas(b, "valiente"))
+            opts[0][1] = 0.6;   // (al tímido le cuesta: casi nunca se acerca a saludar)
+        let tot = 0;
+        for (const o of opts)
+            tot += o[1];
+        let r = Math.random() * tot;
+        for (const o of opts)
+            if ((r -= o[1]) <= 0)
+                return o[0];
+        return "saludo";
+    }
+
+    function socialStart(kind: string, a: var, b: var, now: real): void {
+        const ev = {
+            kind: kind,
+            a: a.from,
+            b: b.from,
+            phase: "go",
+            t: now,
+            until: now + (kind === "siesta" ? 45000 : 22000),
+            n: 0
+        };
+        a.act = ev;
+        b.act = ev;
+        a.goal = b.goal = NaN;
+        a.stride = b.stride = null;
+        socials = socials.concat([ev]);
+    }
+    function socialEnd(ev: var, now: real): void {
+        for (const name of [ev.a, ev.b]) {
+            const g = guestByFrom(name);
+            if (!g || g.act !== ev)
+                continue;
+            g.act = null;
+            g.boost = 1;
+            g.nap = false;
+            g.goal = NaN;
+            g.next = now + 1500 + Math.random() * 3000;
+            g.socialAfter = now + 12000 + Math.random() * 18000;
+        }
+        socials = socials.filter(e => e !== ev);
+    }
+    // Uno se va corriendo (el tímido): lejos del otro
+    function guestFlee(g: var, from: var): void {
+        const tr = guestTrack(g);
+        if (!tr)
+            return;
+        const dir = g.x < from.x ? -1 : 1;
+        let x = g.x + dir * (280 + Math.random() * 200);
+        if (x < tr.L + 60 || x > tr.R - 60)
+            x = g.x - dir * (280 + Math.random() * 200);   // (acorralado: por el otro lado)
+        g.boost = 1.7;
+        guestGoX(g, x);
+    }
+
+    function guestSocial(now: real): void {
+        if (dnd)
+            return;   // (con No molestar duermen todos)
+        for (const ev of socials.slice())
+            socialStep(ev, now);
+        if (now < socialNext)
+            return;
+        socialNext = now + 5000 + Math.random() * 7000;
+        const free = guests.filter(g => guestFree(g, now));
+        if (free.length < 2)
+            return;
+        // despertar a uno que duerme (el inquieto no lo soporta)
+        const nappers = guests.filter(g => g.nap && g.act?.phase === "nap");
+        const pest = free.find(g => gHas(g, "inquieto"));
+        if (pest && nappers.length && Math.random() < 0.5) {
+            const v = nappers[Math.floor(Math.random() * nappers.length)];
+            if (v.sname === pest.sname) {
+                pest.act = {
+                    kind: "despertar",
+                    a: pest.from,
+                    b: v.from,
+                    phase: "go",
+                    t: now,
+                    until: now + 15000,
+                    n: 0
+                };
+                pest.goal = NaN;
+                socials = socials.concat([pest.act]);
+                return;
+            }
+        }
+        const a = free[Math.floor(Math.random() * free.length)];
+        const others = free.filter(o => o !== a && o.sname === a.sname && Math.abs(o.x - a.x) < 1100);
+        if (!others.length)
+            return;
+        // (el más cercano, casi siempre)
+        others.sort((p, q) => Math.abs(p.x - a.x) - Math.abs(q.x - a.x));
+        const b = Math.random() < 0.7 ? others[0] : others[Math.floor(Math.random() * others.length)];
+        socialStart(socialPick(a, b), a, b, now);
+    }
+
+    function socialStep(ev: var, now: real): void {
+        const a = guestByFrom(ev.a), b = guestByFrom(ev.b);
+        const gone = g => !g || g.leaving || g.phys === "held" || (g.phys === "air" && !g.hopping);
+        // (lo han cogido, se ha ido o tarda demasiado: se acaba)
+        if (gone(a) || gone(b) || now > ev.until) {
+            socialEnd(ev, now);   // (en «despertar», el dormido sigue con su siesta)
+            return;
+        }
+        if (a.phys !== "swim" || (ev.kind !== "despertar" && b.phys !== "swim"))
+            return;   // (en el aire, dando un salto: espera a que aterrice)
+        const el = now - ev.t;
+        const next = phase => {
+            ev.phase = phase;
+            ev.t = now;
+            ev.n = 0;
+        };
+        // se miran
+        if (ev.kind !== "siesta" || ev.phase === "go") {
+            guestLookAt(a, b.x, b.y - b.ry * 0.3);
+            if (ev.kind !== "despertar" && ev.kind !== "pillapilla")
+                guestLookAt(b, a.x, a.y - a.ry * 0.3);
+        }
+
+        switch (ev.kind) {
+        case "saludo":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, gHas(a, "timido") ? 60 : 14));   // (el tímido, de lejos)
+                if (ev.n > 1 && guestArrived(a)) {
+                    guestFace(a, gHas(a, "timido") ? "sleepy" : "happy", 1800);
+                    guestFace(b, gHas(b, "timido") ? "surprised" : "happy", 1800);
+                    guestHop(a, 420, 0);
+                    if (gHas(a, "mimoso") || gHas(b, "mimoso"))
+                        heartPopAt((a.x + b.x) / 2, Math.min(a.y, b.y) - a.ry - 24);
+                    next("hi");
+                }
+            } else if (ev.phase === "hi" && el > 900) {
+                if (ev.n++ === 0 && !gHas(b, "timido"))
+                    guestHop(b, 380, 0);   // (le devuelve el saludo)
+                if (el > 1800)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "mimos":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, 2));
+                // el tímido no se deja: en cuanto lo ve venir, se va
+                if (gHas(b, "timido") && Math.abs(a.x - b.x) < 260) {
+                    guestFace(b, "surprised", 1200);
+                    guestKicked(b.slot, 0, -1.4);
+                    guestFlee(b, a);
+                    next("shy");
+                } else if (ev.n > 1 && guestArrived(a)) {
+                    next("cuddle");
+                }
+            } else if (ev.phase === "cuddle") {
+                // se arrima meneándose y le salen corazones (y al otro, si también es mimoso)
+                if (el > ev.n * 700 && ev.n < 5) {
+                    const side = a.x < b.x ? 1 : -1;
+                    guestKicked(a.slot, side * 1.1, 0.5);
+                    guestKicked(b.slot, side * 0.6, 0.3);
+                    guestFace(a, "love", 1200);
+                    guestFace(b, gHas(b, "mimoso") || gHas(b, "dormilon") ? "love" : "happy", 1200);
+                    if (ev.n % 2 === 0)
+                        heartPopAt((a.x + b.x) / 2, Math.min(a.y, b.y) - a.ry - 24);
+                    ev.n++;
+                }
+                if (el > 3800)
+                    socialEnd(ev, now);
+            } else if (ev.phase === "shy") {
+                if (ev.n++ === 0)
+                    guestFace(a, "sad", 2200);   // (al mimoso le da pena)
+                if (el > 2200)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "pillapilla":
+            if (ev.phase === "go") {
+                // lo invita: da saltitos delante de él y sale corriendo
+                if (ev.n++ === 0) {
+                    guestFace(a, "excited", 1500);
+                    guestHop(a, 520, 0);
+                }
+                if (el > 900 && a.phys === "swim") {
+                    guestFace(b, gHas(b, "dormilon") ? "sleepy" : "excited", 1200);
+                    next("run");
+                    ev.chaser = b.from;   // (le toca pillar al otro)
+                    ev.swaps = 0;
+                }
+            } else if (ev.phase === "run") {
+                const c = guestByFrom(ev.chaser), r = c === a ? b : a;
+                c.boost = gHas(c, "dormilon") ? 1.2 : 1.7;
+                r.boost = 1.6;
+                if (!c.stride)
+                    guestGoX(c, r.x);
+                if (guestArrived(r) || (!r.stride && Math.abs(r.x - c.x) < 200))
+                    guestFlee(r, c);
+                guestLookAt(r, c.x, c.y);
+                // ¡pillado!
+                if (Math.abs(c.x - r.x) < c.rx + r.rx + 6) {
+                    guestFace(c, "excited", 1200);
+                    guestFace(r, "surprised", 900);
+                    guestKicked(r.slot, c.x < r.x ? 1.8 : -1.8, 0.6);
+                    c.goal = r.goal = NaN;
+                    c.stride = r.stride = null;
+                    if (ev.swaps++ < 1 && !gHas(r, "dormilon")) {
+                        ev.chaser = r.from;   // (ahora pilla él)
+                        ev.t = now;
+                    } else {
+                        next("end");
+                    }
+                } else if (el > 9000) {
+                    next("end");   // (se cansan)
+                }
+            } else if (ev.phase === "end") {
+                if (ev.n++ === 0) {
+                    a.boost = b.boost = 1;
+                    guestFace(a, "happy", 2000);
+                    guestFace(b, gHas(b, "dormilon") ? "sleepy" : "happy", 2000);
+                    guestHop(a, 380, 0);
+                }
+                if (el > 1500)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "siesta":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0) {
+                    guestFace(a, "sleepy", 3000);
+                    guestGoX(a, besideX(a, b, 0));
+                }
+                if (ev.n > 1 && guestArrived(a)) {
+                    guestFace(b, "sleepy", 1500);
+                    next("nap");
+                }
+            } else if (ev.phase === "nap") {
+                if (el > 1200 && !a.nap) {
+                    a.nap = true;
+                    if (!gHas(b, "inquieto"))
+                        b.nap = true;   // (el inquieto no se duerme: se queda mirando y se va)
+                    else
+                        ev.until = Math.min(ev.until, now + 4000);
+                    guestKicked(a.slot, a.x < b.x ? 0.6 : -0.6, 0.8);   // (se acomoda)
+                }
+                // de vez en cuando se recolocan en sueños
+                if (a.nap && Math.random() < 0.004)
+                    guestKicked((Math.random() < 0.5 ? a : b).slot, (Math.random() - 0.5) * 0.8, 0.5);
+            }
+            break;
+
+        case "despertar":
+            // b duerme (en su propia siesta): a va, da un salto a su lado y lo despierta
+            if (ev.phase === "go") {
+                if (ev.n++ === 0) {
+                    a.boost = 1.5;
+                    guestGoX(a, besideX(a, b, 8));
+                }
+                if (!b.nap) {
+                    socialEnd(ev, now);
+                } else if (ev.n > 1 && guestArrived(a)) {
+                    guestFace(a, "excited", 1400);
+                    guestHop(a, 560, 0);
+                    next("boo");
+                }
+            } else if (ev.phase === "boo" && el > 500) {
+                const sleepers = guests.filter(g => g.nap && g.act === b.act);
+                for (const s of sleepers) {
+                    s.nap = false;
+                    guestFace(s, gHas(s, "dormilon") ? "sulky" : "surprised", 2200);
+                    guestKicked(s.slot, 0, -2);
+                }
+                if (b.act)
+                    socialEnd(b.act, now);
+                socialEnd(ev, now);
+            }
+            break;
+
+        case "baile":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, 20));
+                if (!Mind.musicPlaying)
+                    socialEnd(ev, now);
+                else if (ev.n > 1 && guestArrived(a))
+                    next("dance");
+            } else if (ev.phase === "dance") {
+                // al ritmo (~0.55 s): se menean a la vez de un lado a otro y saltan cada 4
+                const beat = Math.floor(el / 550);
+                if (beat > ev.n) {
+                    ev.n = beat;
+                    const s = beat % 2 ? 1 : -1;
+                    for (const g of [a, b]) {
+                        if (beat % 4 === 3)
+                            guestHop(g, gHas(g, "bailongo") ? 460 : 340, 0);
+                        else
+                            guestKicked(g.slot, s * 1.3, 0.4);
+                        guestFace(g, gHas(g, "bailongo") ? "excited" : "happy", 700);
+                    }
+                }
+                if (el > 7000 || !Mind.musicPlaying)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "curiosear":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, -4));
+                if (gHas(b, "timido") && Math.abs(a.x - b.x) < 200 && !gHas(a, "valiente")) {
+                    guestFace(b, "surprised", 1200);
+                    guestFlee(b, a);
+                    guestFace(a, "curious", 1500);
+                    next("look");
+                    ev.n = 99;
+                } else if (ev.n > 1 && guestArrived(a)) {
+                    guestFace(a, "curious", 1600);
+                    guestFace(b, gHas(b, "valiente") ? "excited" : "surprised", 900);
+                    next("look");
+                }
+            } else if (ev.phase === "look") {
+                // lo mira de cerca, se va al otro lado y lo vuelve a mirar
+                if (el > 1600 && ev.n === 0) {
+                    ev.n = 1;
+                    const side = a.x < b.x ? 1 : -1;
+                    guestGoX(a, b.x + side * (a.rx + b.rx - 4));
+                }
+                if (ev.n === 1 && guestArrived(a)) {
+                    ev.n = 2;
+                    ev.t = now;
+                    guestFace(a, "curious", 1400);
+                    guestFace(b, gHas(b, "presumido") ? "excited" : "happy", 1400);
+                }
+                if ((ev.n === 2 && now - ev.t > 1500) || (ev.n === 99 && el > 1500))
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "presumir":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, 40));
+                if (ev.n > 1 && guestArrived(a))
+                    next("show");
+            } else if (ev.phase === "show") {
+                // se luce: saltos con giro y cara de estrella
+                if (el > ev.n * 650 && ev.n < 3) {
+                    guestHop(a, 500 + ev.n * 60, 0);
+                    guestFace(a, "excited", 900);
+                    ev.n++;
+                }
+                if (el > 2000 && ev.n === 3) {
+                    ev.n = 4;
+                    // el otro: lo admira, o si también es presumido se pica y se luce él
+                    if (gHas(b, "presumido")) {
+                        guestFace(b, "sulky", 1200);
+                        ev.rival = true;
+                    } else {
+                        guestFace(b, gHas(b, "mimoso") ? "love" : "happy", 1800);
+                        if (gHas(b, "mimoso"))
+                            heartPopAt(b.x, b.y - b.ry - 24);
+                    }
+                }
+                if (ev.rival && el > 3200 && ev.n === 4) {
+                    ev.n = 5;
+                    guestHop(b, 620, 0);
+                    guestFace(b, "excited", 1200);
+                    guestFace(a, "sulky", 1400);
+                }
+                if (el > (ev.rival ? 4800 : 3600))
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "proteger":
+            // el valiente se pone al lado del tímido; si el ratón se acerca, se pone delante
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, 6));
+                if (ev.n > 1 && guestArrived(a)) {
+                    guestFace(b, "happy", 1800);
+                    guestFace(a, "excited", 1200);
+                    next("guard");
+                }
+            } else if (ev.phase === "guard") {
+                const dc = Math.hypot(cursorX - b.x, cursorY - b.y);
+                if (dc < 260) {
+                    guestLookAt(a, cursorX, cursorY);
+                    guestLookAt(b, cursorX, cursorY);
+                    if (now > (ev.warnAt ?? 0)) {
+                        ev.warnAt = now + 1600;
+                        guestFace(a, "squint", 1200);
+                        guestKicked(a.slot, cursorX < a.x ? -1.2 : 1.2, 0.3);
+                        guestFace(b, "sleepy", 1200);
+                        // (se pone entre el ratón y el tímido)
+                        const side = cursorX < b.x ? -1 : 1;
+                        if (!a.stride && Math.sign(a.x - b.x) !== side)
+                            guestGoX(a, b.x + side * (a.rx + b.rx + 6));
+                    }
+                }
+                if (el > 12000)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        case "acurrucarse":
+            if (ev.phase === "go") {
+                if (ev.n++ === 0)
+                    guestGoX(a, besideX(a, b, -2));
+                if (ev.n > 1 && guestArrived(a))
+                    next("huddle");
+            } else if (ev.phase === "huddle") {
+                // pegados, tiritando a la vez
+                if (el > ev.n * 260 && ev.n < 20) {
+                    const s = ev.n % 2 ? 0.5 : -0.5;
+                    guestKicked(a.slot, s, 0.1);
+                    guestKicked(b.slot, -s, 0.1);
+                    if (ev.n % 6 === 0) {
+                        guestFace(a, "happy", 1500);
+                        guestFace(b, "happy", 1500);
+                    }
+                    ev.n++;
+                }
+                if (el > 6000 || !cold)
+                    socialEnd(ev, now);
+            }
+            break;
+
+        default:
+            socialEnd(ev, now);
+        }
     }
     function guestStep(dt: real): void {
         if (!guests.length)
@@ -1748,7 +2260,7 @@ ShellRoot {
                 continue;
             }
             // saluda a tu Mochi al llegar: se pone a su lado
-            if (!g.greeted && isNaN(g.goal) && now > g.next) {
+            if (!g.greeted && isNaN(g.goal) && now > g.next && !g.act) {
                 g.greeted = true;
                 const ms = screenAt(gx, gy);
                 if (present && phys === "swim" && ms && ms.name === g.sname && gy > s.y + s.height * 0.6) {
@@ -1757,14 +2269,17 @@ ShellRoot {
                     g.greeting = true;
                 }
             }
-            if (isNaN(g.goal) && !g.stride && now > g.next && !dnd) {   // (con No molestar, duermen)
+            if (isNaN(g.goal) && !g.stride && now > g.next && !dnd && !g.act) {   // (con No molestar, duermen)
                 g.goal = guestPickGoal(g, tr);
                 if (isNaN(g.goal))
                     g.next = now + 2000;
             }
             // (si el ratón se le echa encima, se aparta; el tímido, antes)
             const dc = Math.hypot(cursorX - g.x, cursorY - g.y);
-            if (!g.stride && dc < ((g.look?.traits ?? []).includes("timido") ? 130 : 60) && now > g.pauseUntil && isNaN(g.goal)) {
+            const busy = g.act && (g.nap || g.act.kind === "proteger" || !gHas(g, "timido"));
+            if (!g.stride && dc < (gHas(g, "timido") ? 130 : 60) && now > g.pauseUntil && isNaN(g.goal) && !busy) {
+                if (g.act)
+                    socialEnd(g.act, now);
                 g.goal = guestPickGoal(g, tr);
                 guestFace(g, "surprised", 700);
             }
@@ -1821,6 +2336,7 @@ ShellRoot {
             g.nx = p.nx;
             g.ny = p.ny;
         }
+        guestSocial(now);
         // tu Mochi, de vez en cuando, mira a los visitantes
         if (present && phys === "swim" && now > guestGlanceAt) {
             guestGlanceAt = now + 9000 + Math.random() * 16000;
@@ -4473,6 +4989,10 @@ ShellRoot {
         function vecTestAll(): void {
             shell.startParade();
         }
+        // Encuentros entre visitantes en marcha (para probar)
+        function vecSocials(): string {
+            return JSON.stringify(shell.socials.map(e => `${e.kind}: ${e.a} → ${e.b} (${e.phase})`));
+        }
         function vecGuests(): string {
             return JSON.stringify(shell.guests.map(g => ({
                             from: g.from,
@@ -5828,6 +6348,7 @@ ShellRoot {
                     hat: g?.def ? "" : g?.m?.hat ?? ""
                     affection: 0.6
                     sleepy: shell.dnd
+                    dozing: !!g?.nap
                     music: Mind.musicPlaying
                     lookX: g && g.phys !== "held" ? g.lx : 0
                     lookY: g && g.phys !== "held" ? g.ly : 0
