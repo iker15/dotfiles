@@ -97,9 +97,18 @@ Item {
     // su silueta real (SkinShapes.js) y sus ojos en el sitio de los del personaje; px por semiancho
     // de la silueta (en vertical, como el shader: sigue al cuerpo cuando se aplasta)
     readonly property var silDef: skinDef?.sil ?? null
-    readonly property var silEyes: silDef && skinAmt > 0.5 ? silDef.eyes : null
+    readonly property var silEyes: silDef && skinAmt > 0.001 ? silDef.eyes : null
     readonly property real silKx: rx * sx * (silDef?.size ?? 1)
     readonly property real silKy: rx * sy * (silDef?.size ?? 1)
+    // Al transformarse la silueta le crece desde los pies (como en el shader: silInfo.w) y sus
+    // ojos van resbalando del sitio de los de Mochi al de los del personaje
+    readonly property real silGrow: 0.55 + 0.45 * Math.max(0, skinAmt)
+    readonly property real silGx: silKx * silGrow
+    readonly property real silGy: silKy * silGrow
+    readonly property real eyeMix: {
+        const k = Math.max(0, Math.min(1, (skinAmt - 0.2) / 0.4));
+        return k * k * (3 - 2 * k);
+    }
     property real eyeRound: 1                 // 1 redondos · 0 cuadrados (slime de Minecraft)
     property color eyeWhite: "transparent"    // esclerótica (Totoro, Blinky…): la pupila mira dentro
     property real eyeWhiteScale: 1.9
@@ -752,7 +761,7 @@ Item {
         }
 
         function drawEye(ctx: var, x: real, y: real, e: var, side: int, bx: real, by: real): void {
-            const d = root.silEyes ? root.silEyes.d * root.silKx : 9.5 * root.u * root.eyeSize;
+            const d0 = 9.5 * root.u * root.eyeSize, d = root.silEyes ? d0 + (root.silEyes.d * root.silGx - d0) * root.eyeMix : d0;
             if (e.heart > 0.5) {
                 const hs = d * e.w * 0.62;
                 ctx.fillStyle = root.ink;
@@ -873,8 +882,8 @@ Item {
                 x: cx,
                 y: cy,
                 base: cy + root.bodyRy,
-                k: root.silKx,
-                ky: root.silKy,
+                k: root.silGx,
+                ky: root.silGy,
                 rx: root.bodyRx,
                 t: root.skinT,
                 face: root.face,
@@ -885,8 +894,10 @@ Item {
             ctx.save();
             // (transformado: en el sitio de los ojos del personaje)
             const se = root.silEyes;
-            const ex0 = cx + (se ? se.x * root.silKx : 0) + root.ox * 0.5;
-            const ey0 = (se ? cy + root.bodyRy + (se.y - 1) * root.silKy : cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u) + root.oy * 0.5, rot = sim.rot * Math.PI / 180;
+            const em = se ? root.eyeMix : 0;
+            const eyM = cy - root.bodyR * 0.12 + root.eyeY * 7 * root.u;
+            const ex0 = cx + (se ? se.x * root.silGx * em : 0) + root.ox * 0.5;
+            const ey0 = (se ? eyM + (cy + root.bodyRy + (se.y - 1) * root.silGy - eyM) * em : eyM) + root.oy * 0.5, rot = sim.rot * Math.PI / 180;
             ctx.translate(ex0, ey0);
             ctx.rotate(rot);
             if (g)
@@ -894,8 +905,9 @@ Item {
             const drawn = [];
             for (let i = 0; i < 2; i++) {
                 const side = i ? 1 : -1, e = sim.eyes[i].cur;
-                const bx = se ? side * se.g * root.silKx : side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
-                const dyE = se?.dy ? side * se.dy * root.silKy : 0;   // (de tres cuartos, cada ojo a su altura)
+                const bxM = side * 11.5 * root.u * root.eyeGap * Math.max(0.78, root.sx);   // (aplastado de lado, que no se junten)
+                const bx = se ? bxM + (side * se.g * root.silGx - bxM) * em : bxM;
+                const dyE = se?.dy ? side * se.dy * root.silGy * em : 0;   // (de tres cuartos, cada ojo a su altura)
                 drawEye(ctx, bx + e.x, e.y + dyE, e, side, bx, dyE);
                 drawn.push([bx + e.x, e.y + dyE]);
                 if (g) {
@@ -905,7 +917,7 @@ Item {
             }
             // Baymax: la raya de un ojo al otro (se muevan como se muevan)
             if (se?.link)
-                Skins.drawLink(ctx, drawn[0], drawn[1], se.link * root.silKx, root.ink);
+                Skins.drawLink(ctx, drawn[0], drawn[1], se.link * root.silGx, root.ink);
             // Sudor: una gotita que le resbala por la frente
             if (root.melt > 0.3 && sim.sweat >= 0) {
                 const k = sim.sweat, x = sim.sweatSide * 17 * root.u * root.sx, y = -root.bodyRy * 0.62 + k * root.bodyRy * 0.55;

@@ -1059,8 +1059,8 @@ ShellRoot {
                 return;
             if (!Look.born || shell.phys === "away" || Date.now() - shell.skinQueuedAt > 600000)
                 return shell.skinInstant();
-            if (Object.values(shell.panels).some(r => r && r.length))
-                return;   // con el dashboard abierto no lo verías: espera a que lo cierres
+            if (!shell.skinTry && Object.values(shell.panels).some(r => r && r.length))
+                return;   // con el dashboard abierto no lo verías: espera a que lo cierres (no en las pruebas)
             if (!shell.present || shell.fsHide)
                 return;
             if (shell.phys === "nest") {
@@ -1098,12 +1098,13 @@ ShellRoot {
         ScriptAction {
             script: shell.kicked(0.9, -1.2)
         }
+        // (la forma que tenía se le encoge hacia los pies y vuelve a ser redondo)
         NumberAnimation {
             target: shell
             property: "skinAmt"
             to: 0
-            duration: shell.skinShown && shell.skinAmt > 0 ? 520 : 0
-            easing.type: Easing.InQuad
+            duration: shell.skinShown && shell.skinAmt > 0 ? 750 : 0
+            easing.type: Easing.InOutQuad
         }
         ScriptAction {
             script: {
@@ -1112,13 +1113,42 @@ ShellRoot {
                 shell.kicked(-1.9, 2.8);   // se estira y…
             }
         }
+        // …la nueva se le gesta dentro (el borde hierve)…
+        NumberAnimation {
+            target: shell
+            property: "skinAmt"
+            to: shell.skinWanted ? 0.3 : 0
+            duration: shell.skinWanted ? 500 : 0
+            easing.type: Easing.InOutSine
+        }
+        ScriptAction {
+            script: {
+                if (shell.skinWanted)
+                    shell.kicked(0, -2.4);   // (da el estirón)
+            }
+        }
+        // …le va creciendo hasta pasarse un poco de su tamaño…
+        NumberAnimation {
+            target: shell
+            property: "skinAmt"
+            to: shell.skinWanted ? 1.12 : 0
+            duration: shell.skinWanted ? 950 : 0
+            easing.type: Easing.InOutSine
+        }
+        // …y se asienta rebotando como gelatina
+        NumberAnimation {
+            target: shell
+            property: "skinAmt"
+            to: shell.skinWanted ? 0.95 : 0
+            duration: shell.skinWanted ? 260 : 0
+            easing.type: Easing.InOutSine
+        }
         NumberAnimation {
             target: shell
             property: "skinAmt"
             to: shell.skinWanted ? 1 : 0
-            duration: shell.skinWanted ? 1100 : 0
-            easing.type: Easing.OutBack
-            easing.overshoot: 2.2
+            duration: shell.skinWanted ? 240 : 0
+            easing.type: Easing.OutSine
         }
         ScriptAction {
             script: {
@@ -1785,7 +1815,7 @@ ShellRoot {
             const p = pointAt(tr, g.d);
             if (Math.abs(p.nx - g.nx) + Math.abs(p.ny - g.ny) > 0.5)
                 g.onSideSince = now;
-            const gl = g.def ? skinLift(p.ny) : 0;   // (transformado, de pie sobre el suelo)
+            const gl = g.def ? skinLift(p.ny) : 0;   // (transformado, con los pies en la barra)
             g.x = p.x - p.nx * gl;
             g.y = p.y - p.ny * gl;
             g.nx = p.nx;
@@ -2618,9 +2648,10 @@ ShellRoot {
     }
 
     // Radio del cuerpo en la dirección de la normal (hacia el marco)
-    // Cuánto se separa del suelo transformado (solo en el suelo; en paredes y techo va pegado)
+    // Cuánto sube en el suelo transformado: lo justo para que se le vean los pies, pero hundido
+    // unos px en la barra de abajo para que se funda con ella como en paredes y techo
     function skinLift(ny: real): real {
-        return (embed + 12) * Math.max(0, Math.min(1, (ny - 0.5) * 2));
+        return Math.max(0, embed - 5) * Math.max(0, Math.min(1, (ny - 0.5) * 2));
     }
 
     function normalRadius(p: var): real {
@@ -3914,7 +3945,7 @@ ShellRoot {
             const p = pointAt(tr, swimD), k = Math.min(1, dt * 14);
             nX = p.nx;
             nY = p.ny;
-            // (transformado, en el suelo se pone de pie sobre el marco: se le ve entero)
+            // (transformado, en el suelo asoma entero con los pies fundidos en la barra)
             const lift = Math.max(Math.max(0, morph) * Math.max(0, (lastShape === 2 ? 66 : 54) - normalRadius(p) + embed), skinLift(p.ny) * skinK * skinPartsVis);   // (Clawd, con las patas enteras)
             gx += (p.x - p.nx * lift - gx) * k;
             gy += (p.y - p.ny * lift - gy) * k;
@@ -5249,7 +5280,7 @@ ShellRoot {
                         property vector4d pr3: shell.skinPR[3]
                         property vector4d pr4: shell.skinPR[4]
                         property vector4d pr5: shell.skinPR[5]
-                        property vector4d silInfo: shell.skinDef?.sil ? Qt.vector4d(shell.skinK * shell.skinPartsVis, mochi.silKx, mochi.silKy, 0) : Qt.vector4d(0, 0, 0, 0)   // (buceando o en el nido vuelve a ser él: nada de orejas asomando)
+                        property vector4d silInfo: shell.skinDef?.sil ? Qt.vector4d(shell.skinK * shell.skinPartsVis, mochi.silKx, mochi.silKy, Math.max(0.001, shell.skinAmt * shell.skinPartsVis)) : Qt.vector4d(0, 0, 0, 0)   // (buceando o en el nido vuelve a ser él: nada de orejas asomando)
                         property var silTex: silImg
 
                         fragmentShader: Qt.resolvedUrl("mochi.frag.qsb")

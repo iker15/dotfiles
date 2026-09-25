@@ -40,7 +40,8 @@ layout(std140, binding = 0) uniform buf {
     vec4 pa0; vec4 pa1; vec4 pa2; vec4 pa3; vec4 pa4; vec4 pa5;   // trozos: a.x, a.y, b.x, b.y (en semiejes)
     vec4 pr0; vec4 pr1; vec4 pr2; vec4 pr3; vec4 pr4; vec4 pr5;   // radios en a y en b (en rx)
     vec4 silInfo;    // silueta real del personaje (siluetas/<id>.png): cuánto (x, 0-1), px por semiancho
-                     // de la silueta en horizontal (y) y en vertical (z; sigue al aplastarse)
+                     // de la silueta en horizontal (y) y en vertical (z; sigue al aplastarse), y cuánto
+                     // ha crecido (w: 0→1 al transformarse, pasa de 1 en el rebote; 0 = entero)
 };
 
 layout(binding = 1) uniform sampler2D edge;   // filas: abajo, derecha, arriba, izquierda
@@ -218,10 +219,14 @@ void main() {
         d = smin(d, partSd(p, pa5, pr5, amtP), 10.0);
     }
 
-    // Transformado en un personaje: el fluido toma su silueta real (y sigue temblando)
+    // Transformado en un personaje: el fluido toma su silueta real (y sigue temblando).
+    // Al transformarse, la silueta le CRECE desde los pies (empieza pequeñita dentro de él, sale
+    // del cuerpo fundida con él y se pasa un poco en el rebote) mientras lo redondo se deshace
+    // en ella; a medio camino el borde hierve un poco (es un fluido cambiando de forma)
     float dsil = 1e5;
     if (silInfo.x > 0.001) {
-        float kx = silInfo.y, ky = silInfo.z;
+        float grow = silInfo.w > 0.0 ? 0.55 + 0.45 * silInfo.w : 1.0;   // (del 55 %, casi su tamaño, a entero)
+        float kx = silInfo.y * grow, ky = silInfo.z * grow;
         vec2 s = vec2(q.x / kx, 1.0 + (q.y - body.w) / ky);
         vec2 uv = vec2((s.x + 2.0) * 0.25, (s.y + 3.0) * 0.25);
         float ds;
@@ -230,8 +235,10 @@ void main() {
         else
             ds = 0.6 + length(max(abs(s - vec2(0.0, -1.0)) - vec2(2.0), 0.0));
         ds = ds * min(kx, ky) - wob * min(body.z, body.w) * 0.5;
+        float t = clamp(silInfo.x, 0.0, 1.0), boil = 4.0 * t * (1.0 - t);
+        ds -= boil * 2.6 * sin(5.0 * a + skinMisc.x * 9.0) * sin(3.0 * a - skinMisc.x * 6.0);
         dsil = ds;
-        d = mix(d, ds, clamp(silInfo.x, 0.0, 1.0));
+        d = mix(smin(d, ds, 16.0 * (1.0 - t) + 0.5), ds, smoothstep(0.25, 1.0, t));
     }
 
     // La masa y la cola (inercia): transformado, solo pueden salirse un poco de su silueta
