@@ -1192,6 +1192,7 @@ ShellRoot {
     }
     property string neighbourNote: ""   // avisos (ha llamado alguien, ha vuelto, no está…)
     property var guests: []         // Mochis que te visitan (ver guestStep)
+    property int guestCap: 2        // cuántos caben a la vez (el desfile de prueba sube el límite)
     property var recalledVids: []
     property int guestTick: 0
     property string launching: ""   // lanzado con el botón hacia este vecino
@@ -1413,6 +1414,12 @@ ShellRoot {
         guestReacted(g.slot, name, ms);
     }
 
+    function freeSlot(): int {
+        let i = 0;
+        while (guestBySlot(i))
+            i++;
+        return i;
+    }
     // Ha llegado una visita: si no puede entrar, se le devuelve al momento
     function addGuest(ev: var, restored: var): void {
         const reply = reason => vecCmd({
@@ -1437,7 +1444,7 @@ ShellRoot {
             return;
         }
         const s = screenOfMonitor(Hyprland.focusedMonitor);
-        if (!s || guests.length >= 2) {
+        if (!s || guests.length >= guestCap) {
             reply("full");
             return;
         }
@@ -1445,7 +1452,7 @@ ShellRoot {
         const u = shell.u * (m.stage === 0 ? 0.82 : 1), wide = look.wide ?? 1;
         const left = ev.side === "left";
         const g = {
-            slot: guestBySlot(0) ? 1 : 0,
+            slot: freeSlot(),
             from: ev.from,
             side: ev.side,
             vid: ev.vid ?? m.vid ?? "",
@@ -1494,6 +1501,59 @@ ShellRoot {
         if (!restored)
             note(`Ha venido de visita el Mochi de ${ev.from}`);
     }
+    // Desfile de prueba (ipc vecTestAll): una visita por transformación, de vecinos inventados
+    function startParade(): void {
+        const names = ["Lucía", "Mateo", "Carla", "Hugo", "Nerea", "Álex", "Sara", "Pablo", "Irene", "Dani", "Noa", "Leo"];
+        const inks = ["#1c1b1b", "#f4f1f0"];
+        const bodies = ["#d0d3d6", "#2b2b2f", "#c9a7e8", "#f2b5c4", "#a8d8c2", "#f5d58a", "#9cc3f0", "#e89a7a", "#b9e07a", "#3a4a6b", "#f0f0ea", "#7a5c8f"];
+        const pool = Skins.list.map(s => s.id);
+        const traits = ["dormilon", "inquieto", "curioso", "mimoso", "timido", "jugueton", "bailongo", "valiente", "presumido"];
+        const rnd = (a, b) => a + Math.random() * (b - a);
+        guestCap = Math.max(guestCap, guests.length + pool.length);
+        parade.queue = pool.map((id, i) => {
+            const body = bodies[i % bodies.length];
+            const dark = Skins.rgb(body).reduce((a, b) => a + b, 0) < 1.2;
+            return {
+                from: names[i % names.length],
+                side: i % 2 ? "right" : "left",
+                test: true,
+                mochi: {
+                    name: names[i % names.length],
+                    stage: 2,
+                    hat: "",
+                    skin: id,
+                    body: body,
+                    ink: inks[dark ? 1 : 0],
+                    look: {
+                        eyeSize: rnd(0.8, 1.35),
+                        eyeGap: rnd(0.85, 1.2),
+                        eyeY: rnd(-0.4, 0.4),
+                        eyeShape: rnd(-0.4, 0.8),
+                        wide: rnd(0.9, 1.15),
+                        jelly: rnd(0.8, 1.5),
+                        traits: [traits[i % traits.length], traits[(i + 4) % traits.length]]
+                    }
+                }
+            };
+        });
+        parade.restart();
+    }
+    Timer {
+        id: parade
+
+        property var queue: []
+
+        interval: 1400
+        repeat: true
+        onTriggered: {
+            if (!queue.length) {
+                stop();
+                return;
+            }
+            shell.addGuest(queue[0], null);
+            queue = queue.slice(1);
+        }
+    }
     // Se despide: da un salto hacia su lado y sale por ahí
     function guestLeave(i: int): void {
         const g = guests[i];
@@ -1527,6 +1587,9 @@ ShellRoot {
         guests.splice(i, 1);
         guests = guests.slice();
         saveGuests();
+        // (acabado el desfile, vuelve el límite de siempre)
+        if (guestCap > 2 && !parade.queue.length && guests.every(o => o.slot < 2))
+            guestCap = 2;
     }
     // Se engancha al marco donde ha chocado (como el tuyo: sin rebotar, se chafa un poco)
     function guestAttach(g: var, tr: var, speed: real): void {
@@ -4370,6 +4433,11 @@ ShellRoot {
                 }
             }, null);
         }
+        // Prueba: desfile con TODAS las transformaciones, cada una el Mochi de un vecino
+        // distinto (van llegando de uno en uno, por los dos lados)
+        function vecTestAll(): void {
+            shell.startParade();
+        }
         function vecGuests(): string {
             return JSON.stringify(shell.guests.map(g => ({
                             from: g.from,
@@ -4985,16 +5053,16 @@ ShellRoot {
             // Solo Mochi y su bocadillo reciben clics; el resto del escritorio pasa de largo
             mask: Region {
                 item: mochi.visible ? mochi : null
-
-                Region {
-                    item: bubble.visible ? bubble : null
+                regions: {
+                    const r = [bubbleRegion];
+                    for (let i = 0; i < guestHits.count; i++)
+                        if (guestHits.itemAt(i))
+                            r.push(guestHits.itemAt(i).hitRegion);
+                    return r;
                 }
-                Region {
-                    item: guestHit0.visible ? guestHit0 : null
-                }
-                Region {
-                    item: guestHit1.visible ? guestHit1 : null
-                }
+            }
+            readonly property Region bubbleRegion: Region {
+                item: bubble.visible ? bubble : null
             }
 
             // Paneles abiertos de Caelestia en esta pantalla
@@ -5123,7 +5191,7 @@ ShellRoot {
 
                     // (los visitantes, debajo del tuyo)
                     Repeater {
-                        model: 2
+                        model: shell.guestCap
 
                         GuestBody {}
                     }
@@ -5504,7 +5572,7 @@ ShellRoot {
 
             // (y la de los visitantes)
             Repeater {
-                model: 2
+                model: shell.guestCap
 
                 GuestBody {
                     band: 1
@@ -5682,7 +5750,7 @@ ShellRoot {
             Repeater {
                 id: guestBlobs
 
-                model: 2
+                model: shell.guestCap
 
                 Blob {
                     id: gbl
@@ -5756,6 +5824,10 @@ ShellRoot {
 
                 required property int slot
                 readonly property var g: shell.guestSnap(slot, shell.guestTick)
+                // (su trozo de la máscara de clics de la ventana)
+                readonly property Region hitRegion: Region {
+                    item: gh.visible ? gh : null
+                }
                 property real px
                 property real py
                 property real gx0
@@ -5845,15 +5917,16 @@ ShellRoot {
                     font.family: Theme.font
                 }
             }
-            GuestHit {
-                id: guestHit0
+            Repeater {
+                id: guestHits
 
-                slot: 0
-            }
-            GuestHit {
-                id: guestHit1
+                model: shell.guestCap
 
-                slot: 1
+                GuestHit {
+                    required property int index
+
+                    slot: index
+                }
             }
 
             // La gota y el chorro que caen del marco hasta el líquido del cuadrado de kitty (ver
