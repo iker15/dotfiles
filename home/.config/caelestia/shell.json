@@ -70,7 +70,8 @@
         "wallpaperDir": "~/Pictures/Wallpapers"
     },
     "services": {
-        "clockFormat": "Auto"
+        "clockFormat": "Auto",
+        "maxVolume": 2.0
     },
     "sidebar": {
         "dragThreshold": 70,
