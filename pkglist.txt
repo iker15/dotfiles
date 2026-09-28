@@ -240,6 +240,7 @@ vlc-plugins-all
 vpl-gpu-rt
 vulkan-icd-loader
 vulkan-intel
+webkit2gtk-4.1
 wget
 which
 wireplumber

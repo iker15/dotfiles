@@ -92,10 +92,13 @@ Item {
             return y;
         }
 
-        anchors.left: parent.left
+        // Caps lock toasts are shown at half size
+        readonly property real sizeScale: modelData.icon.startsWith("keyboard_capslock") ? 0.5 : 1
+
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        implicitHeight: toastInner.implicitHeight
+        width: parent.width * sizeScale
+        implicitHeight: toastInner.implicitHeight * sizeScale
 
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
         onClicked: modelData.close()
@@ -134,7 +137,16 @@ Item {
         ToastItem {
             id: toastInner
 
+            anchors.left: undefined
+            width: root.width
             modelData: toast.modelData
+
+            transform: Scale {
+                origin.x: toastInner.width
+                origin.y: 0
+                xScale: toast.sizeScale
+                yScale: toast.sizeScale
+            }
         }
 
         Behavior on opacity {

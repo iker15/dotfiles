@@ -54,6 +54,17 @@ PageBase {
     title: Tr.tr("Add network")
     isSubPage: true
 
+    // Opened from a network list because the network needs a password
+    Component.onCompleted: {
+        const ssid = root.nState.pendingPasswordSsid;
+        if (!ssid)
+            return;
+        root.nState.pendingPasswordSsid = "";
+        ssidField.text = ssid;
+        hiddenToggle.checked = false;
+        Qt.callLater(() => passwordField.forceActiveFocus());
+    }
+
     ColumnLayout {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top

@@ -1507,7 +1507,8 @@ Singleton {
     Timer {
         id: connectionCheckTimer
 
-        interval: 4000
+        // Phone hotspots (iPhone) take ~6s to associate + DHCP; 4s gave false timeouts
+        interval: 15000
         onTriggered: {
             if (root.pendingConnection) {
                 const connected = root.active && root.active.ssid === root.pendingConnection.ssid;

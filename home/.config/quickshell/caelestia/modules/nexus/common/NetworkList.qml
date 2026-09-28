@@ -62,7 +62,15 @@ ItemList {
 
         onClicked: {
             if (!modelData.active) {
-                NetworkConnection.handleConnect(modelData);
+                const ap = modelData;
+                NetworkConnection.handleConnect(ap, null, () => {
+                    // No usable saved password: ask for it on the add-network page
+                    network.currentSelected = false;
+                    root.nState.pendingPasswordSsid = ap.ssid;
+                    root.nState.openSubPage(2);
+                }, () => {
+                    network.currentSelected = false;
+                });
                 currentSelected = true;
                 root.networkSelected(modelData);
             } else {

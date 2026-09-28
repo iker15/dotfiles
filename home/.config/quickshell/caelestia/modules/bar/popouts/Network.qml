@@ -136,9 +136,13 @@ ColumnLayout {
                             root.connectingToSsid = networkItem.modelData.ssid;
                             NetworkConnection.handleConnect(networkItem.modelData, null, network => {
                                 // Password is required - show password dialog
+                                root.connectingToSsid = "";
                                 root.passwordNetwork = network;
                                 root.showPasswordDialog = true;
                                 root.popouts.currentName = "wirelesspassword";
+                            }, () => {
+                                // Failed without needing a password - stop the spinner
+                                root.connectingToSsid = "";
                             });
 
                             // Clear connecting state if connection succeeds immediately (saved profile)
