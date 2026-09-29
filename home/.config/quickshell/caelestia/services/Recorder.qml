@@ -4,32 +4,70 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
+// El estado sale siempre de lo que pasa de verdad (gpu-screen-recorder vivo + el fichero de
+// pausa de caelestia-record), así que da igual si se graba desde aquí o con el atajo.
 Singleton {
     id: root
 
     readonly property alias running: props.running
     readonly property alias paused: props.paused
     readonly property alias elapsed: props.elapsed
-    property int refCount: 0
-    property bool needsStart
-    property list<string> startArgs
-    property bool needsStop
-    property bool needsPause
+    property int refCount: 0 // (lo usa Ref; ya no hace falta para sondear)
+
+    // Mismo script que los atajos: pide nombre al parar y apunta la pausa
+    readonly property string wrapper: `${Quickshell.env("HOME")}/.local/bin/caelestia-record`
+    property bool stopping
+    property real holdUntil
 
     function start(extraArgs = []): void {
-        needsStart = true;
-        startArgs = extraArgs;
-        checkProc.running = true;
+        if (props.running || startProc.running)
+            return;
+        props.running = true;
+        props.paused = false;
+        props.elapsed = 0;
+        startProc.exec([wrapper, ...extraArgs]);
     }
 
     function stop(): void {
-        needsStop = true;
-        checkProc.running = true;
+        if (!props.running)
+            return;
+        props.running = false;
+        props.paused = false;
+        // (suelto: parar se queda esperando al nombre y a la notificación)
+        stopping = true;
+        holdUntil = Date.now() + 15000;
+        Quickshell.execDetached([wrapper]);
     }
 
     function togglePause(): void {
-        needsPause = true;
-        checkProc.running = true;
+        if (!props.running)
+            return;
+        props.paused = !props.paused;
+        holdUntil = Date.now() + 1500;
+        Quickshell.execDetached([wrapper, "-p"]);
+    }
+
+    function reconcile(out: string): void {
+        const [rec, pause, secs] = out.trim().split("\n");
+        const running = rec === "1";
+
+        // Arrancando (slurp, etc.): el propio proceso manda
+        if (startProc.running)
+            return;
+        if (stopping) {
+            if (running && Date.now() < holdUntil)
+                return;
+            stopping = false;
+        } else if (Date.now() < holdUntil) {
+            return;
+        }
+
+        if (running !== props.running) {
+            // Empezada/parada fuera de la shell (atajo): cuenta desde que arrancó el grabador
+            props.running = running;
+            props.elapsed = running ? (parseInt(secs) || 0) : 0;
+        }
+        props.paused = running && pause === "1";
     }
 
     PersistentProperties {
@@ -45,50 +83,26 @@ Singleton {
     Process {
         id: checkProc
 
-        running: true
-        command: ["pidof", "gpu-screen-recorder"]
-        onExited: code => { // qmllint disable signal-handler-parameters
-            const running = code === 0;
-
-            if (running && root.needsStop) {
-                commandProc.exec(["caelestia", "record"]);
-                props.running = false;
-                props.paused = false;
-            } else if (running && root.needsPause) {
-                commandProc.exec(["caelestia", "record", "-p"]);
-                props.paused = !props.paused;
-            } else if (!running && root.needsStart) {
-                commandProc.exec(["caelestia", "record", ...root.startArgs]);
-                props.running = true;
-                props.paused = false;
-                props.elapsed = 0;
-            } else if (running !== props.running && !commandProc.running) {
-                // The recording was started/stopped outside the shell (e.g. via
-                // keybind), or our command finished without reaching the optimistic state
-                props.running = running;
-                props.paused = false;
-                props.elapsed = 0;
-            }
-
-            root.needsStart = false;
-            root.needsStop = false;
-            root.needsPause = false;
+        command: ["sh", "-c", `
+            pid=$(pidof -s gpu-screen-recorder) && echo 1 || echo 0
+            [ -e "\${XDG_RUNTIME_DIR:-/tmp}/caelestia-record-paused" ] && echo 1 || echo 0
+            [ -n "$pid" ] && ps -o etimes= -p "$pid" || echo 0
+        `]
+        stdout: StdioCollector {
+            onStreamFinished: root.reconcile(text)
         }
     }
 
     Process {
-        id: commandProc
+        id: startProc
 
-        // The command owns the transition: `caelestia record` blocks on slurp for
-        // region captures, and waits for the recorder to finalise the file when
-        // stopping. Reconcile once it has actually finished.
         onExited: checkProc.running = true // qmllint disable signal-handler-parameters
     }
 
-    // Only poll while something is showing the state, i.e. the utilities drawer is open
+    // Siempre, no solo con el panel abierto: si no, lo que se empieza con el atajo no se ve
     Timer {
         interval: 1000
-        running: root.refCount > 0
+        running: true
         repeat: true
         triggeredOnStart: true
 
