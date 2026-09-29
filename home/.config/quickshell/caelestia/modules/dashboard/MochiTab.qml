@@ -769,6 +769,14 @@ Item {
                     onClicked: root.ipc("appear")
                 }
                 IconTextButton {
+                    icon: "sports_esports"
+                    text: "Angry Mochis"
+                    isRound: true
+                    type: IconTextButton.Tonal
+                    // (cierra el dashboard y abre el tirachinas por encima de todo)
+                    onClicked: Quickshell.execDetached(["sh", "-c", "qs -c caelestia ipc call drawers toggle dashboard; qs -c tamagotchi ipc call pet angry"])
+                }
+                IconTextButton {
                     icon: "coffee"
                     text: IdleInhibitor.enabled ? "Quitar café" : "Café"
                     isRound: true

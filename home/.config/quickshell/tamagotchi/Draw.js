@@ -282,6 +282,10 @@ function eye(ctx, f, x, y, d, side, blink, u, shape, SE) {
         [lid, tilt] = [0.35, -0.35];
     else if (f === "sad" || f === "sulky")
         [lid, tilt] = [0.25, -0.45];
+    else if (f === "angry")   // (el lado de dentro cae: ceño fruncido; los del tirachinas)
+        [lid, tilt] = [0.34, 0.6];
+    else if (f === "smug")    // (párpados a media asta: los mochis de las estructuras)
+        [lid, tilt] = [0.42, 0.12];
     if (SE && SE.lid > lid && f !== "surprised")
         [lid, tilt] = [SE.lid, SE.tilt];
     const round = SE ? SE.round : 1;

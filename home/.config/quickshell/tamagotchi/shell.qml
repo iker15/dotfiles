@@ -2887,6 +2887,8 @@ ShellRoot {
     }
 
     onLockedChanged: {
+        if (locked)
+            endGame();   // (bloqueas con el tirachinas abierto: se cierra)
         Brain.locked = locked;
         if (locked)
             lockedAt = Date.now();
@@ -4927,6 +4929,19 @@ ShellRoot {
         function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
             shell.enterTerm(row, cols, rows, w, h);
         }
+        // Modo tirachinas: abrir / cerrar; y para probarlo sin ratón, un tiro (grados, fuerza 0-1)
+        function angry(): void {
+            if (shell.playing)
+                gameLoader.item?.quit();
+            else
+                shell.startGame();
+        }
+        function angryStatus(): string {
+            return gameLoader.item?.status() ?? "no está abierto";
+        }
+        function angryShot(deg: real, pow: real, abilityMs: int): string {
+            return gameLoader.item?.autoShot(deg, pow, abilityMs) ?? "no está abierto";
+        }
         function cancelTerm(): void {
             shell.cancelTerm();
         }
@@ -5586,6 +5601,47 @@ ShellRoot {
                 return;
             }
             shell.goNest();
+        }
+    }
+
+    // Modo tirachinas (Angry Mochis, Slingshot.qml): mientras juegas, el Mochi del escritorio se
+    // aparta (es el que está junto al tirachinas) y vuelve al salir
+    property bool playing: false
+    property bool shownBeforePlay: true
+    function startGame(): void {
+        if (playing || !Look.born || locked)
+            return;
+        shownBeforePlay = shown;
+        asking = false;
+        shown = false;
+        playing = true;
+    }
+    function endGame(): void {
+        if (!playing)
+            return;
+        playing = false;
+        shown = shownBeforePlay;
+        if (shown)
+            touch();
+    }
+    LazyLoader {
+        id: gameLoader
+
+        active: shell.playing
+
+        Slingshot {
+            screen: shell.screenOfMonitor(Hyprland.focusedMonitor)
+            bodyCol: shell.avatarBody
+            inkCol: shell.avatarInk
+            hat: shell.hat
+            frame: shell.frame
+            bar: shell.barW
+            onFinished: shell.endGame()
+            onWon: stars => {
+                Bond.gain("pet");
+                Bond.addXp(5 + 5 * stars);
+                shell.reacted("love", 2000);
+            }
         }
     }
 
