@@ -731,8 +731,10 @@ ShellRoot {
     property string appHost: ""
     readonly property string activeAddr: Hyprland.activeToplevel?.address ?? ""
     onActiveAddrChanged: {
-        if (inApp && activeAddr !== appHost)
+        if (inApp && activeAddr !== appHost) {
             appLeave.restart();
+            cancelTerm();   // (la kitty del saludo se ha cerrado o ya no la miras: sin gota)
+        }
         else
             appLeave.stop();
     }
@@ -965,6 +967,13 @@ ShellRoot {
         id: pourEnd
 
         onTriggered: shell.pouring = false
+    }
+    // Has lanzado otro programa en esa kitty antes de que llegue (kitty-anim.py lo nota y lo avisa):
+    // la gota ya no cae, que el cuadrado ya no está (él sigue dentro de la ventana)
+    function cancelTerm(): void {
+        termTimer.stop();
+        pourEnd.stop();
+        pouring = false;
     }
     // Cuándo llega la gota al cuadrado (ms de época): lo lee mochi.sh para arrancar el GIF a tiempo
     function publishEta(ms: real): void {
@@ -4917,6 +4926,9 @@ ShellRoot {
         }
         function enterTerm(row: int, cols: int, rows: int, w: real, h: real): void {
             shell.enterTerm(row, cols, rows, w, h);
+        }
+        function cancelTerm(): void {
+            shell.cancelTerm();
         }
         // Vecindario (lo usa el dashboard): invitar (lado: right/left), unirse con un código,
         // mandarle a Mochi a un vecino, llamarlo de vuelta, devolver a un visitante, quitar vecino

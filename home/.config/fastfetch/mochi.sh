@@ -34,6 +34,8 @@ play)
     eta_file=$XDG_RUNTIME_DIR/mochi-term-eta
     for _ in $(seq 15); do [[ -s $eta_file ]] && break; sleep 0.1; done
     start=0
+    # (la fish que nos llama: si deja de estar en primer plano, la animación se para)
+    export MOCHI_SHELL_PGRP=$(ps -o pgid= -p $PPID 2>/dev/null | tr -d ' ')
     [[ -s $eta_file ]] && start=$(( $(<"$eta_file") - 880 ))   # el fotograma 22, cuando toca
     (
         if [[ -f ~/.cache/mochi/fetch.b64 ]]; then
@@ -43,6 +45,8 @@ play)
         else
             now=$(date +%s%3N)
             (( start > now )) && sleep "$(awk -v d=$(( start - now )) 'BEGIN { printf "%.2f", d / 1000 }')"
+            fg=$(ps -o tpgid= -p $$ 2>/dev/null | tr -d ' ')
+            [[ -n $MOCHI_SHELL_PGRP && -n $fg && $fg != "$MOCHI_SHELL_PGRP" && $fg != "$(ps -o pgid= -p $$ | tr -d ' ')" ]] && exit 0
             printf '\e7'
             kitten icat --transfer-mode=stream --place "22x10@2x${2:-1}" --loop 1 --scale-up "$gif" 2>/dev/null </dev/tty
             printf '\e8'
