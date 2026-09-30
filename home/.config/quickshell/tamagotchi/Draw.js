@@ -13,7 +13,8 @@
 //   sleepy | surprised | squint | hot | curious | excited
 //   lx, ly: hacia dónde mira (−1…1) · blink: 0 abierto → 1 cerrado · t: tiempo (s)
 //   breath: 0-1 (respira) · melt: 0-1 · hat: "" | witch | santa | party | crown · snow: 0-1
-//   outline: color del contorno (opcional; p. ej. sobre un fondo casi del mismo color)
+//   outline: contorno: un color, true (un tono entre el cuerpo y los ojos) o false. Por defecto,
+//   solo transformado (si no, sobre un fondo claro la silueta del personaje no se distingue)
 //   shadow: sombrita en el suelo (0-1, opcional)
 //   stage: evolución por nivel (0 bebé: más pequeño y ojos más grandes · 1 normal · 2 brillante:
 //   más brillo y un destello · 3 sabio: + una estrellita que le da vueltas · 4 legendario: + un
@@ -102,6 +103,10 @@ function avatar(ctx, o) {
         c.closePath();
     };
 
+    // (el contorno y el borde del blanco de los ojos: un tono entre el cuerpo y sus ojos)
+    const edge = Skins.tone(bodyCol, o.ink, 0.55);
+    const outline = o.outline === undefined ? (skin ? edge : "") : o.outline === true ? edge : o.outline || "";
+
     // Sombrita en el suelo
     if (o.shadow > 0) {
         ctx.fillStyle = `rgba(0,0,0,${(0.18 * o.shadow).toFixed(3)})`;
@@ -115,15 +120,28 @@ function avatar(ctx, o) {
     ctx.beginPath();
     bodyPath(ctx);
     ctx.fill();
-    if (o.outline) {
-        ctx.strokeStyle = o.outline;
-        ctx.lineWidth = Math.max(1, s * 0.035);
-        ctx.stroke();
-    }
+    // Brillo arriba a la izquierda, recortado al cuerpo (transformado, en la esquina de SU silueta:
+    // con la de Mochi se salía por fuera del personaje)
+    ctx.save();
+    ctx.beginPath();
+    bodyPath(ctx);
+    ctx.clip();
     ctx.fillStyle = `rgba(255,255,255,${stage >= 2 ? 0.2 : 0.07})`;
     ctx.beginPath();
-    Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
+    if (pts) {
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        for (const [px, py] of pts) {
+            x0 = Math.min(x0, px);
+            x1 = Math.max(x1, px);
+            y0 = Math.min(y0, py);
+            y1 = Math.max(y1, py);
+        }
+        const w = x1 - x0, h = y1 - y0;
+        Hats.E(ctx, x0 + w * 0.16, y0 + h * 0.1, w * 0.32, h * 0.18);
+    } else
+        Hats.E(ctx, cx - rx * 0.62, cy - ryT * 0.82, rx * 0.7, ryT * 0.42);
     ctx.fill();
+    ctx.restore();
     // Legendario: un brillo arcoíris que recorre el borde
     if (stage >= 4) {
         ctx.save();
@@ -148,6 +166,17 @@ function avatar(ctx, o) {
     // Ojos (transformado: los suyos, a partir de la mitad de la transformación)
     if (skin)
         Skins.drawUnder(ctx, skin, g, bodyPath);   // (en su color: solo la cara, salvo accents)
+    // Contorno (encima de los detalles, que llegan hasta el borde)
+    if (outline) {
+        ctx.save();
+        ctx.strokeStyle = outline;
+        ctx.lineWidth = Math.max(1.2, s * 0.045);
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        bodyPath(ctx);
+        ctx.stroke();
+        ctx.restore();
+    }
     const SE = skin && amt > 0.5 ? Skins.eyesOf(skin, L, o.body, o.ink) : null;
     const eyeSize = SE ? SE.eyeSize : L.eyeSize, eyeGap = SE ? SE.eyeGap : L.eyeGap, eyeY = SE ? SE.eyeY : L.eyeY;
     const u = s / 32, f = o.face || "normal";
@@ -179,7 +208,12 @@ function avatar(ctx, o) {
             ctx.beginPath();
             Hats.E(ctx, ex0 - ww / 2, ey0 - hh / 2, ww, Math.max(hh, 1.5 * u));
             ctx.fill();
+            // (con borde: el blanco del ojo casi no se distingue de un cuerpo claro)
+            ctx.strokeStyle = Skins.tone(bodyCol, ink, 0.7);
+            ctx.lineWidth = Math.max(1, d * 0.1);
+            ctx.stroke();
             ctx.fillStyle = ink;
+            ctx.strokeStyle = ink;
         }
         eye(ctx, f, ex, ey, d, side, o.blink || 0, u, SE ? SE.eyeShape : L.eyeShape, SE);
         drawn.push([ex, ey]);

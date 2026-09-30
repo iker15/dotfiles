@@ -946,6 +946,7 @@ Item {
                     stage: 1,
                     look: Mochi.Look.data(),
                     skin: tile.skin,
+                    outline: true,   // (también «él mismo», como las transformaciones)
                     blink: f === "normal" ? blink : 0,
                     breath: 0.5 + 0.5 * Math.sin(t * 2.6),
                     t: t
