@@ -135,7 +135,11 @@ Item {
                 Layout.rightMargin: Tokens.padding.large
                 Layout.fillWidth: true
 
-                Column {
+                // (encoge y parte en líneas: si no, con textos largos, como el aviso de rasgo nuevo,
+                // la ficha entera se ensancha y se corta por la derecha)
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
                     spacing: Tokens.spacing.extraSmall
 
                     Row {
@@ -166,6 +170,8 @@ Item {
                     }
 
                     StyledText {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
                         text: root.st.text ? root.st.text.charAt(0).toUpperCase() + root.st.text.slice(1) : "…"
                         font: Tokens.font.body.small
                         color: Colours.palette.m3onSurfaceVariant
@@ -173,17 +179,16 @@ Item {
 
                     // Su carácter (y si ha desbloqueado un rasgo nuevo, avisa)
                     StyledText {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
                         text: Mochi.Look.traits.map(id => Traits.byId(id)?.name).filter(Boolean).join(" · ") + (root.freeTraits > 0 ? "  ·  ¡puede aprender un rasgo nuevo!" : "")
                         font: Tokens.font.body.small
                         color: root.freeTraits > 0 ? Colours.palette.m3tertiary : Colours.palette.m3primary
                     }
                 }
 
-                Item {
-                    Layout.fillWidth: true
-                }
-
                 Row {
+                    Layout.alignment: Qt.AlignTop
                     spacing: Tokens.spacing.largeIncreased
 
                     Stat {
@@ -755,54 +760,65 @@ Item {
                 }
             }
 
-            // Botones rápidos
-            RowLayout {
+            // Botones rápidos (en dos filas: en una sola no caben y la ficha entera se ensancha y
+            // se corta por la derecha)
+            ColumnLayout {
                 Layout.topMargin: Tokens.spacing.small
                 Layout.alignment: Qt.AlignHCenter
                 spacing: Tokens.spacing.small
 
-                IconTextButton {
-                    icon: "waving_hand"
-                    text: "Llamarlo"
-                    isRound: true
-                    type: IconTextButton.Tonal
-                    onClicked: root.ipc("appear")
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Tokens.spacing.small
+
+                    IconTextButton {
+                        icon: "waving_hand"
+                        text: "Llamarlo"
+                        isRound: true
+                        type: IconTextButton.Tonal
+                        onClicked: root.ipc("appear")
+                    }
+                    IconTextButton {
+                        icon: "nest_eco_leaf"
+                        text: "Al nido"
+                        isRound: true
+                        type: IconTextButton.Tonal
+                        onClicked: root.ipc("waitNest")
+                    }
+                    IconTextButton {
+                        icon: "bedtime"
+                        text: "A dormir"
+                        isRound: true
+                        type: IconTextButton.Tonal
+                        onClicked: root.ipc("sleep", "doze")
+                    }
                 }
-                IconTextButton {
-                    icon: "sports_esports"
-                    text: "Angry Mochis"
-                    isRound: true
-                    type: IconTextButton.Tonal
-                    // (cierra el dashboard y abre el tirachinas por encima de todo)
-                    onClicked: Quickshell.execDetached(["sh", "-c", "qs -c caelestia ipc call drawers toggle dashboard; qs -c tamagotchi ipc call pet angry"])
-                }
-                IconTextButton {
-                    icon: "coffee"
-                    text: IdleInhibitor.enabled ? "Quitar café" : "Café"
-                    isRound: true
-                    type: IconTextButton.Tonal
-                    onClicked: IdleInhibitor.enabled = !IdleInhibitor.enabled
-                }
-                IconTextButton {
-                    icon: "nest_eco_leaf"
-                    text: "Al nido"
-                    isRound: true
-                    type: IconTextButton.Tonal
-                    onClicked: root.ipc("waitNest")
-                }
-                IconTextButton {
-                    icon: "bedtime"
-                    text: "A dormir"
-                    isRound: true
-                    type: IconTextButton.Tonal
-                    onClicked: root.ipc("sleep", "doze")
-                }
-                IconTextButton {
-                    icon: "restart_alt"
-                    text: "Empezar de cero"
-                    isRound: true
-                    type: IconTextButton.Text
-                    onClicked: root.confirmReset = true
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Tokens.spacing.small
+
+                    IconTextButton {
+                        icon: "sports_esports"
+                        text: "Angry Mochis"
+                        isRound: true
+                        type: IconTextButton.Tonal
+                        // (cierra el dashboard y abre el tirachinas por encima de todo)
+                        onClicked: Quickshell.execDetached(["sh", "-c", "qs -c caelestia ipc call drawers toggle dashboard; qs -c tamagotchi ipc call pet angry"])
+                    }
+                    IconTextButton {
+                        icon: "coffee"
+                        text: IdleInhibitor.enabled ? "Quitar café" : "Café"
+                        isRound: true
+                        type: IconTextButton.Tonal
+                        onClicked: IdleInhibitor.enabled = !IdleInhibitor.enabled
+                    }
+                    IconTextButton {
+                        icon: "restart_alt"
+                        text: "Empezar de cero"
+                        isRound: true
+                        type: IconTextButton.Text
+                        onClicked: root.confirmReset = true
+                    }
                 }
             }
 
