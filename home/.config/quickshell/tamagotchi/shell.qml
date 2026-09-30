@@ -4942,6 +4942,10 @@ ShellRoot {
         function angryShot(deg: real, pow: real, abilityMs: int): string {
             return gameLoader.item?.autoShot(deg, pow, abilityMs) ?? "no está abierto";
         }
+        function angryLevel(n: int): string {
+            gameLoader.item?.goLevel(n);
+            return gameLoader.item?.status() ?? "no está abierto";
+        }
         function cancelTerm(): void {
             shell.cancelTerm();
         }

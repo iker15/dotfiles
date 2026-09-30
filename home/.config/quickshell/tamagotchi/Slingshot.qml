@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import "Planck.js" as P
 import "Draw.js" as Draw
@@ -13,6 +14,8 @@ import "Draw.js" as Draw
 //   rompe piedra)
 // Física: planck.js (Box2D, Planck.js), en metros con y hacia abajo; el suelo es el borde de
 // abajo del marco y las paredes, los de los lados. Lo abre shell.qml (pet angry).
+// Niveles: ganar desbloquea el siguiente (ver diff más abajo); se guardan en
+// ~/.local/state/tamagotchi/angry.json.
 PanelWindow {
     id: game
 
@@ -134,6 +137,53 @@ PanelWindow {
     property bool showCard: false
     property int stars: 0
 
+    // ── Niveles ──
+    // La dificultad sube hasta el 12 (de ahí en adelante se queda al máximo, con estructuras
+    // nuevas cada vez): estructuras más anchas y altas, más piedra y menos hielo, más mochis con
+    // casco y rey (y más duros), menos tiros de sobra, la guía de tiro se acorta y, desde el 3,
+    // rocas que no se rompen: pedestales, montículos delante y columnas con un mochi encima
+    property int level: 1
+    property int maxLevel: 1
+    property var best: ({})    // mejores estrellas por nivel
+    readonly property real hard: Math.min(1, (level - 1) / 11)
+    readonly property int spare: level <= 2 ? 1 : level <= 7 ? 0 : -1   // tiros de más sobre los mochis
+    readonly property int aimDots: level <= 1 ? 16 : Math.max(3, 16 - 3 * (level - 1))
+    readonly property var news: ({
+            2: "La guía de tiro se acorta",
+            3: "Rocas que no se rompen · ya no sobran tiros",
+            5: "Columnas de roca con un mochi encima",
+            8: "Menos tiros que mochis: aprovecha los derrumbes",
+            12: "Dificultad máxima"
+        })
+    FileView {
+        id: saveFile
+
+        path: `${Quickshell.env("HOME")}/.local/state/tamagotchi/angry.json`
+        atomicWrites: true
+        printErrors: false
+        blockLoading: true
+    }
+    function loadSave(): void {
+        try {
+            const d = JSON.parse(saveFile.text() || "{}");
+            maxLevel = Math.max(1, d.max ?? 1);
+            level = Math.max(1, Math.min(maxLevel, d.level ?? maxLevel));
+            best = d.best ?? {};
+        } catch (e) {}
+    }
+    function save(): void {
+        saveFile.setText(JSON.stringify({
+            level: level,
+            max: maxLevel,
+            best: best
+        }));
+    }
+    function goLevel(n: int): void {
+        level = Math.max(1, n);
+        save();
+        newLevel(false);
+    }
+
     QtObject {
         id: sim
 
@@ -153,6 +203,7 @@ PanelWindow {
         property real endT: 0
         property real laughT: 0
         property real reactUntil: 0
+        property int tries: 0
     }
 
     // ── Piezas del dibujo ──
@@ -328,11 +379,13 @@ PanelWindow {
             const fill = {
                 wood: "#c8955c",
                 stone: "#a1a6ab",
-                ice: "rgba(178,226,250,0.6)"
+                ice: "rgba(178,226,250,0.6)",
+                rock: "#5d5752"
             }[mat], edge = {
                 wood: "#7d5431",
                 stone: "#5e6368",
-                ice: "#7cc0e8"
+                ice: "#7cc0e8",
+                rock: "#35312d"
             }[mat];
             path();
             ctx.fillStyle = fill;
@@ -357,8 +410,8 @@ PanelWindow {
                     }
                     ctx.stroke();
                 }
-            } else if (mat === "stone") {
-                ctx.fillStyle = "rgba(70,74,80,0.22)";
+            } else if (mat === "stone" || mat === "rock") {
+                ctx.fillStyle = mat === "rock" ? "rgba(30,26,24,0.3)" : "rgba(70,74,80,0.22)";
                 for (let i = 0; i < Math.max(3, w * h / 500); i++) {
                     ctx.beginPath();
                     ctx.ellipse(-w / 2 + rnd() * w, -h / 2 + rnd() * h, 3 + rnd() * 6, 2 + rnd() * 4);
@@ -516,9 +569,10 @@ PanelWindow {
     function pick(a: var): var {
         return a[Math.floor(Math.random() * a.length)];
     }
+    // (con el nivel, más piedra y menos hielo)
     function pickMat(): string {
-        const r = Math.random();
-        return r < 0.5 ? "wood" : r < 0.75 ? "stone" : "ice";
+        const r = Math.random(), st = 0.15 + 0.35 * hard, ic = 0.35 - 0.2 * hard;
+        return r < st ? "stone" : r < st + ic ? "ice" : "wood";
     }
     function randLook(): var {
         const r = (a, b) => a + Math.random() * (b - a);
@@ -535,17 +589,18 @@ PanelWindow {
     }
     function genSpec(): var {
         const P_ = [], t = 0.3, gap = 0.004;
-        const S_ = pick([2.1, 2.4, 2.7]);
-        let n = 2 + Math.floor(Math.random() * 3);
+        const k_ = hard, S_ = pick([2.1, 2.4, 2.7]);
+        // (nivel 1: 2-3 columnas y 2-3 pisos; al máximo, 3-5 columnas y 3-5 pisos)
+        let n = Math.min(5, 2 + Math.floor(Math.random() * (2 + 2 * k_) + k_));
         const room = rightX - slingX - 6;
         while (n > 1 && n * S_ + 1 > room * 0.55)
             n--;
-        const x0 = rightX - 1.2 - Math.random() * 2.8 - n * S_;
-        let levels = 2 + Math.floor(Math.random() * 3);
-        const maxH = groundY * 0.6;
+        const x0 = rightX - 1.2 + 0.4 * k_ - Math.random() * (2.8 - 1.6 * k_) - n * S_;
+        let levels = 2 + Math.floor(Math.random() * (2 + k_) + k_);
+        const maxH = groundY * (0.6 + 0.12 * k_);
         let a = 0, b = n - 1, y = groundY;
         const pig = (x, f, v) => {
-            v = v ?? (Math.random() < 0.3 ? "helmet" : "normal");
+            v = v ?? (Math.random() < 0.15 + 0.4 * k_ ? "helmet" : "normal");
             const s = pigS(v);
             P_.push({
                 k: "pig",
@@ -563,6 +618,12 @@ PanelWindow {
                 w: w,
                 h: h
             });
+        // (desde el nivel 3, a veces sobre un pedestal de roca)
+        if (level >= 3 && Math.random() < 0.25 + 0.35 * k_) {
+            const ph = 0.8 + Math.random() * (0.8 + 1.4 * k_);
+            box("rock", x0 + n * S_ / 2, groundY - ph / 2, n * S_ + 0.8, ph);
+            y -= ph;
+        }
         // (a veces, sobre una base de piedra)
         if (Math.random() < 0.3) {
             box("stone", x0 + n * S_ / 2, y - 0.25 - gap, n * S_ + 0.5, 0.5);
@@ -602,7 +663,7 @@ PanelWindow {
         const kingAt = a + Math.floor(Math.random() * (b - a + 1));
         for (let j = a; j <= b; j++) {
             const cx = x0 + (j + 0.5) * S_, r = Math.random();
-            if (j === kingAt && Math.random() < 0.6)
+            if (j === kingAt && Math.random() < 0.4 + 0.5 * k_)
                 pig(cx, y, "king");
             else if (r < 0.4)
                 pig(cx, y);
@@ -615,33 +676,45 @@ PanelWindow {
                 pig(cx, y - 0.8 - 2 * gap);
             }
         }
-        // una torrecita suelta delante, o un mochi en el suelo
-        const tx = x0 - 2.3;
-        if (Math.random() < 0.55 && tx > slingX + 7) {
+        // delante: una columna de roca con un mochi encima (nivel 5+), un montículo de roca que
+        // tapa los tiros rasos (nivel 3+), una torrecita suelta o un mochi en el suelo
+        const tx = x0 - 2.3, fr = Math.random();
+        const mh = 1.2 + Math.random() * (0.6 + 1.2 * k_), mw = 2.6 + mh * 0.6;
+        if (level >= 5 && fr < 0.2 + 0.3 * k_ && x0 - 2.6 > slingX + 7) {
+            const ch = 2.6 + Math.random() * (1.2 + 2 * k_), cx = x0 - 2.6;
+            box("rock", cx, groundY - ch / 2, 1.0, ch);
+            pig(cx, groundY - ch);
+        } else if (level >= 3 && fr < 0.45 + 0.25 * k_ && x0 - 0.5 - mw > slingX + 5)
+            box("rock", x0 - 0.5 - mw / 2, groundY - mh / 2, mw, mh, true);
+        else if (Math.random() < 0.55 && tx > slingX + 7) {
             const m = pickMat(), c = 2 + Math.floor(Math.random() * 3);
             for (let i = 0; i < c; i++)
                 box(m, tx, groundY - 0.4 - i * 0.8 - gap * (2 * i + 1), 0.8, 0.8);
             pig(tx, groundY - c * 0.8 - 2 * c * gap);
         } else if (Math.random() < 0.5 && x0 - 1.4 > slingX + 6)
             pig(x0 - 1.4, groundY);
-        // (al menos dos, como mucho ocho)
+        // (al menos dos, cuatro al máximo nivel; como mucho ocho)
         let pigs = P_.filter(p => p.k === "pig");
-        while (pigs.length < 2) {
-            const plank = P_.filter(p => p.k === "box" && p.w > 1.5 && p.y < groundY - 1);
+        while (pigs.length < 2 + Math.round(2 * k_)) {
+            const plank = P_.filter(p => p.k === "box" && p.mat !== "rock" && p.w > 1.5 && p.y < groundY - 1 && !P_.some(q => q !== p && Math.abs(q.x - p.x) < 0.8 && q.y < p.y && q.y > p.y - 1.5));
             if (plank.length) {
                 const pl = plank[plank.length - 1];
                 pig(pl.x, pl.y - pl.h / 2);
-            } else
+            } else if (!P_.some(p => p.mat === "rock" && p.x < x0))
                 pig(x0 - 1.4 - pigs.length * 1.3, groundY);
+            else
+                break;
             pigs = P_.filter(p => p.k === "pig");
         }
         while (pigs.length > 8) {
             P_.splice(P_.indexOf(pigs.pop()), 1);
         }
-        // los del tirachinas: uno por mochi de la estructura y uno más (3-5); el primero, normal
-        const nb = Math.max(3, Math.min(5, pigs.length + 1)), birds = ["normal"];
+        // los del tirachinas: uno por mochi de la estructura, más los de sobra del nivel (que
+        // pueden ser negativos); con el nivel, menos bombas. El primero, normal
+        const nb = Math.max(2, Math.min(6, pigs.length + spare)), birds = ["normal"];
+        const pool = ["normal", "fast", "fast", "triple", "triple", "bomb"].concat(hard < 0.5 ? ["bomb"] : ["normal"]);
         while (birds.length < nb)
-            birds.push(pick(["normal", "fast", "fast", "triple", "triple", "bomb", "bomb"]));
+            birds.push(pick(pool));
         return {
             pieces: P_,
             birds: birds
@@ -694,14 +767,15 @@ PanelWindow {
         sim.armed = false;
         const ents = [];
         for (const d of spec.pieces) {
+            const rock = d.mat === "rock";
             const b = w.createBody({
-                type: "dynamic",
+                type: rock ? "static" : "dynamic",
                 position: pl.Vec2(d.x, d.y)
             });
             const e = {
                 d: d,
                 body: b,
-                kind: d.k === "pig" ? "pig" : "block",
+                kind: d.k === "pig" ? "pig" : rock ? "rock" : "block",
                 item: null,
                 gone: false
             };
@@ -713,8 +787,15 @@ PanelWindow {
                     restitution: 0.05
                 });
                 b.setAngularDamping(0.4);
-                e.hp = e.hp0 = d.v === "king" ? 8 : d.v === "helmet" ? 6 : 2.6;
+                e.hp = e.hp0 = (d.v === "king" ? 8 : d.v === "helmet" ? 6 : 2.6) * (1 + 0.8 * hard);
                 e.thr = 0.9;
+            } else if (rock) {
+                const shape = d.k === "tri" ? pl.Polygon([pl.Vec2(-d.w / 2, d.h / 2), pl.Vec2(d.w / 2, d.h / 2), pl.Vec2(0, -d.h / 2)]) : pl.Box(d.w / 2, d.h / 2);
+                b.createFixture(shape, {
+                    friction: 0.9,
+                    restitution: 0.05
+                });
+                e.mat = "rock";
             } else {
                 const m = mats[d.mat];
                 const shape = d.k === "tri" ? pl.Polygon([pl.Vec2(-d.w / 2, d.h / 2), pl.Vec2(d.w / 2, d.h / 2), pl.Vec2(0, -d.h / 2)]) : pl.Box(d.w / 2, d.h / 2);
@@ -724,7 +805,7 @@ PanelWindow {
                     restitution: 0.02
                 });
                 e.mat = d.mat;
-                e.hp = e.hp0 = m.hp * Math.max(0.6, Math.min(1.6, d.w * d.h / 0.7));
+                e.hp = e.hp0 = m.hp * Math.max(0.6, Math.min(1.6, d.w * d.h / 0.7)) * (1 + 0.5 * hard);
                 e.thr = m.thr;
             }
             b.setUserData(e);
@@ -732,16 +813,16 @@ PanelWindow {
         }
         sim.ents = ents;
     }
-    // (deja que se asiente sin romper nada; ¿se ha quedado en pie?)
-    function settles(): bool {
+    // (deja que se asiente sin romper nada; lo que más se ha movido: si pasa de 0.3, no vale)
+    function settles(): real {
         for (let i = 0; i < 240; i++)
             sim.world.step(step, 8, 3);
+        let m = 0;
         for (const e of sim.ents) {
             const p = e.body.getPosition();
-            if (Math.hypot(p.x - e.d.x, p.y - e.d.y) > 0.3 || Math.abs(e.body.getAngle()) > 0.3)
-                return false;
+            m = Math.max(m, Math.hypot(p.x - e.d.x, p.y - e.d.y), Math.abs(e.body.getAngle()));
         }
-        return true;
+        return m;
     }
     function makeItems(): void {
         for (const e of sim.ents) {
@@ -768,13 +849,26 @@ PanelWindow {
         sync();
     }
     function newLevel(retry: bool): void {
-        let spec = retry ? sim.spec : null;
-        for (let tries = 0; tries < 8; tries++) {
+        // (las grandes fallan más: hasta 16 intentos y, si ninguno se tiene en pie, la más estable)
+        let spec = retry ? sim.spec : null, bestSpec = null, bestM = 1e9;
+        sim.tries = 0;
+        for (let tries = 0; tries < 16; tries++) {
             if (!retry)
                 spec = genSpec();
             build(spec);
-            if (settles() || retry)
+            sim.tries++;
+            const m = settles();
+            if (m <= 0.3 || retry)
                 break;
+            if (m < bestM) {
+                bestM = m;
+                bestSpec = spec;
+            }
+            if (tries === 15) {
+                spec = bestSpec;
+                build(spec);
+                settles();
+            }
         }
         sim.spec = spec;
         makeItems();
@@ -800,11 +894,14 @@ PanelWindow {
         phase = "load";
         world2d.opacity = 0;
         appear.restart();
+        bannerAnim.restart();
         nextTimer.interval = 700;
         nextTimer.restart();
     }
+    // (si son muchos, más juntitos para que no se metan debajo de la barra)
     function slotX(i: int): real {
-        return slingX - 2.6 - i * 1.0;
+        const n = sim.queue.length;
+        return slingX - 2.6 - i * (n > 1 ? Math.min(1.0, (slingX - 2.6 - leftX - 0.7) / (n - 1)) : 1.0);
     }
     function placeQueue(anim: bool): void {
         sim.queue.forEach((q, i) => {
@@ -828,6 +925,8 @@ PanelWindow {
     function hurt(e: var, n: real, other: var): void {
         if (e.gone)
             return;
+        if (e.kind === "rock")
+            return;
         if (e.kind === "bird") {
             if (n > 0.3 && !e.touched) {
                 e.touched = true;
@@ -847,7 +946,7 @@ PanelWindow {
         damage(e, d);
     }
     function damage(e: var, d: real): void {
-        if (e.gone)
+        if (e.gone || e.kind === "rock")
             return;
         e.hp -= d;
         if (e.hp <= 0) {
@@ -1008,15 +1107,15 @@ PanelWindow {
         dy = Math.min(dy, groundY - r - anchorY);
         pouchX = (anchorX + dx) * ppm;
         pouchY = (anchorY + dy) * ppm;
-        // por dónde irá (el primer tramo)
+        // por dónde irá (el primer tramo; más corto cuanto más alto el nivel)
         const vx = -dx * power, vy = -dy * power, pts = [];
         if (Math.hypot(dx, dy) > 0.3)
-            for (let i = 1; i <= 16; i++) {
+            for (let i = 1; i <= aimDots; i++) {
                 const t = i * 0.055;
                 pts.push({
                     x: (anchorX + dx + vx * t) * ppm,
                     y: (anchorY + dy + vy * t + 0.5 * gravity * t * t) * ppm,
-                    k: 1 - i / 17
+                    k: 1 - i / (aimDots + 1)
                 });
             }
         aimPts = pts;
@@ -1149,7 +1248,7 @@ PanelWindow {
             return;
         const pl = P.planck, c = e.body.getPosition(), R = 3.4;
         for (const o of sim.ents) {
-            if (o.gone)
+            if (o.gone || o.kind === "rock")
                 continue;
             const p = o.body.getWorldCenter(), dx = p.x - c.x, dy = p.y - c.y, d = Math.max(0.2, Math.hypot(dx, dy));
             if (d > R)
@@ -1308,9 +1407,15 @@ PanelWindow {
             popup((it.x + it.width / 2) / ppm, it.y / ppm, "10000", false);
             score += 10000;
         });
-        stars = 1 + Math.min(2, left);
+        // (cuando no sobran tiros, ganar con uno de sobra ya son tres estrellas)
+        stars = 1 + Math.min(2, left + (spare <= 0 ? 1 : 0));
         meFace = "love";
         birdsLeft = 0;
+        const b = Object.assign({}, best);
+        b[level] = Math.max(b[level] ?? 0, stars);
+        best = b;
+        maxLevel = Math.max(maxLevel, level + 1);
+        save();
         cardTimer.restart();
         game.won(stars);
     }
@@ -1388,6 +1493,7 @@ PanelWindow {
         if (started || !sized)
             return;
         started = true;
+        loadSave();
         newLevel(false);
     }
     function quit(): void {
@@ -1441,6 +1547,10 @@ PanelWindow {
                 game.newLevel(true);
             else if (ev.key === Qt.Key_N)
                 game.newLevel(false);
+            else if (ev.key === Qt.Key_Left && game.level > 1)
+                game.goLevel(game.level - 1);
+            else if (ev.key === Qt.Key_Right && game.level < game.maxLevel)
+                game.goLevel(game.level + 1);
             else if (ev.key === Qt.Key_Space && game.phase === "fly")
                 game.ability();
             ev.accepted = true;
@@ -1655,6 +1765,14 @@ PanelWindow {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
+                    text: `Nivel ${game.level}` + (game.best[game.level] ? "  " + "★".repeat(game.best[game.level]) : "")
+                    font.family: Theme.font
+                    font.pixelSize: 15
+                    font.bold: true
+                    color: Theme.onSurface
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
                     text: `${game.pigsLeft} ${game.pigsLeft === 1 ? "mochi" : "mochis"} por derribar`
                     font.family: Theme.font
                     font.pixelSize: 15
@@ -1730,12 +1848,74 @@ PanelWindow {
             visible: game.hint
             anchors.horizontalCenter: parent.horizontalCenter
             y: hud.y + hud.height + 12
-            text: "Arrastra hacia atrás al mochi del tirachinas y suelta · clic en el aire: su habilidad · R repetir · N otra estructura · Esc salir"
+            text: "Arrastra hacia atrás al mochi del tirachinas y suelta · clic en el aire: su habilidad · R repetir · N otra estructura · ← → cambiar de nivel · Esc salir"
             font.family: Theme.font
             font.pixelSize: 14
             color: "#ffffff"
             style: Text.Outline
             styleColor: "#60000000"
+        }
+
+        // ── Cartel al empezar cada nivel ──
+        Column {
+            id: banner
+
+            z: 11
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -parent.height * 0.18
+            spacing: 6
+            opacity: 0
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: `Nivel ${game.level}`
+                font.family: Theme.font
+                font.pixelSize: 54
+                font.bold: true
+                color: "#ffffff"
+                style: Text.Outline
+                styleColor: "#60000000"
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: `${game.pigsLeft} mochis · ${game.birdsLeft} tiros`
+                font.family: Theme.font
+                font.pixelSize: 18
+                color: "#ffffff"
+                style: Text.Outline
+                styleColor: "#60000000"
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: text !== ""
+                text: game.news[game.level] ?? ""
+                font.family: Theme.font
+                font.pixelSize: 18
+                font.bold: true
+                color: "#ffc93c"
+                style: Text.Outline
+                styleColor: "#60000000"
+            }
+        }
+        SequentialAnimation {
+            id: bannerAnim
+
+            NumberAnimation {
+                target: banner
+                property: "opacity"
+                from: 0
+                to: 1
+                duration: 250
+            }
+            PauseAnimation {
+                duration: 1500
+            }
+            NumberAnimation {
+                target: banner
+                property: "opacity"
+                to: 0
+                duration: 450
+            }
         }
 
         // ── Resultado ──
@@ -1763,7 +1943,7 @@ PanelWindow {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: game.phase === "won" ? "¡Estructura despejada!" : "Se te han acabado los tiros"
+                    text: game.phase === "won" ? `¡Nivel ${game.level} superado!` : "Se te han acabado los tiros"
                     font.family: Theme.font
                     font.pixelSize: 24
                     font.bold: true
@@ -1787,15 +1967,29 @@ PanelWindow {
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: 10
 
+                    // (el del medio es el principal: siguiente nivel si ganas, repetir si pierdes)
                     Repeater {
-                        model: [
+                        model: game.phase === "won" ? [
                             {
                                 text: "Repetir",
                                 act: "retry"
                             },
                             {
+                                text: "Siguiente nivel",
+                                act: "next"
+                            },
+                            {
+                                text: "Salir",
+                                act: "quit"
+                            }
+                        ] : [
+                            {
                                 text: "Otra estructura",
                                 act: "new"
+                            },
+                            {
+                                text: "Repetir",
+                                act: "retry"
                             },
                             {
                                 text: "Salir",
@@ -1841,6 +2035,8 @@ PanelWindow {
     function act(a: string): void {
         if (a === "quit")
             quit();
+        else if (a === "next")
+            goLevel(level + 1);
         else
             newLevel(a === "retry");
     }
@@ -1852,7 +2048,7 @@ PanelWindow {
         onTriggered: game.ability()
     }
     function status(): string {
-        return `${phase} · ${pigsLeft} por derribar · ${birdsLeft} tiros · ${score} pts · ${sim.ents.length} piezas`;
+        return `nivel ${level} (máx. ${maxLevel}) · ${phase} · ${pigsLeft} por derribar · ${birdsLeft} tiros · ${score} pts · ${sim.ents.length} piezas (${sim.ents.filter(e => e.kind === "rock").length} rocas, ${sim.tries} intentos)`;
     }
     function autoShot(deg: real, pow: real, abilityMs: int): string {
         if (abilityMs > 0) {
