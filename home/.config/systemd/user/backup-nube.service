@@ -1,0 +1,8 @@
+[Unit]
+Description=Copia de seguridad a Google Drive (restic)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/backup-nube
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,10 @@
+[Unit]
+Description=Lanza backup-nube (el script solo copia cada 3 días)
+
+[Timer]
+# 5 min después de iniciar sesión y, en sesiones largas, una vez al día
+OnStartupSec=5min
+OnCalendar=daily
+
+[Install]
+WantedBy=timers.target

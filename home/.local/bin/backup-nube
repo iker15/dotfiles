@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Copia de seguridad de lo irreemplazable de $HOME a Google Drive (restic sobre rclone).
+# Lo lanza backup-nube.timer; solo copia si la última tiene INTERVALO_DIAS o más.
+#   backup-nube           copia si toca
+#   backup-nube --ahora   copia aunque no toque
+set -euo pipefail
+
+INTERVALO_DIAS=3
+export RESTIC_REPOSITORY="rclone:gdrive:backups/$(hostname)"
+export RESTIC_PASSWORD_FILE="$HOME/.config/backup-nube/password"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/backup-nube"
+STAMP="$STATE/ultima-copia"
+
+aviso() { notify-send -a backup-nube "$@" 2>/dev/null || true; }
+fallo() {
+    echo "ERROR: $1" >&2
+    aviso -u critical "Backup fallido" "$1"
+    exit 1
+}
+trap 'fallo "Falló en la línea $LINENO (journalctl --user -u backup-nube)"' ERR
+
+if [[ ${1:-} != --ahora && -e $STAMP ]]; then
+    edad=$(( ($(date +%s) - $(stat -c %Y "$STAMP")) / 86400 ))
+    if (( edad < INTERVALO_DIAS )); then
+        echo "Última copia hace $edad día(s); no toca todavía."
+        exit 0
+    fi
+fi
+
+command -v restic >/dev/null || fallo "Falta restic (sudo pacman -S restic rclone)"
+command -v rclone >/dev/null || fallo "Falta rclone (sudo pacman -S restic rclone)"
+rclone listremotes | grep -qx 'gdrive:' || fallo "Falta el remoto 'gdrive' de rclone"
+[[ -s $RESTIC_PASSWORD_FILE ]] || fallo "Falta la contraseña en $RESTIC_PASSWORD_FILE"
+
+# Al iniciar sesión puede no haber red todavía
+for _ in {1..30}; do
+    curl -sI --max-time 5 https://www.googleapis.com >/dev/null && break
+    sleep 10
+done
+
+# Lo necesario para reconstruir el sistema: paquetes y /etc (lo ilegible sin root se salta)
+mkdir -p "$STATE/sistema"
+pacman -Qqen > "$STATE/sistema/pkglist.txt"
+pacman -Qqem > "$STATE/sistema/aurlist.txt"
+tar -cf "$STATE/sistema/etc.tar" --ignore-failed-read -C / etc 2>/dev/null || true
+
+restic cat config >/dev/null 2>&1 || restic init
+
+excluir=(
+    # Cachés y papelera
+    "$HOME/.cache"
+    "$HOME/.nv"
+    "$HOME/.local/share/Trash"
+    "$HOME/.config/*/Cache"
+    "$HOME/.config/*/Code Cache"
+    "$HOME/.config/*/GPUCache"
+    "$HOME/.config/*/CachedData"
+    # Se vuelve a descargar o a generar
+    "$HOME/.local/share/Steam"
+    "$HOME/.steam"
+    "$HOME/.local/share/mochi"
+    "$HOME/.local/share/PrismLauncher/assets"
+    "$HOME/.local/share/PrismLauncher/libraries"
+    "$HOME/.local/share/PrismLauncher/java"
+    "$HOME/.local/share/claude"
+    "$HOME/.local/share/uv"
+    "$HOME/.local/share/pnpm"
+    "$HOME/.cargo"
+    "$HOME/.npm"
+    "$HOME/Aplicaciones"
+    "$HOME/Applications"
+    "node_modules"
+    ".venv"
+    "__pycache__"
+)
+
+# restic sale con 3 si no pudo leer algún fichero: la copia existe, pero incompleta
+rc=0
+restic backup "$HOME" --one-file-system --exclude-caches \
+    "${excluir[@]/#/--exclude=}" || rc=$?
+(( rc == 0 || rc == 3 )) || fallo "restic backup salió con código $rc"
+
+# Solo se conserva la última copia
+restic forget --keep-last 1 --prune
+
+touch "$STAMP"
+if (( rc == 3 )); then
+    aviso "Backup hecho con avisos" "Algún fichero no se pudo leer (journalctl --user -u backup-nube)"
+else
+    aviso "Backup hecho" "Copia subida a Google Drive"
+fi

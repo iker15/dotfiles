@@ -1,6 +1,6 @@
 {
     "wallpaper": {
-        "postHook": "$HOME/.config/caelestia/strict_scheme.py"
+        "postHook": "$HOME/.config/caelestia/wallpaper-hook.sh"
     },
     "theme": {
         "enableTerm": false

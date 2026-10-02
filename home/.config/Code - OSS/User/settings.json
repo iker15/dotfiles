@@ -3,6 +3,5 @@
     "livePreview.autoRefreshPreview": "On All Changes in Editor",
     "livePreview.openPreviewTarget": "Embedded Preview",
     "basedpyright.analysis.typeCheckingMode": "standard",
-    "python.languageServer": "None",
-    "debug.breakpointsView.presentation": "tree"
+    "python.languageServer": "Default"
 }

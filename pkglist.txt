@@ -6,6 +6,7 @@ alsa-plugins
 alsa-utils
 ark
 awesome-terminal-fonts
+awww
 base
 base-devel
 bash-completion
@@ -202,9 +203,11 @@ pwvucontrol
 python
 python-defusedxml
 python-packaging
+rclone
 realtime-privileges
 rebuild-detector
 reflector
+restic
 ripgrep
 rsync
 s-nail
@@ -215,9 +218,11 @@ snapper
 sof-firmware
 spectacle
 starship
+steam
 sudo
 switcheroo-control
 sysfsutils
+telegram-desktop
 tesseract-data-eng
 texinfo
 thunar
@@ -236,10 +241,14 @@ usb_modeswitch
 usbutils
 uwsm
 vim
+virtualbox
+virtualbox-guest-iso
+virtualbox-host-dkms
 vlc-plugins-all
 vpl-gpu-rt
 vulkan-icd-loader
 vulkan-intel
+waypaper
 webkit2gtk-4.1
 wget
 which

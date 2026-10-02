@@ -5,7 +5,7 @@
         }
     },
     "background": {
-        "wallpaperEnabled": true
+        "wallpaperEnabled": false
     },
     "bar": {
         "clock": {

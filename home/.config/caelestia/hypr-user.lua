@@ -17,6 +17,12 @@ hl.bind("CTRL + ALT + P", hl.dsp.exec_cmd("~/.local/bin/caelestia-record -p"))
 -- SUPER + L: bloquear con los colores de la foto de perfil (~/.face)
 hl.bind("SUPER + L", hl.dsp.exec_cmd("~/.config/caelestia/lock-face.sh"))
 
+-- Fondo: lo pinta awww (admite GIF animados y transiciones); el de Caelestia está apagado
+-- (wallpaperEnabled en shell.json). Al arrancar recupera el último fondo que tuvo.
+hl.on("hyprland.start", function()
+    hl.exec_cmd("awww-daemon")
+end)
+
 -- Mochi (burbujita con Claude de cerebro): vive en el escritorio desde el inicio.
 -- Doble + lo esconde / lo hace aparecer, doble - lo esconde (clic para hablarle); non_consuming: el + se sigue escribiendo en las apps
 hl.on("hyprland.start", function()
