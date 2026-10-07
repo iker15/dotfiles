@@ -36,6 +36,6 @@ for _, k in ipairs({ "minus", "KP_Subtract" }) do
 end
 hl.layer_rule({ match = { namespace = "mochi" }, no_anim = true })
 
--- Pantallas: la externa (KOT 27") arriba y el portátil debajo, centradas (las dos miden 1920 de ancho)
-hl.monitor({ output = "HDMI-A-1", mode = "1920x1080@120", position = "0x0",    scale = 1 })
-hl.monitor({ output = "eDP-1",    mode = "1920x1080@144", position = "0x1080", scale = 1 })
+-- Pantallas: la disposición la guarda nwg-displays en ~/.config/hypr/monitors.lua
+-- (abre "nwg-displays", arrastra las pantallas y pulsa Aplicar)
+require("monitors")

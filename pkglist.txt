@@ -165,6 +165,7 @@ nss-mdns
 nvidia-prime
 nvidia-settings
 nvidia-utils
+nwg-displays
 opencl-nvidia
 openssh
 os-prober
