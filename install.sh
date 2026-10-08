@@ -33,6 +33,20 @@ LC_ALL=C pacman -Si $(cat /tmp/dotfiles-pkgs.txt) 2>/dev/null | awk -F' *: ' '
             echo "  (me salto $pkg: choca con $other, que ya tienes)" >&2
         fi
     done | sort -u > /tmp/dotfiles-skip.txt
+# Y al revés: a veces el conflicto sólo lo declara el paquete que YA está instalado (matugen-bin
+# dice que choca con matugen, pero matugen no dice nada de matugen-bin; igual jdk25 con jre25).
+# Mirando sólo los de la lista no se ven, y pacman se para igual.
+# (sólo conflictos sin versión: "mkinitcpio choca con cryptsetup<2.8" es con las versiones
+# viejas, no con la que se va a instalar)
+LC_ALL=C pacman -Qi | awk -F' *: ' '
+    /^Name/ { n = $2 }
+    /^Conflicts With/ && $2 != "None" { split($2, c, / +/); for (i in c) if (c[i] !~ /[<>=]/) print n, c[i] }' \
+    | sort -u | while read -r have pkg; do
+        if [[ "$have" != "$pkg" ]] && grep -qx "$pkg" /tmp/dotfiles-pkgs.txt && ! grep -qx "$pkg" /tmp/dotfiles-have.txt; then
+            echo "$pkg"
+            echo "  (me salto $pkg: choca con $have, que ya tienes)" >&2
+        fi
+    done | sort -u >> /tmp/dotfiles-skip.txt
 grep -vxF -f /tmp/dotfiles-skip.txt /tmp/dotfiles-pkgs.txt \
     | sudo pacman -S --needed --noconfirm -
 
@@ -61,6 +75,32 @@ while read -r pkg; do
     # (aur/: si no, paru coge de los repos cualquier paquete que "provea" ese nombre, p. ej.
     # noctalia-qs en vez de quickshell-git)
     paru -S --needed --noconfirm "aur/$pkg" || echo "  (no se pudo instalar $pkg del AUR: sigue sin él)"
+done < "$DOTS/aurlist.txt"
+
+# Un paquete del AUR compilado hace meses puede quedarse roto al actualizar el sistema, y pacman
+# no se entera: su versión no ha cambiado, así que arriba se lo salta por estar ya instalado.
+# Pasó con quickshell-git (compilado en junio): usa la API privada de Qt, al subir Qt a 6.12 su
+# binario pedía un símbolo con una versión que ya no existe ("undefined symbol ...
+# Qt_6_PRIVATE_API") y Caelestia moría al arrancar sin dejar rastro — el escritorio se quedaba
+# en Hyprland pelado. Se comprueban los ejecutables de cada paquete del AUR y se recompila el
+# que no encaje con las librerías actuales.
+log "Comprobando que los paquetes del AUR siguen encajando con el sistema"
+pacman -Qq > /tmp/dotfiles-have.txt
+while read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    grep -qx "$pkg" /tmp/dotfiles-have.txt || continue
+    roto=
+    # (sólo ejecutables: en una librería suelta los símbolos sin resolver son normales, los pone
+    # quien la carga; en un ejecutable completo son un error de verdad)
+    while read -r f; do
+        [ -f "$f" ] && [ -x "$f" ] || continue
+        [ "$(head -c4 "$f" | tr -d '\0')" = $'\x7fELF' ] || continue
+        if ldd -r "$f" 2>/dev/null | grep -q 'undefined symbol'; then roto=$f; break; fi
+    done < <(pacman -Ql "$pkg" | awk '{print $2}' | grep -E '/s?bin/[^/]+$')
+    if [[ -n $roto ]]; then
+        log "Recompilando $pkg (su binario ya no encaja: $roto)"
+        paru -S --rebuild --noconfirm "aur/$pkg" || echo "  (no se pudo recompilar $pkg: sigue roto)"
+    fi
 done < "$DOTS/aurlist.txt"
 
 # --- 2. Symlinks -------------------------------------------------------------

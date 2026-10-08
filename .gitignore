@@ -3,3 +3,11 @@ home/.config/fish/fish_variables
 home/.config/hypr/scheme/current.*
 *.bak
 __pycache__/
+
+# Enlaces que crea `systemctl --user enable` dentro de ~/.config/systemd/user al apuntar a
+# unidades del sistema (pipewire, wireplumber). Como .config/systemd es un symlink al repo,
+# aparecen aquí como ficheros nuevos. No son configuración: los vuelve a crear install.sh
+# en cada PC. (default.target.wants/ sí va versionado: ahí están las unidades propias.)
+home/.config/systemd/user/pipewire-session-manager.service
+home/.config/systemd/user/pipewire.service.wants/
+home/.config/systemd/user/sockets.target.wants/
