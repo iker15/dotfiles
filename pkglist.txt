@@ -4,6 +4,8 @@ alacritty
 alsa-firmware
 alsa-plugins
 alsa-utils
+apr
+apr-util
 ark
 awesome-terminal-fonts
 awww

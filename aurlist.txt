@@ -2,6 +2,7 @@ caelestia-cli
 caelestia-shell
 darkly-bin
 equibop-bin
+google-chrome
 papirus-folders
 qtengine
 quickshell-git
