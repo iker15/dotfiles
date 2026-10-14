@@ -44,3 +44,6 @@ if status is-interactive
     set -q XDG_CONFIG_HOME && set -l cConf $XDG_CONFIG_HOME/caelestia || set -l cConf $HOME/.config/caelestia
     source $cConf/user-config.fish 2> /dev/null
 end
+
+# Added by claude-mem installer for claude-mem
+set -gx PATH /home/iker/.local/bin $PATH
