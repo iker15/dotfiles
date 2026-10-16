@@ -1,0 +1,11 @@
+[Unit]
+Description=Conectar automáticamente los cascos Bluetooth (Razer Barracuda X)
+After=pipewire.service wireplumber.service
+
+[Service]
+ExecStart=%h/.local/bin/cascos-autoconnect 44:5E:CD:65:88:BF
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
