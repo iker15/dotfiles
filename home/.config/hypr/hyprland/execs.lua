@@ -22,6 +22,9 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("/usr/lib/geoclue-2.0/demos/agent")
     hl.exec_cmd("sleep 1 && gammastep")
 
+    -- Automount usb drives
+    hl.exec_cmd("udiskie --automount --notify --no-tray")
+
     -- Forward bluetooth media commands to MPRIS
     hl.exec_cmd("mpris-proxy")
 

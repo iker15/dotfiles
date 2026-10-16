@@ -237,6 +237,7 @@ ttf-jetbrains-mono-nerd
 ttf-liberation
 ttf-meslo-nerd
 ttf-opensans
+udiskie
 ufw
 ufw-extras
 unrar
@@ -269,4 +270,5 @@ xsettingsd
 ydotool
 zed
 zen-browser-bin
+zip
 zoxide
