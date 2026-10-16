@@ -37,6 +37,8 @@ StyledRect {
     function collapsed(entry: var): bool {
         if (entry.id === "lockStatus")
             return !Hypr.capsLock && !Hypr.numLock;
+        if (entry.id === "drives")
+            return !Drives.present;
         return false;
     }
 
@@ -61,7 +63,16 @@ StyledRect {
             model: ScriptModel {
                 id: model
 
-                values: root.Config.bar.statusIcons.values.filter(e => e.enabled)
+                // + icono de discos externos (antes del wifi), solo visible si hay alguno conectado
+                values: {
+                    const v = root.Config.bar.statusIcons.values.filter(e => e.enabled);
+                    const i = v.findIndex(e => e.id === "network");
+                    v.splice(i < 0 ? v.length : i, 0, {
+                        id: "drives",
+                        enabled: true
+                    });
+                    return v;
+                }
             }
 
             DelegateChooser {
@@ -113,6 +124,14 @@ StyledRect {
                             text: Hypr.kbLayout
                             color: root.colour
                             font: Tokens.font.mono.medium
+                        }
+                    }
+                }
+                DelegateChoice {
+                    roleValue: "drives"
+                    delegate: EntryWrapper {
+                        DrivesStatus {
+                            colour: root.colour
                         }
                     }
                 }
