@@ -1,25 +1,31 @@
 [Default Applications]
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
-x-scheme-handler/http=zen.desktop
-x-scheme-handler/https=zen.desktop
-x-scheme-handler/chrome=zen.desktop
-text/html=zen.desktop
-application/x-extension-htm=zen.desktop
-application/x-extension-html=zen.desktop
-application/x-extension-shtml=zen.desktop
-application/xhtml+xml=zen.desktop
-application/x-extension-xhtml=zen.desktop
-application/x-extension-xht=zen.desktop
+x-scheme-handler/http=userapp-Zen-08QCX3.desktop
+x-scheme-handler/https=userapp-Zen-08QCX3.desktop
+x-scheme-handler/chrome=userapp-Zen-08QCX3.desktop
+text/html=userapp-Zen-08QCX3.desktop
+application/x-extension-htm=userapp-Zen-08QCX3.desktop
+application/x-extension-html=userapp-Zen-08QCX3.desktop
+application/x-extension-shtml=userapp-Zen-08QCX3.desktop
+application/xhtml+xml=userapp-Zen-08QCX3.desktop
+application/x-extension-xhtml=userapp-Zen-08QCX3.desktop
+application/x-extension-xht=userapp-Zen-08QCX3.desktop
 application/x-zerosize=codium.desktop
 x-scheme-handler/tg=org.telegram.desktop.desktop
 x-scheme-handler/tonsite=org.telegram.desktop.desktop
 
 [Added Associations]
 application/pdf=zen.desktop;
-x-scheme-handler/http=zen.desktop;
-x-scheme-handler/https=zen.desktop;
-x-scheme-handler/chrome=zen.desktop;
-text/html=codium.desktop;micro.desktop;
+x-scheme-handler/http=userapp-Zen-08QCX3.desktop;zen.desktop;
+x-scheme-handler/https=userapp-Zen-08QCX3.desktop;zen.desktop;
+x-scheme-handler/chrome=userapp-Zen-08QCX3.desktop;zen.desktop;
+text/html=codium.desktop;micro.desktop;userapp-Zen-08QCX3.desktop;
 application/x-zerosize=codium.desktop;
 x-scheme-handler/tg=org.telegram.desktop.desktop;
 x-scheme-handler/tonsite=org.telegram.desktop.desktop;
+application/x-extension-htm=userapp-Zen-08QCX3.desktop;
+application/x-extension-html=userapp-Zen-08QCX3.desktop;
+application/x-extension-shtml=userapp-Zen-08QCX3.desktop;
+application/xhtml+xml=userapp-Zen-08QCX3.desktop;
+application/x-extension-xhtml=userapp-Zen-08QCX3.desktop;
+application/x-extension-xht=userapp-Zen-08QCX3.desktop;
