@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Kissa Posters
+GenericName=Tienda de Etsy
+Comment=App local para preparar y subir los posters de la tienda
+Exec=kissa
+Icon=kissa-posters
+Terminal=false
+Type=Application
+Categories=Office;
+Keywords=etsy;tienda;posters;kissa;

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# abre la app de la tienda de etsy (kissa posters) en zen
+# si no esta encendida, la arranca en segundo plano y espera a que responda
+puerto=8766
+carpeta="$HOME/Proyectos/etsy-posters"
+
+if ! ss -ltn | grep -q ":$puerto "; then
+    if [ ! -f "$carpeta/tienda.py" ]; then
+        notify-send "Kissa Posters" "No encuentro $carpeta/tienda.py"
+        exit 1
+    fi
+    cd "$carpeta" || exit 1
+    setsid nohup uv run tienda.py --sin-navegador > /tmp/kissa-posters.log 2>&1 < /dev/null &
+    for i in $(seq 150); do
+        ss -ltn | grep -q ":$puerto " && break
+        sleep 0.2
+    done
+fi
+
+setsid zen-browser "http://localhost:$puerto" > /dev/null 2>&1 < /dev/null &
