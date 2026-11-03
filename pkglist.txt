@@ -57,6 +57,7 @@ curl
 device-mapper
 diffutils
 direnv
+discord
 dmidecode
 dmraid
 dnsmasq
@@ -82,6 +83,7 @@ frameworkintegration
 fsarchiver
 fwupd
 gammastep
+gemini-cli
 git
 glances
 gnome-keyring
@@ -226,6 +228,7 @@ steam
 sudo
 switcheroo-control
 sysfsutils
+tailscale
 telegram-desktop
 tesseract-data-eng
 texinfo
@@ -257,6 +260,9 @@ waypaper
 webkit2gtk-4.1
 wget
 which
+wine
+wine-gecko
+wine-mono
 wireplumber
 wl-clipboard
 wpa_supplicant

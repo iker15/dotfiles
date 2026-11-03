@@ -68,7 +68,6 @@ excluir=(
     "$HOME/.cargo"
     "$HOME/.npm"
     "$HOME/Aplicaciones"
-    "$HOME/Applications"
     "node_modules"
     ".venv"
     "__pycache__"

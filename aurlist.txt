@@ -1,3 +1,4 @@
+antigravity-cli
 caelestia-cli
 caelestia-firefox-theme
 caelestia-shell

@@ -3,5 +3,8 @@
     "livePreview.autoRefreshPreview": "On All Changes in Editor",
     "livePreview.openPreviewTarget": "Embedded Preview",
     "basedpyright.analysis.typeCheckingMode": "standard",
-    "python.languageServer": "Default"
+    "python.languageServer": "Default",
+    "[javascript]": {
+        "editor.defaultFormatter": "vscode.typescript-language-features"
+    }
 }
