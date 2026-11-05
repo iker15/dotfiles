@@ -7,7 +7,7 @@ return {
 
     -- Apps
     terminal                   = "foot",
-    browser                    = "firefox",
+    browser                    = "zen-browser",
     editor                     = "codium",
     fileExplorer               = "thunar",
     audioSettings              = "pwvucontrol",
