@@ -12,4 +12,31 @@
 	<startup-notify/>
 	<directories/>
 </action>
+<action>
+	<icon>ark</icon>
+	<name>Comprimir en zip</name>
+	<submenu></submenu>
+	<unique-id>1762380000000001-1</unique-id>
+	<command>ark --batch --changetofirstpath --add --autofilename zip %F</command>
+	<description>Crea un .zip con lo seleccionado</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>ark</icon>
+	<name>Extraer aquí</name>
+	<submenu></submenu>
+	<unique-id>1762380000000002-1</unique-id>
+	<command>ark --batch --autodestination --autosubfolder %F</command>
+	<description>Descomprime en esta carpeta</description>
+	<range></range>
+	<patterns>*.zip;*.rar;*.7z;*.tar;*.tar.gz;*.tgz;*.tar.xz;*.tar.bz2;*.tar.zst;*.gz;*.xz;*.bz2</patterns>
+	<other-files/>
+</action>
 </actions>

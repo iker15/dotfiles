@@ -1,4 +1,15 @@
 [Default Applications]
+application/zip=org.kde.ark.desktop
+application/x-zip-compressed=org.kde.ark.desktop
+application/vnd.rar=org.kde.ark.desktop
+application/x-rar=org.kde.ark.desktop
+application/x-7z-compressed=org.kde.ark.desktop
+application/x-tar=org.kde.ark.desktop
+application/x-compressed-tar=org.kde.ark.desktop
+application/x-xz-compressed-tar=org.kde.ark.desktop
+application/x-bzip2-compressed-tar=org.kde.ark.desktop
+application/x-zstd-compressed-tar=org.kde.ark.desktop
+application/gzip=org.kde.ark.desktop
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
 x-scheme-handler/http=userapp-Zen-08QCX3.desktop
 x-scheme-handler/https=userapp-Zen-08QCX3.desktop
