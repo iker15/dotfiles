@@ -39,3 +39,10 @@ hl.layer_rule({ match = { namespace = "mochi" }, no_anim = true })
 -- Pantallas: la disposición la guarda nwg-displays en ~/.config/hypr/monitors.lua
 -- (abre "nwg-displays", arrastra las pantallas y pulsa Aplicar)
 require("monitors")
+
+-- SUPER + ESC: modo remoto para Moonlight. Mientras esta activo, todos los atajos (SUPER + Q...)
+-- pasan al PC y no al portatil. Se sale con SUPER + ESC otra vez
+hl.bind("SUPER + Escape", hl.dsp.submap("remoto"))
+hl.define_submap("remoto", function()
+    hl.bind("SUPER + Escape", hl.dsp.submap("reset"))
+end)

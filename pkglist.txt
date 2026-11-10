@@ -130,6 +130,7 @@ lib32-vulkan-intel
 libdvdcss
 libgsf
 libopenraw
+libreoffice-fresh
 libva-nvidia-driver
 limine
 limine-mkinitcpio-hook
@@ -154,6 +155,8 @@ mesa-utils
 micro
 mkinitcpio
 modemmanager
+mono
+moonlight-qt
 mtools
 nano
 nano-syntax-highlighting
@@ -233,6 +236,7 @@ telegram-desktop
 tesseract-data-eng
 texinfo
 thunar
+tmux
 trash-cli
 ttf-bitstream-vera
 ttf-dejavu
@@ -266,6 +270,7 @@ wine-mono
 wireplumber
 wl-clipboard
 wpa_supplicant
+xdelta3
 xdg-desktop-portal-gtk
 xdg-desktop-portal-hyprland
 xdg-user-dirs

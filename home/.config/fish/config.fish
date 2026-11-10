@@ -47,3 +47,17 @@ end
 
 # Added by claude-mem installer for claude-mem
 set -gx PATH /home/iker/.local/bin $PATH
+
+# >>> conda initialize >>>
+# !! Contents within this block are managed by 'conda init' !!
+if test -f /home/iker/anaconda3/bin/conda
+    eval /home/iker/anaconda3/bin/conda "shell.fish" "hook" $argv | source
+else
+    if test -f "/home/iker/anaconda3/etc/fish/conf.d/conda.fish"
+        . "/home/iker/anaconda3/etc/fish/conf.d/conda.fish"
+    else
+        set -x PATH "/home/iker/anaconda3/bin" $PATH
+    end
+end
+# <<< conda initialize <<<
+
